@@ -2306,6 +2306,10 @@ CREATE TABLE `settings` (
   `config_backup_retention_days` int(11) NOT NULL DEFAULT 30,
   `config_backup_retention_count` int(11) NOT NULL DEFAULT 5,
   `config_backup_cron_type` varchar(20) NOT NULL DEFAULT 'full',
+  `config_email_header` text DEFAULT NULL,
+  `config_email_footer` text DEFAULT NULL,
+  `config_client_onboarding_email_subject` varchar(255) DEFAULT NULL,
+  `config_client_onboarding_email_body` text DEFAULT NULL,
   PRIMARY KEY (`company_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3138,6 +3142,39 @@ CREATE TABLE `vendors` (
   `vendor_client_id` int(11) NOT NULL DEFAULT 0,
   `vendor_template_id` int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`vendor_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `canned_responses`
+--
+
+DROP TABLE IF EXISTS `canned_responses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `canned_responses` (
+  `canned_id` int(11) NOT NULL AUTO_INCREMENT,
+  `canned_name` varchar(255) NOT NULL,
+  `canned_body` text NOT NULL,
+  PRIMARY KEY (`canned_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `knowledge_base`
+--
+
+DROP TABLE IF EXISTS `knowledge_base`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `knowledge_base` (
+  `kb_id` int(11) NOT NULL AUTO_INCREMENT,
+  `kb_title` varchar(255) NOT NULL,
+  `kb_content` mediumtext NOT NULL,
+  `kb_status` tinyint(1) NOT NULL DEFAULT 1,
+  `kb_created_at` datetime DEFAULT current_timestamp(),
+  `kb_updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`kb_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

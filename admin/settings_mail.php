@@ -16,7 +16,7 @@ $oauth_needed = in_array($config_smtp_provider, ['google_oauth', 'microsoft_oaut
 // ---- Active tab -------------------------------------------------------------
 // The tab lives in the URL (?tab=imap) so it can be linked, bookmarked, survives a
 //  reload, and lets the POST handlers send you back to the tab you saved from
-$mail_tabs = ['smtp', 'imap', 'oauth', 'from', 'tests'];
+$mail_tabs = ['smtp', 'imap', 'oauth', 'from', 'tests', 'templates'];
 $active_tab = isset($_GET['tab']) && in_array($_GET['tab'], $mail_tabs, true) ? $_GET['tab'] : 'smtp';
 
 // A direct link to the OAuth tab reveals it even when no OAuth provider is selected yet
@@ -96,6 +96,11 @@ $imap_ready = $imap_standard_ready || $imap_oauth_ready;
             <li class="nav-item">
                 <a class="nav-link <?php if ($active_tab === 'tests') { echo 'active'; } ?>" href="?tab=tests" data-target="#tab-tests">
                     <i class="fas fa-fw fa-vial mr-1"></i>Tests
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?php if ($active_tab === 'templates') { echo 'active'; } ?>" href="?tab=templates" data-target="#tab-templates">
+                    <i class="fas fa-fw fa-file-code mr-1"></i>Templates
                 </a>
             </li>
         </ul>
@@ -433,6 +438,28 @@ $imap_ready = $imap_standard_ready || $imap_oauth_ready;
 
             </div>
 
+            <!-- ============================ TEMPLATES ============================ -->
+            <div class="tab-pane fade <?php if ($active_tab === 'templates') { echo 'show active'; } ?>" id="tab-templates" role="tabpanel">
+                <form action="post.php" method="post" autocomplete="off">
+                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                    <input type="hidden" name="tab" value="templates">
+
+                    <p class="text-muted">Global HTML header and footer that will wrap all outgoing emails (tickets, quotes, invoices).</p>
+
+                    <div class="form-group">
+                        <label>Email Header HTML</label>
+                        <textarea class="form-control" name="config_email_header" rows="5" placeholder="<html><body>..."><?= escapeHtml($config_email_header ?? '') ?></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Email Footer HTML</label>
+                        <textarea class="form-control" name="config_email_footer" rows="5" placeholder="...</body></html>"><?= escapeHtml($config_email_footer ?? '') ?></textarea>
+                    </div>
+
+                    <button type="submit" name="edit_mail_templates" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save Templates</button>
+                </form>
+            </div>
+
         </div>
     </div>
 </div>
@@ -455,7 +482,7 @@ $imap_ready = $imap_standard_ready || $imap_oauth_ready;
     // Set when the page was opened directly on the OAuth tab - stops the provider pass hiding it
     const forcedOauthTab = <?= $active_tab === 'oauth' ? 'true' : 'false' ?>;
     const navLinks = Array.from(document.querySelectorAll('#mailTabs .nav-link'));
-    const panes = ['tab-smtp', 'tab-imap', 'tab-oauth', 'tab-from', 'tab-tests']
+    const panes = ['tab-smtp', 'tab-imap', 'tab-oauth', 'tab-from', 'tab-tests', 'tab-templates']
         .map(id => document.getElementById(id)).filter(Boolean);
 
     // Server rendered the initial tab; keep the URL honest as the user clicks around

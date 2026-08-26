@@ -111,7 +111,6 @@ if (isset($_POST['add_client'])) {
         }
     }
 
-    // Ticket SLA assignments (fields only rendered when active SLAs exist)
     if (isset($_POST['client_sla_low'])) {
         foreach (['Low', 'Medium', 'High', 'Urgent'] as $sla_priority) {
             $sla_value = strval($_POST['client_sla_' . strtolower($sla_priority)] ?? 'default');
@@ -119,6 +118,27 @@ if (isset($_POST['add_client'])) {
                 $client_sla_id = intval($sla_value);
                 mysqli_query($mysqli, "INSERT INTO sla_assignments SET sla_assignment_client_id = $client_id, sla_assignment_priority = '$sla_priority', sla_assignment_sla_id = $client_sla_id");
             }
+        }
+    }
+
+    if (!empty($contact_email)) {
+        $settings_sql = mysqli_query($mysqli, "SELECT config_client_onboarding_email_subject, config_client_onboarding_email_body FROM settings WHERE company_id = 1");
+        $settings_row = mysqli_fetch_assoc($settings_sql);
+        $onboarding_subject = $settings_row['config_client_onboarding_email_subject'] ?? '';
+        $onboarding_body = $settings_row['config_client_onboarding_email_body'] ?? '';
+
+        if (!empty($onboarding_subject) && !empty($onboarding_body)) {
+            $data = [
+                [
+                    'from' => $config_mail_from_email,
+                    'from_name' => $config_mail_from_name,
+                    'recipient' => $contact_email,
+                    'recipient_name' => $contact,
+                    'subject' => $onboarding_subject,
+                    'body' => $onboarding_body
+                ]
+            ];
+            addToMailQueue($data);
         }
     }
 
@@ -1382,11 +1402,9 @@ if (isset($_POST["export_client_pdf"])) {
       $company_phone<br>$company_email<br>
     ";
 
-    if (!$config_whitelabel_enabled) {
-        $html .= '<div style="text-align:right;">
-        <small class="text-muted">Powered by ITFlow</small>
-        </div>';
-    }
+    $html .= '<div style="text-align:right;">
+    <small class="text-muted">Powered by ' . $session_company_name . '</small>
+    </div>';
 
     $html .= '<hr>';
 

@@ -368,13 +368,18 @@ function addToMailQueue($data) {
 
     global $mysqli;
 
+    $settings_sql = mysqli_query($mysqli, "SELECT config_email_header, config_email_footer FROM settings WHERE company_id = 1");
+    $settings_row = mysqli_fetch_assoc($settings_sql);
+    $header = $settings_row['config_email_header'] ?? '';
+    $footer = $settings_row['config_email_footer'] ?? '';
+
     foreach ($data as $email) {
         $from = strval($email['from']);
         $from_name = strval($email['from_name']);
         $recipient = strval($email['recipient']);
         $recipient_name = strval($email['recipient_name']);
         $subject = strval($email['subject']);
-        $body = strval($email['body']);
+        $body = $header . strval($email['body']) . $footer;
 
         $cal_str = '';
         if (isset($email['cal_str'])) {

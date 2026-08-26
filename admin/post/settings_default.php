@@ -16,8 +16,10 @@ if (isset($_POST['edit_default_settings'])) {
     $calendar = intval($_POST['calendar']);
     $net_terms = intval($_POST['net_terms']);
     $hourly_rate = floatval($_POST['hourly_rate']);
+    $onboarding_subject = escapeSql($_POST['config_client_onboarding_email_subject'] ?? '');
+    $onboarding_body = escapeSql($_POST['config_client_onboarding_email_body'] ?? '');
 
-    mysqli_query($mysqli,"UPDATE settings SET config_start_page = '$start_page', config_default_expense_account = $expense_account, config_default_payment_account = $payment_account, config_default_payment_method = '$payment_method', config_default_expense_payment_method = '$expense_payment_method', config_default_transfer_from_account = $transfer_from_account, config_default_transfer_to_account = $transfer_to_account, config_default_calendar = $calendar, config_default_net_terms = $net_terms, config_default_hourly_rate = $hourly_rate WHERE company_id = 1");
+    mysqli_query($mysqli,"UPDATE settings SET config_start_page = '$start_page', config_default_expense_account = $expense_account, config_default_payment_account = $payment_account, config_default_payment_method = '$payment_method', config_default_expense_payment_method = '$expense_payment_method', config_default_transfer_from_account = $transfer_from_account, config_default_transfer_to_account = $transfer_to_account, config_default_calendar = $calendar, config_default_net_terms = $net_terms, config_default_hourly_rate = $hourly_rate, config_client_onboarding_email_subject = '$onboarding_subject', config_client_onboarding_email_body = '$onboarding_body' WHERE company_id = 1");
 
     logAudit("Settings", "Edit", "$session_name edited default settings");
 

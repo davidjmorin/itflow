@@ -48,6 +48,9 @@ header("X-Frame-Options: DENY"); // Legacy
                 <li class="nav-item">
                     <a class="nav-link <?php if (basename($_SERVER['PHP_SELF']) == "tickets.php" || basename($_SERVER['PHP_SELF']) == "ticket_add.php" || basename($_SERVER['PHP_SELF']) == "ticket.php") {echo "active";} ?>" href="/client/tickets.php">Tickets</a>
                 </li>
+                <li class="nav-item <?php if (basename($_SERVER['PHP_SELF']) == "knowledge_base.php") {echo "active";} ?>">
+                    <a class="nav-link" href="/client/knowledge_base.php">Knowledge Base</a>
+                </li>
 
                 <?php if (contactCan('accounting') && $config_module_enable_accounting == 1) { ?>
                     <li class="nav-item dropdown">

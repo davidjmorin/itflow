@@ -237,6 +237,23 @@ $net_terms_array = array (
             </div>
 
             <hr>
+            <h4>Onboarding Email</h4>
+            <p class="text-muted">This email is automatically queued when a new client is created and they have a primary contact.</p>
+            <div class="form-group">
+                <label>Email Subject</label>
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text"><i class="fa fa-fw fa-envelope"></i></span>
+                    </div>
+                    <input type="text" class="form-control" name="config_client_onboarding_email_subject" value="<?= escapeHtml($config_client_onboarding_email_subject ?? '') ?>" placeholder="Welcome to our Portal">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Email Body</label>
+                <textarea class="form-control tinymce" name="config_client_onboarding_email_body" rows="4"><?= escapeHtml($config_client_onboarding_email_body ?? '') ?></textarea>
+            </div>
+
+            <hr>
 
             <button type="submit" name="edit_default_settings" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Save</button>
 

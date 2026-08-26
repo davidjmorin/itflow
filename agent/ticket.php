@@ -733,9 +733,39 @@ if (isset($_GET['ticket_id'])) {
                                     <?php } ?>
                                 </div>
 
-                                <div class="form-group">
-                                    <textarea class="form-control tinymceTicket" name="ticket_reply" placeholder="Type a response"></textarea>
+                                <?php
+                                $canned_responses_js = [];
+                                $canned_sql = mysqli_query($mysqli, "SELECT canned_id, canned_name, canned_body FROM canned_responses ORDER BY canned_name ASC");
+                                if (mysqli_num_rows($canned_sql) > 0) {
+                                ?>
+                                <div class="form-group mb-2">
+                                    <select class="form-control" id="cannedResponseSelect">
+                                        <option value="">-- Insert Canned Response --</option>
+                                        <?php while ($canned_row = mysqli_fetch_assoc($canned_sql)) { 
+                                            $canned_responses_js[$canned_row['canned_id']] = $canned_row['canned_body'];
+                                        ?>
+                                            <option value="<?= $canned_row['canned_id'] ?>"><?= escapeHtml($canned_row['canned_name']) ?></option>
+                                        <?php } ?>
+                                    </select>
                                 </div>
+                                <?php } ?>
+                                <div class="form-group">
+                                    <textarea class="form-control tinymceTicket" id="ticketReplyBody" name="ticket_reply" placeholder="Type a response"></textarea>
+                                </div>
+                                <script>
+                                    const cannedResponses = <?= json_encode($canned_responses_js) ?>;
+                                    document.addEventListener('DOMContentLoaded', function() {
+                                        const select = document.getElementById('cannedResponseSelect');
+                                        if (select) {
+                                            select.addEventListener('change', function() {
+                                                if (this.value) {
+                                                    tinymce.get('ticketReplyBody').insertContent(cannedResponses[this.value]);
+                                                    this.value = '';
+                                                }
+                                            });
+                                        }
+                                    });
+                                </script>
 
                                 <div class="form-group">
                                     <input type="file" class="form-control-file" name="attachments[]" multiple accept=".jpg, .jpeg, .gif, .png, .webp, .pdf, .txt, .md, .doc, .docx, .odt, .csv, .xls, .xlsx, .ods, .pptx, .odp, .zip, .tar, .gz, .xml, .msg, .json, .wav, .mp3, .ogg, .mov, .mp4, .av1, .ovpn">

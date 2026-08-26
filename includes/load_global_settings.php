@@ -31,7 +31,7 @@ $sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azu
     config_ticket_from_name, config_ticket_moving_columns,
     config_ticket_new_ticket_notification_email, config_ticket_next_number,
     config_ticket_ordering, config_ticket_prefix, config_ticket_timer_autostart,
-    config_timezone, config_whitelabel_enabled, config_whitelabel_key FROM settings WHERE company_id = 1");
+    config_timezone, config_whitelabel_enabled, config_whitelabel_key, config_email_header, config_email_footer, config_client_onboarding_email_subject, config_client_onboarding_email_body FROM settings WHERE company_id = 1");
 $row = mysqli_fetch_assoc($sql_settings);
 
 // Database version
@@ -98,6 +98,12 @@ $config_recurring_invoice_next_number = intval($row['config_recurring_invoice_ne
 $config_quote_prefix = $row['config_quote_prefix'];
 $config_quote_next_number = intval($row['config_quote_next_number']);
 $config_quote_footer = $row['config_quote_footer'];
+
+// Templates
+$config_email_header = $row['config_email_header'] ?? '';
+$config_email_footer = $row['config_email_footer'] ?? '';
+$config_client_onboarding_email_subject = $row['config_client_onboarding_email_subject'] ?? '';
+$config_client_onboarding_email_body = $row['config_client_onboarding_email_body'] ?? '';
 $config_quote_from_name = $row['config_quote_from_name'];
 $config_quote_from_email = $row['config_quote_from_email'];
 $config_quote_notification_email = $row['config_quote_notification_email'];

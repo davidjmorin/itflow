@@ -511,3 +511,17 @@ if (isset($_POST['test_oauth_token_refresh'])) {
     flashAlert("OAuth token refresh successful for $provider_label. Access token expires at $new_expires_at.");
     redirect($mail_tab_redirect);
 }
+
+if (isset($_POST['edit_mail_templates'])) {
+    validateCSRFToken();
+
+    $config_email_header = escapeSql($_POST['config_email_header'] ?? '');
+    $config_email_footer = escapeSql($_POST['config_email_footer'] ?? '');
+
+    mysqli_query($mysqli, "UPDATE settings SET config_email_header = '$config_email_header', config_email_footer = '$config_email_footer' WHERE company_id = 1");
+
+    logAudit("Settings", "Edit", "$session_name updated email template settings");
+
+    flashAlert("Email Templates updated");
+    redirect($mail_tab_redirect);
+}
