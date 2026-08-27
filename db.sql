@@ -904,6 +904,60 @@ CREATE TABLE `contracts` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `contract_assets`
+--
+
+DROP TABLE IF EXISTS `contract_assets`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `contract_assets` (
+  `contract_id` int(11) NOT NULL,
+  `asset_id` int(11) NOT NULL,
+  PRIMARY KEY (`contract_id`,`asset_id`),
+  KEY `contract_id` (`contract_id`),
+  KEY `asset_id` (`asset_id`),
+  CONSTRAINT `contract_assets_ibfk_1` FOREIGN KEY (`contract_id`) REFERENCES `contracts` (`contract_id`) ON DELETE CASCADE,
+  CONSTRAINT `contract_assets_ibfk_2` FOREIGN KEY (`asset_id`) REFERENCES `assets` (`asset_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `contract_services`
+--
+
+DROP TABLE IF EXISTS `contract_services`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `contract_services` (
+  `contract_id` int(11) NOT NULL,
+  `service_id` int(11) NOT NULL,
+  PRIMARY KEY (`contract_id`,`service_id`),
+  KEY `contract_id` (`contract_id`),
+  KEY `service_id` (`service_id`),
+  CONSTRAINT `contract_services_ibfk_1` FOREIGN KEY (`contract_id`) REFERENCES `contracts` (`contract_id`) ON DELETE CASCADE,
+  CONSTRAINT `contract_services_ibfk_2` FOREIGN KEY (`service_id`) REFERENCES `services` (`service_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `contract_vendors`
+--
+
+DROP TABLE IF EXISTS `contract_vendors`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `contract_vendors` (
+  `contract_id` int(11) NOT NULL,
+  `vendor_id` int(11) NOT NULL,
+  PRIMARY KEY (`contract_id`,`vendor_id`),
+  KEY `contract_id` (`contract_id`),
+  KEY `vendor_id` (`vendor_id`),
+  CONSTRAINT `contract_vendors_ibfk_1` FOREIGN KEY (`contract_id`) REFERENCES `contracts` (`contract_id`) ON DELETE CASCADE,
+  CONSTRAINT `contract_vendors_ibfk_2` FOREIGN KEY (`vendor_id`) REFERENCES `vendors` (`vendor_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `credential_tags`
 --
 
