@@ -216,12 +216,62 @@ if (isset($_POST['edit_client'])) {
         }
     }
 
+    // Primary Address update from autocomplete
+    $primary_address_updated = false;
+    if (!empty($_POST['update_primary_address'])) {
+        $primary_address = escapeSql($_POST['primary_address'] ?? '');
+        $primary_city = escapeSql($_POST['primary_city'] ?? '');
+        $primary_state = escapeSql($_POST['primary_state'] ?? '');
+        $primary_zip = escapeSql($_POST['primary_zip'] ?? '');
+        $primary_country = escapeSql($_POST['primary_country'] ?? '');
+        $primary_phone = preg_replace("/[^0-9]/", '', $_POST['primary_phone'] ?? '');
+
+        if (!empty($primary_address) || !empty($primary_city) || !empty($primary_state) || !empty($primary_zip)) {
+            $sql_primary = mysqli_query($mysqli, "SELECT location_id FROM locations WHERE location_client_id = $client_id AND location_primary = 1 LIMIT 1");
+            if (mysqli_num_rows($sql_primary) > 0) {
+                $loc_row = mysqli_fetch_assoc($sql_primary);
+                $primary_loc_id = intval($loc_row['location_id']);
+                $update_loc_sql = "UPDATE locations SET
+                    location_address = '$primary_address',
+                    location_city = '$primary_city',
+                    location_state = '$primary_state',
+                    location_zip = '$primary_zip',
+                    location_country = '$primary_country'";
+                if (!empty($primary_phone)) {
+                    $update_loc_sql .= ", location_phone = '$primary_phone'";
+                }
+                $update_loc_sql .= " WHERE location_id = $primary_loc_id";
+                mysqli_query($mysqli, $update_loc_sql);
+
+                logAudit("Location", "Edit", "$session_name updated primary location $primary_address", $client_id, $primary_loc_id);
+            } else {
+                mysqli_query($mysqli, "INSERT INTO locations SET
+                    location_name = 'Primary',
+                    location_address = '$primary_address',
+                    location_city = '$primary_city',
+                    location_state = '$primary_state',
+                    location_zip = '$primary_zip',
+                    location_country = '$primary_country',
+                    location_phone = '$primary_phone',
+                    location_primary = 1,
+                    location_client_id = $client_id");
+
+                $new_loc_id = mysqli_insert_id($mysqli);
+                logAudit("Location", "Create", "$session_name created primary location $primary_address", $client_id, $new_loc_id);
+            }
+            $primary_address_updated = true;
+        }
+    }
+
     logAudit("Client", "Edit", "$session_name edited client $name", $client_id, $client_id);
 
-    flashAlert("Client <strong>$name</strong> updated");
+    if ($primary_address_updated) {
+        flashAlert("Client <strong>$name</strong> and primary address updated");
+    } else {
+        flashAlert("Client <strong>$name</strong> updated");
+    }
 
     redirect();
-
 }
 
 if (isset($_GET['archive_client'])) {

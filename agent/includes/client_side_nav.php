@@ -258,6 +258,14 @@
                 <?php if ($config_module_enable_accounting == 1) { ?>
 
                     <li class="nav-header mt-3">BILLING</li>
+                    
+                    <li class="nav-item">
+                        <a href="/agent/contracts.php?client_id=<?= $client_id ?>" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "contracts.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-file-contract"></i>
+                            <p>Contracts</p>
+                        </a>
+                    </li>
+
 
                     <?php if (lookupUserPermission("module_sales") >= 1) { ?>
 

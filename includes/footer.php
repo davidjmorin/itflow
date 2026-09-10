@@ -4,7 +4,7 @@ require_once "inc_confirm_modal.php";
 
 <?php
 if (basename(dirname($_SERVER['REQUEST_URI'])) === 'admin') { ?>
-    <p class="text-right font-weight-light">ITFlow <?= APP_VERSION ?> &nbsp; · &nbsp; <a target="_blank" href="https://docs.itflow.org">Docs</a> &nbsp; · &nbsp; <a target="_blank" href="https://forum.itflow.org">Forum</a> &nbsp; · &nbsp; <a target="_blank" href="https://services.itflow.org">Services</a></p>
+    <p class="text-right font-weight-light"><?= escapeHtml($session_company_name) ?>  <?= APP_VERSION ?> &nbsp; · &nbsp; <a target="_blank" href="https://docs.itflow.org">Docs</a> &nbsp; · &nbsp; <a target="_blank" href="https://forum.itflow.org">Forum</a> &nbsp; · &nbsp; <a target="_blank" href="https://services.itflow.org">Services</a></p>
     <br>
 <?php } ?>
 <?php
@@ -12,9 +12,7 @@ if (basename(dirname($_SERVER['REQUEST_URI'])) === 'guest') { ?>
 <p class="text-center">
     <?php
         echo escapeHtml($session_company_name);
-        if (!$config_whitelabel_enabled) {
-            echo '<br><small class="text-muted">Powered by ITFlow</small>';
-        }
+        echo '<br><small class="text-muted">Powered by ' . escapeHtml($session_company_name) . '</small>';
     ?>
 </p>
 <?php } ?>
@@ -52,6 +50,11 @@ if (basename(dirname($_SERVER['REQUEST_URI'])) === 'guest') { ?>
 <script src="/js/ajax_modal.js"></script>
 <script src="/js/confirm_modal.js"></script>
 <script src="/js/date_filter.js"></script>
+
+<?php if (!empty($config_google_places_api_key)) { ?>
+<!-- Google Places Address Autocomplete (Places API New) -->
+<script src="/js/address_autocomplete.js?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'] . '/js/address_autocomplete.js') ?>"></script>
+<?php } ?>
 
 </body>
 </html>

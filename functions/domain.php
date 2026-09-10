@@ -467,3 +467,40 @@ function getDomainExpirationDate($domain) {
  
     return null;
 }
+
+function resolveDomainVendor($val, $client_id, $default_desc = 'Vendor') {
+    global $mysqli;
+
+    if (empty($val)) {
+        return 0;
+    }
+
+    if (is_numeric($val)) {
+        $val_int = intval($val);
+        if ($val_int <= 0) {
+            return 0;
+        }
+        $check = mysqli_query($mysqli, "SELECT vendor_id FROM vendors WHERE vendor_id = $val_int LIMIT 1");
+        if (mysqli_num_rows($check) > 0) {
+            return $val_int;
+        }
+    }
+
+    $name = trim((string)$val);
+    if ($name === '' || $name === '- Select Vendor -' || $name === '- Vendor -') {
+        return 0;
+    }
+
+    $client_id = intval($client_id);
+    $escaped_name = escapeSql($name);
+
+    $find_sql = "SELECT vendor_id FROM vendors WHERE (vendor_client_id = $client_id OR vendor_client_id = 0) AND vendor_archived_at IS NULL AND (vendor_name = '$escaped_name' OR LOWER(vendor_name) = LOWER('$escaped_name')) ORDER BY vendor_client_id DESC LIMIT 1";
+    $result = mysqli_query($mysqli, $find_sql);
+    if ($row = mysqli_fetch_assoc($result)) {
+        return intval($row['vendor_id']);
+    }
+
+    $escaped_desc = escapeSql($default_desc);
+    mysqli_query($mysqli, "INSERT INTO vendors SET vendor_name = '$escaped_name', vendor_description = '$escaped_desc', vendor_client_id = $client_id");
+    return intval(mysqli_insert_id($mysqli));
+}

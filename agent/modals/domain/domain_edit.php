@@ -47,6 +47,7 @@ ob_start();
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="domain_id" value="<?= $domain_id ?>">
+    <input type="hidden" name="client_id" value="<?= $client_id ?>">
 
     <div class="modal-body">
 
@@ -77,7 +78,13 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-globe"></i></span>
                         </div>
-                        <input type="text" class="form-control" name="name" placeholder="Domain name example.com" maxlength="200" value="<?= $domain_name ?>" required>
+                        <input type="text" class="form-control" name="name" id="domain_name_edit<?= $domain_id ?>" placeholder="Domain name example.com" maxlength="200" value="<?= $domain_name ?>" required>
+                        <div class="input-group-append">
+                            <button class="btn btn-outline-secondary" type="button" onclick="checkDomainLookupEdit<?= $domain_id ?>()"><i class="fas fa-sync-alt mr-1"></i>Lookup WHOIS</button>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <span class="text-info" id="domain_check_info_edit<?= $domain_id ?>"></span>
                     </div>
                 </div>
 
@@ -97,10 +104,10 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-server"></i></span>
                         </div>
-                        <select class="form-control select2" name="registrar">
+                        <select class="form-control select2" data-tags="true" data-placeholder="- Select Vendor -" name="registrar" id="domain_registrar_edit<?= $domain_id ?>">
                             <option value="">- Select Vendor -</option>
                             <?php
-                            $vendor_sql = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_client_id = $client_id AND vendor_archived_at IS NULL ORDER BY vendor_name ASC");
+                            $vendor_sql = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE (vendor_client_id = $client_id OR vendor_client_id = 0) AND vendor_archived_at IS NULL ORDER BY vendor_name ASC");
                                 while ($row = mysqli_fetch_assoc($vendor_sql)) {
                                     $vendor_id = $row['vendor_id'];
                                     $vendor_name = $row['vendor_name'];
@@ -119,16 +126,18 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-server"></i></span>
                         </div>
-                        <select class="form-control select2" name="webhost">
+                        <select class="form-control select2" data-tags="true" data-placeholder="- Select Vendor -" name="webhost" id="domain_webhost_edit<?= $domain_id ?>">
                             <option value="">- Select Vendor -</option>
                             <?php
-                            $vendor_sql = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_client_id = $client_id AND vendor_archived_at IS NULL ORDER BY vendor_name ASC");
+                            if (isset($vendor_sql)) {
+                                mysqli_data_seek($vendor_sql, 0);
                                 while ($row = mysqli_fetch_assoc($vendor_sql)) {
                                     $vendor_id = $row['vendor_id'];
                                     $vendor_name = $row['vendor_name'];
                                 ?>
                                 <option <?php if ($domain_webhost == $vendor_id) { echo "selected"; } ?> value="<?= $vendor_id ?>"><?= $vendor_name ?></option>
                             <?php
+                                }
                             }
                             ?>
                         </select>
@@ -141,16 +150,18 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-server"></i></span>
                         </div>
-                        <select class="form-control select2" name="dnshost">
+                        <select class="form-control select2" data-tags="true" data-placeholder="- Select Vendor -" name="dnshost" id="domain_dnshost_edit<?= $domain_id ?>">
                             <option value="">- Select Vendor -</option>
                             <?php
-                            $vendor_sql = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_client_id = $client_id AND vendor_archived_at IS NULL ORDER BY vendor_name ASC");
+                            if (isset($vendor_sql)) {
+                                mysqli_data_seek($vendor_sql, 0);
                                 while ($row = mysqli_fetch_assoc($vendor_sql)) {
                                     $vendor_id = $row['vendor_id'];
                                     $vendor_name = $row['vendor_name'];
                                 ?>
                                 <option <?php if ($domain_dnshost == $vendor_id) { echo "selected"; } ?> value="<?= $vendor_id ?>"><?= $vendor_name ?></option>
                             <?php
+                                }
                             }
                             ?>
                         </select>
@@ -163,16 +174,18 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-envelope"></i></span>
                         </div>
-                        <select class="form-control select2" name="mailhost">
+                        <select class="form-control select2" data-tags="true" data-placeholder="- Select Vendor -" name="mailhost" id="domain_mailhost_edit<?= $domain_id ?>">
                             <option value="">- Select Vendor -</option>
                             <?php
-                            $vendor_sql = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_client_id = $client_id AND vendor_archived_at IS NULL ORDER BY vendor_name ASC");
+                            if (isset($vendor_sql)) {
+                                mysqli_data_seek($vendor_sql, 0);
                                 while ($row = mysqli_fetch_assoc($vendor_sql)) {
                                     $vendor_id = $row['vendor_id'];
                                     $vendor_name = $row['vendor_name'];
                                 ?>
                                 <option <?php if ($domain_mailhost == $vendor_id) { echo "selected"; } ?> value="<?= $vendor_id ?>"><?= $vendor_name ?></option>
                             <?php
+                                }
                             }
                             ?>
                         </select>
@@ -185,7 +198,7 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-calendar-times"></i></span>
                         </div>
-                        <input type="date" class="form-control" name="expire" max="2999-12-31" value="<?= $domain_expire ?>">
+                        <input type="date" class="form-control" name="expire" id="domain_expire_edit<?= $domain_id ?>" max="2999-12-31" value="<?= $domain_expire ?>">
                     </div>
                 </div>
 
@@ -290,6 +303,69 @@ ob_start();
         <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
     </div>
 </form>
+
+<script>
+    function checkDomainLookupEdit<?= $domain_id ?>() {
+        var domainElem = document.getElementById("domain_name_edit<?= $domain_id ?>");
+        if (!domainElem) return;
+        var domain = domainElem.value.trim();
+        if (domain.length < 3) return;
+
+        var clientId = <?= $client_id ?>;
+        var checkInfo = document.getElementById("domain_check_info_edit<?= $domain_id ?>");
+
+        if (checkInfo) {
+            checkInfo.innerHTML = '<span class="text-muted"><i class="fas fa-spinner fa-spin mr-1"></i>Looking up WHOIS & RDAP records...</span>';
+        }
+
+        jQuery.getJSON(
+            "ajax.php",
+            {domain_lookup: 'true', domain: domain, client_id: clientId},
+            function(data) {
+                if (!checkInfo) return;
+                if (!data.success) {
+                    checkInfo.innerHTML = data.message || '';
+                    return;
+                }
+
+                var feedback = [];
+                if (data.expire) {
+                    var expireInput = document.getElementById("domain_expire_edit<?= $domain_id ?>");
+                    if (expireInput) {
+                        expireInput.value = data.expire;
+                    }
+                    feedback.push('Expires: <strong>' + data.expire + '</strong>');
+                }
+
+                if (data.registrar) {
+                    var regSelect = document.getElementById("domain_registrar_edit<?= $domain_id ?>");
+                    if (regSelect) {
+                        if (data.matched_vendor_id > 0) {
+                            jQuery(regSelect).val(data.matched_vendor_id).trigger('change');
+                            feedback.push('Registrar: <strong>' + data.registrar + '</strong> (Matched: ' + data.matched_vendor_name + ')');
+                        } else {
+                            if (jQuery(regSelect).find("option[value='" + data.registrar + "']").length === 0) {
+                                var newOption = new Option(data.registrar, data.registrar, true, true);
+                                jQuery(regSelect).append(newOption).trigger('change');
+                            } else {
+                                jQuery(regSelect).val(data.registrar).trigger('change');
+                            }
+                            feedback.push('Registrar: <strong>' + data.registrar + '</strong>');
+                        }
+                    }
+                }
+
+                if (feedback.length > 0) {
+                    checkInfo.innerHTML = '<span class="text-success"><i class="fas fa-check-circle mr-1"></i>Auto-detected: ' + feedback.join(' &bull; ') + '</span>';
+                } else {
+                    checkInfo.innerHTML = '<span class="text-success"><i class="fas fa-check-circle mr-1"></i>Domain is valid</span>';
+                }
+            }
+        ).fail(function() {
+            if (checkInfo) checkInfo.innerHTML = '';
+        });
+    }
+</script>
 
 <?php
 require_once '../../../includes/modal_footer.php';

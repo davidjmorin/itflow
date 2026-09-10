@@ -1,6 +1,7 @@
 node_modules
 config.php
-
+AGENTS.md
+.agents/
 uploads/favicon.ico
 uploads/clients/*
 !uploads/clients/index.php

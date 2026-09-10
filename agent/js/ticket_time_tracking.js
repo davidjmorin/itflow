@@ -151,19 +151,25 @@
         // Attach input listeners with null checks
         const hoursEl = document.getElementById("hours");
         if (hoursEl) {
+            hoursEl.addEventListener('input', updateTimeFromInput);
             hoursEl.addEventListener('change', updateTimeFromInput);
+            hoursEl.addEventListener('keyup', updateTimeFromInput);
             hoursEl.addEventListener('focus', handleInputFocus);
         }
 
         const minutesEl = document.getElementById("minutes");
         if (minutesEl) {
+            minutesEl.addEventListener('input', updateTimeFromInput);
             minutesEl.addEventListener('change', updateTimeFromInput);
+            minutesEl.addEventListener('keyup', updateTimeFromInput);
             minutesEl.addEventListener('focus', handleInputFocus);
         }
 
         const secondsEl = document.getElementById("seconds");
         if (secondsEl) {
+            secondsEl.addEventListener('input', updateTimeFromInput);
             secondsEl.addEventListener('change', updateTimeFromInput);
+            secondsEl.addEventListener('keyup', updateTimeFromInput);
             secondsEl.addEventListener('focus', handleInputFocus);
         }
 
@@ -193,7 +199,11 @@
         const addReplyBtn = document.getElementById("ticket_add_reply");
         if (addReplyBtn) {
             addReplyBtn.addEventListener('click', function() {
-                setTimeout(forceResetTimer, 100);
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                setTimeout(clearTimeStorage, 500);
             });
         }
 

@@ -1,7 +1,9 @@
 <?php
 // Get Main Side Bar Badge Counts
 
-// Active Clients Count
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('lead_id') AS num FROM leads WHERE lead_status = 'Open' AND lead_archived_at IS NULL"));
+$num_active_leads = $row['num'] ?? 0;
+
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('client_id') AS num FROM clients WHERE client_archived_at IS NULL " . clientScopeSql('clients.client_id') . ""));
 $num_active_clients = $row['num'];
 

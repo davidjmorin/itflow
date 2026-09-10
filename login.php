@@ -794,6 +794,11 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
 
             <?php if($config_client_portal_enable == 1){ ?>
                 <hr>
+                <div class="mb-3">
+                    <a href="guest/guest_submit_ticket.php" class="btn btn-outline-primary btn-block">
+                        <i class="fas fa-ticket-alt mr-2"></i>Submit a Ticket without Logging In
+                    </a>
+                </div>
                 <?php if (!empty($config_smtp_provider)) { ?>
                     <a href="client/login_reset.php">Forgot password?</a>
                 <?php } ?>
@@ -811,9 +816,7 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
 </div>
 
 <?php
-if (!$config_whitelabel_enabled) {
-    echo '<small class="text-muted">Powered by ITFlow</small>';
-}
+echo '<small class="text-muted">Powered by ' . escapeHtml($company_name) . '</small>';
 ?>
 
 <script src="libs/jquery/jquery.min.js"></script>

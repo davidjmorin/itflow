@@ -720,6 +720,65 @@ if ($user_config_dashboard_technical_enable == 1) {
         <!-- ./col -->
     </div> <!-- row -->
 
+    <?php
+    // Fetch Expiring Contracts
+    $sql_expiring_contracts = mysqli_query($mysqli, "
+        SELECT contract_id, contract_name, contract_end_date, contract_client_id, client_name
+        FROM contracts
+        LEFT JOIN clients ON contract_client_id = client_id
+        WHERE contract_archived_at IS NULL 
+        AND contract_status = 'Active'
+        AND contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY)
+        ORDER BY contract_end_date ASC
+    ");
+    $num_expiring_contracts = mysqli_num_rows($sql_expiring_contracts);
+    
+    if ($num_expiring_contracts > 0) {
+    ?>
+        <div class="row">
+            <div class="col-12">
+                <div class="card card-dark mb-3">
+                    <div class="card-header">
+                        <h3 class="card-title"><i class="fa fa-fw fa-file-contract mr-2"></i>Expiring Contracts (90 Days)</h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="remove">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-responsive-sm">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Client</th>
+                                    <th>Contract Name</th>
+                                    <th>Expire Date</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php while ($row = mysqli_fetch_assoc($sql_expiring_contracts)) { 
+                                    $c_id = intval($row['contract_id']);
+                                    $client_id = intval($row['contract_client_id']);
+                                    $client_name = escapeHtml($row['client_name']);
+                                    $contract_name = escapeHtml($row['contract_name']);
+                                    $expire_date = escapeHtml($row['contract_end_date']);
+                                ?>
+                                    <tr>
+                                        <td><a href="client_overview.php?client_id=<?= $client_id ?>"><strong><?= $client_name ?></strong></a></td>
+                                        <td><?= $contract_name ?></td>
+                                        <td class="text-danger"><strong><?= $expire_date ?></strong></td>
+                                        <td><a class="btn btn-sm btn-primary" href="contracts.php?client_id=<?= $client_id ?>"><i class="fa fa-arrow-right"></i> View</a></td>
+                                    </tr>
+                                <?php } ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php } ?>
+
     <?php if ($your_tickets) { ?>
         <div class="row">
             <div class="col-12">

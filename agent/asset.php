@@ -231,6 +231,10 @@ if (isset($_GET['asset_id'])) {
                 credentials.credential_id AS credential_id,
                 credentials.credential_name,
                 credentials.credential_description,
+                credentials.credential_type,
+                credentials.credential_wifi_ssid,
+                credentials.credential_wifi_passcode,
+                credentials.credential_wifi_encryption,
                 credentials.credential_uri,
                 credentials.credential_username,
                 credentials.credential_password,
@@ -271,6 +275,15 @@ if (isset($_GET['asset_id'])) {
             ORDER BY service_name ASC"
         );
         $service_count = mysqli_num_rows($sql_linked_services);
+
+        // Linked Contracts
+        $sql_linked_contracts = mysqli_query($mysqli, "
+            SELECT c.* FROM contracts c
+            JOIN contract_assets ca ON c.contract_id = ca.contract_id
+            WHERE ca.asset_id = $asset_id AND c.contract_archived_at IS NULL
+            ORDER BY c.contract_id DESC
+        ");
+        $linked_contract = mysqli_fetch_assoc($sql_linked_contracts);
 
         $linked_services = array();
 
@@ -339,6 +352,42 @@ if (isset($_GET['asset_id'])) {
                         <?php }
                         if ($asset_warranty_expire) { ?>
                             <div class="mt-2"><i class="fa fa-fw fa-exclamation-triangle text-secondary mr-2"></i><?= date('Y-m-d', strtotime($asset_warranty_expire)); ?></div>
+                        <?php } ?>
+
+                        <hr>
+                        <?php if ($linked_contract) { ?>
+                            <div class="p-2 bg-light border rounded">
+                                <small class="text-muted d-block text-uppercase font-weight-bold"><i class="fa fa-shield-alt text-success mr-1"></i>Covered by Contract</small>
+                                <div class="mt-1">
+                                    <a href="contract.php?contract_id=<?= $linked_contract['contract_id'] ?>" class="text-bold text-dark">
+                                        <?= escapeHtml($linked_contract['contract_name']) ?>
+                                    </a>
+                                </div>
+                                <div class="mt-1">
+                                    <span class="badge badge-success"><?= escapeHtml($linked_contract['contract_status']) ?></span>
+                                    <span class="badge badge-info"><?= escapeHtml($linked_contract['contract_type']) ?></span>
+                                </div>
+                            </div>
+                        <?php } else {
+                            $sql_client_contract = mysqli_query($mysqli, "SELECT * FROM contracts WHERE contract_client_id = $client_id AND contract_status = 'Active' AND contract_archived_at IS NULL LIMIT 1");
+                            if ($client_contract = mysqli_fetch_assoc($sql_client_contract)) { ?>
+                                <div class="p-2 bg-light border rounded">
+                                    <small class="text-muted d-block text-uppercase font-weight-bold"><i class="fa fa-file-contract text-info mr-1"></i>Client Active Contract</small>
+                                    <div class="mt-1">
+                                        <a href="contract.php?contract_id=<?= $client_contract['contract_id'] ?>" class="text-bold text-dark">
+                                            <?= escapeHtml($client_contract['contract_name']) ?>
+                                        </a>
+                                    </div>
+                                    <div class="mt-1">
+                                        <span class="badge badge-success"><?= escapeHtml($client_contract['contract_status']) ?></span>
+                                        <span class="badge badge-info"><?= escapeHtml($client_contract['contract_type']) ?></span>
+                                    </div>
+                                </div>
+                            <?php } else { ?>
+                                <div class="p-2 bg-light border rounded text-secondary small">
+                                    <i class="fa fa-exclamation-circle text-muted mr-1"></i>No Active Contract Linked
+                                </div>
+                            <?php } ?>
                         <?php } ?>
                     </div>
                 </div>
@@ -434,7 +483,7 @@ if (isset($_GET['asset_id'])) {
                                 <i class="fa fa-fw fa-recycle mr-2"></i>New Recurring Ticket
                             </a>
                             <div class="dropdown-divider"></div>
-                            <a class="dropdown-item text-dark ajax-modal" href="#" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>asset_id=<?= $asset_id ?>">
+                            <a class="dropdown-item text-dark ajax-modal" href="#" data-modal-size="lg" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>asset_id=<?= $asset_id ?>">
                                 <i class="fa fa-fw fa-key mr-2"></i>New Credential
                             </a>
                             <div class="dropdown-divider"></div>
@@ -722,18 +771,43 @@ if (isset($_GET['asset_id'])) {
                                     $credential_tags_display = implode('', $credential_tag_name_display_array);
 
                                     ?>
+                                    <?php
+                                    $credential_type = escapeHtml($row['credential_type'] ?? 'Standard');
+                                    $credential_wifi_ssid = escapeHtml($row['credential_wifi_ssid'] ?? '');
+                                    $credential_wifi_passcode = $row['credential_wifi_passcode'] ?? '';
+                                    ?>
                                     <tr>
                                         <td>
-                                            <i class="fa fa-fw fa-key text-secondary"></i>
+                                            <?php if ($credential_type == 'Wi-Fi') { ?>
+                                                <i class="fa fa-fw fa-wifi text-info"></i>
+                                            <?php } else { ?>
+                                                <i class="fa fa-fw fa-key text-secondary"></i>
+                                            <?php } ?>
                                             <a class="text-dark ajax-modal" href="#"
+                                                data-modal-size="lg"
                                                 data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                                 <?= $credential_name ?>
                                             </a>
+                                            <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_ssid)) { ?>
+                                                <div><small class="text-muted"><i class="fa fa-wifi mr-1"></i><?= $credential_wifi_ssid ?></small></div>
+                                            <?php } ?>
                                         </td>
                                         <td><?= $credential_description; ?></td>
                                         <td><?= $credential_username_display; ?></td>
-                                        <td>
-                                            <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                        <td class="text-nowrap">
+                                            <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_passcode)) { ?>
+                                                <div class="mb-1">
+                                                    <small class="text-info font-weight-bold">Wi-Fi:</small>
+                                                    <button class="btn p-0" type="button" title="Show Wi-Fi Passcode" onclick="showWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-info"></i><i class="fas fa-2x fa-ellipsis-h text-info"></i></button>
+                                                    <button class="btn btn-sm" type="button" title="Copy Wi-Fi Passcode" onclick="copyWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-info"></i></button>
+                                                </div>
+                                            <?php } ?>
+                                            <?php if ($credential_type != 'Wi-Fi' || !empty($row['credential_password'])) { ?>
+                                                <div>
+                                                    <?php if ($credential_type == 'Wi-Fi') { echo "<small class='text-secondary font-weight-bold'>Admin:</small> "; } ?>
+                                                    <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                                </div>
+                                            <?php } ?>
                                         </td>
                                         <td><?= $otp_display; ?></td>
                                         <td><?= $credential_uri_display; ?></td>
@@ -744,6 +818,7 @@ if (isset($_GET['asset_id'])) {
                                                 </button>
                                                 <div class="dropdown-menu">
                                                     <a class="dropdown-item ajax-modal" href="#"
+                                                        data-modal-size="lg"
                                                         data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                                         <i class="fas fa-fw fa-edit mr-2"></i>Edit
                                                     </a>
@@ -1367,7 +1442,7 @@ if (isset($_GET['asset_id'])) {
 
     <!-- Include scripts to fetch TOTP codes and passwords via the credential ID -->
     <script src="js/credential_show_otp_via_id.js"></script>
-    <script src="js/credential_show_password_via_id.js"></script>
+    <script src="js/credential_show_password_via_id.js?v=2.6.8"></script>
 
     <script src="../js/bulk_actions.js"></script>
 

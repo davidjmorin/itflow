@@ -8,17 +8,16 @@
 <!-- Close container -->
 </div>
 
-<br>
-<hr>
-
-<p class="text-center">
-    <?php
-        echo escapeHtml($session_company_name);
-        if (!$config_whitelabel_enabled) {
-            echo '<br><small class="text-muted">Powered by ITFlow</small>';
-        }
-    ?>
-</p>
+<footer class="portal-footer">
+    <div class="container text-center">
+        <div class="portal-footer-brand">
+            <?= escapeHtml($session_company_name) ?>
+        </div>
+        <div class="portal-footer-sub">
+            Powered by <?= escapeHtml($session_company_name) ?>
+        </div>
+    </div>
+</footer>
 
 
 <?php require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/inc_confirm_modal.php'; ?>

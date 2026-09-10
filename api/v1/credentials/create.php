@@ -10,10 +10,10 @@ require_once 'credential_model.php';
 // Default
 $insert_id = false;
 
-if (!empty($api_key_decrypt_password) && !empty($name) && !(empty($password))) {
+if (!empty($api_key_decrypt_password) && !empty($name) && (!empty($password) || !empty($wifi_passcode))) {
 
     // Add credential
-    $insert_sql = mysqli_query($mysqli,"INSERT INTO credentials SET credential_name = '$name', credential_description = '$description', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id, credential_client_id = $client_id");
+    $insert_sql = mysqli_query($mysqli,"INSERT INTO credentials SET credential_name = '$name', credential_description = '$description', credential_type = '$type', credential_wifi_ssid = '$wifi_ssid', credential_wifi_passcode = '$wifi_passcode', credential_wifi_encryption = '$wifi_encryption', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id, credential_client_id = $client_id");
 
     // Check insert & get insert ID
     if ($insert_sql) {

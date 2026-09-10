@@ -462,6 +462,33 @@ if (isset($_GET['ticket_id'])) {
                             <span class="text-info" id="ticket_collision_viewing"></span>
                         </div>
 
+                        <?php
+                        if ($client_id) {
+                            $sql_ticket_contract = mysqli_query($mysqli, "
+                                SELECT * FROM contracts
+                                WHERE contract_client_id = $client_id
+                                AND contract_status = 'Active'
+                                AND contract_archived_at IS NULL
+                                ORDER BY contract_id DESC LIMIT 1
+                            ");
+                            $ticket_contract = mysqli_fetch_assoc($sql_ticket_contract);
+                            if ($ticket_contract) { ?>
+                                <div class="mt-2">
+                                    <span class="badge badge-success px-2 py-1"><i class="fa fa-shield-alt mr-1"></i>Covered by Contract</span>
+                                    <a href="contract.php?contract_id=<?= $ticket_contract['contract_id'] ?>" class="text-bold text-dark ml-1">
+                                        <?= escapeHtml($ticket_contract['contract_name']) ?> <span class="text-secondary">(<?= escapeHtml($ticket_contract['contract_type']) ?>)</span>
+                                    </a>
+                                    <span class="text-muted small ml-2 d-none d-md-inline">
+                                        Response SLA: Low <?= intval($ticket_contract['contract_sla_low_response_time']) ?>m / Med <?= intval($ticket_contract['contract_sla_medium_response_time']) ?>m / High <?= intval($ticket_contract['contract_sla_high_response_time']) ?>m
+                                    </span>
+                                </div>
+                            <?php } else { ?>
+                                <div class="mt-2">
+                                    <span class="badge badge-warning px-2 py-1"><i class="fa fa-exclamation-triangle mr-1"></i>No Active Contract / Break-Fix</span>
+                                </div>
+                            <?php }
+                        } ?>
+
                     </div>
 
                     <!-- Actions -->

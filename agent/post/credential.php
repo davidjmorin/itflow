@@ -18,7 +18,7 @@ if (isset($_POST['add_credential'])) {
 
     enforceClientAccess();
 
-    mysqli_query($mysqli,"INSERT INTO credentials SET credential_name = '$name', credential_description = '$description', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id, credential_client_id = $client_id");
+    mysqli_query($mysqli,"INSERT INTO credentials SET credential_name = '$name', credential_description = '$description', credential_type = '$type', credential_wifi_ssid = '$wifi_ssid', credential_wifi_passcode = '$wifi_passcode', credential_wifi_encryption = '$wifi_encryption', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id, credential_client_id = $client_id");
 
     $credential_id = mysqli_insert_id($mysqli);
 
@@ -53,7 +53,7 @@ if (isset($_POST['edit_credential'])) {
     enforceClientAccess();
 
     // Determine if the password has actually changed (salt is rotated on all updates, so have to dencrypt both and compare)
-    $current_password = decryptCredentialEntry(mysqli_fetch_row(mysqli_query($mysqli, "SELECT credential_password FROM credentials WHERE credential_id = $credential_id"))[0]); // Get current credential password
+    $current_password = decryptCredentialEntry(mysqli_fetch_row(mysqli_query($mysqli, "SELECT credential_password FROM credentials WHERE credential_id = $credential_id"))[0] ?? ''); // Get current credential password
     $new_password = decryptCredentialEntry($password); // Get the new password being set (already encrypted by the credential model)
     if ($current_password !== $new_password) {
         // The password has been changed - update the DB to track
@@ -61,7 +61,7 @@ if (isset($_POST['edit_credential'])) {
     }
 
     // Update the credential entry with the new details
-    mysqli_query($mysqli,"UPDATE credentials SET credential_name = '$name', credential_description = '$description', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id WHERE credential_id = $credential_id");
+    mysqli_query($mysqli,"UPDATE credentials SET credential_name = '$name', credential_description = '$description', credential_type = '$type', credential_wifi_ssid = '$wifi_ssid', credential_wifi_passcode = '$wifi_passcode', credential_wifi_encryption = '$wifi_encryption', credential_uri = '$uri', credential_uri_2 = '$uri_2', credential_username = '$username', credential_password = '$password', credential_otp_secret = '$otp_secret', credential_note = '$note', credential_favorite = $favorite, credential_contact_id = $contact_id, credential_asset_id = $asset_id WHERE credential_id = $credential_id");
 
     // Tags
     // Delete existing tags
@@ -486,7 +486,7 @@ if (isExportRequest('export_credentials')) {
         LEFT JOIN assets ON asset_id = credential_asset_id
         WHERE $archive_query
         $tag_query
-        AND (c.credential_name LIKE '%$q%' OR c.credential_description LIKE '%$q%' OR c.credential_uri LIKE '%$q%' OR tag_name LIKE '%$q%' OR client_name LIKE '%$q%')
+        AND (c.credential_name LIKE '%$q%' OR c.credential_description LIKE '%$q%' OR c.credential_uri LIKE '%$q%' OR c.credential_wifi_ssid LIKE '%$q%' OR tag_name LIKE '%$q%' OR client_name LIKE '%$q%')
         " . clientScopeSql('credential_client_id') . "
         $client_query
         GROUP BY c.credential_id
@@ -504,6 +504,7 @@ if (isExportRequest('export_credentials')) {
         while ($row = mysqli_fetch_assoc($sql)) {
             $row['credential_username'] = decryptCredentialEntry($row['credential_username']);
             $row['credential_password'] = decryptCredentialEntry($row['credential_password']);
+            $row['credential_wifi_passcode'] = !empty($row['credential_wifi_passcode']) ? decryptCredentialEntry($row['credential_wifi_passcode']) : '';
             addExportRow($export, $row);
         }
 

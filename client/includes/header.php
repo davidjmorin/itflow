@@ -29,6 +29,8 @@ header("X-Frame-Options: DENY"); // Legacy
     <!-- Theme style -->
     <link rel="stylesheet" href="/libs/adminlte/css/adminlte.min.css">
 
+    <!-- Modern Client Portal Theme -->
+    <link rel="stylesheet" href="/css/client_portal.css">
 </head>
 
 <!-- Navbar -->
@@ -54,13 +56,14 @@ header("X-Frame-Options: DENY"); // Legacy
 
                 <?php if (contactCan('accounting') && $config_module_enable_accounting == 1) { ?>
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle <?= in_array(basename($_SERVER['PHP_SELF']), ['invoices.php', 'quotes.php', 'autopay.php']) ? 'active' : '' ?>" href="#" id="navbarDropdown1" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                        <a class="nav-link dropdown-toggle <?= in_array(basename($_SERVER['PHP_SELF']), ['invoices.php', 'quotes.php', 'autopay.php', 'contracts.php']) ? 'active' : '' ?>" href="#" id="navbarDropdown1" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                             Finance
                         </a>
                         <div class="dropdown-menu" aria-labelledby="navbarDropdown1">
                             <a class="dropdown-item" href="/client/invoices.php">Invoices</a>
                             <a class="dropdown-item" href="/client/recurring_invoices.php">Recurring Invoices</a>
                             <a class="dropdown-item" href="/client/quotes.php">Quotes</a>
+                            <a class="dropdown-item" href="/client/contracts.php">Contracts</a>
                             <a class="dropdown-item" href="/client/saved_payment_methods.php">Saved Payments</a>
                         </div>
                     </li>
@@ -123,32 +126,35 @@ header("X-Frame-Options: DENY"); // Legacy
     </div>
 </nav>
 
-<br>
-
 <!-- Page content container -->
-<div class="container">
+<div class="container my-4">
 
-    <div class="row mb-3">
-        <div class="col-md-1 text-center">
-            <?php if (!empty($session_contact_photo)) { ?>
-                <img src="/uploads/clients/<?= $session_client_id ?>/<?= $session_contact_photo ?>" alt="..." height="50" width="50" class="img-circle img-responsive">
-
-            <?php } else { ?>
-                <span class="fa-stack fa-2x rounded-left">
-                    <i class="fa fa-circle fa-stack-2x text-secondary"></i>
-                    <span class="fa fa-stack-1x text-white"><?= $session_contact_initials ?></span>
-                </span>
+    <div class="portal-hero mb-4">
+        <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
+            <div class="d-flex align-items-center mb-3 mb-md-0">
+                <div class="portal-avatar mr-3">
+                    <?php if (!empty($session_contact_photo)) { ?>
+                        <img src="/uploads/clients/<?= $session_client_id ?>/<?= $session_contact_photo ?>" alt="<?= stripslashes(escapeHtml($session_contact_name)) ?>">
+                    <?php } else { ?>
+                        <div class="portal-avatar-initials"><?= $session_contact_initials ?></div>
+                    <?php } ?>
+                </div>
+                <div>
+                    <h2 class="portal-welcome-title mb-1">Welcome, <strong><?= stripslashes(escapeHtml($session_contact_name)) ?></strong>!</h2>
+                    <div class="portal-welcome-subtitle">
+                        <span class="company-badge"><i class="far fa-building mr-1"></i><?= escapeHtml($session_client_name) ?></span>
+                        <span class="mx-2 text-muted">•</span>
+                        <span class="portal-role-badge">Client Portal</span>
+                    </div>
+                </div>
+            </div>
+            <?php if ($session_company_logo) { ?>
+                <div class="portal-company-logo">
+                    <img src="<?= "/uploads/settings/$session_company_logo" ?>" alt="<?= escapeHtml($session_company_name) ?>">
+                </div>
             <?php } ?>
         </div>
-
-        <div class="col-md-11 p-0">
-                <?php if ($session_company_logo) { ?>
-                    <img height="48" width="142" class="img-fluid float-right" src="<?= "/uploads/settings/$session_company_logo" ?>">
-                <?php } ?>
-            <h4>Welcome, <strong><?= stripslashes(escapeHtml($session_contact_name)) ?></strong>!</h4>
-        </div>
     </div>
-    <hr>
 
     <?php
     //Alert Feedback

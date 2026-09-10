@@ -985,7 +985,11 @@ CREATE TABLE `credentials` (
   `credential_id` int(11) NOT NULL AUTO_INCREMENT,
   `credential_name` varchar(200) NOT NULL,
   `credential_description` varchar(500) DEFAULT NULL,
+  `credential_type` varchar(50) NOT NULL DEFAULT 'Standard',
   `credential_category` varchar(200) DEFAULT NULL,
+  `credential_wifi_ssid` varchar(200) DEFAULT NULL,
+  `credential_wifi_passcode` varchar(500) DEFAULT NULL,
+  `credential_wifi_encryption` varchar(100) DEFAULT NULL,
   `credential_uri` varchar(500) DEFAULT NULL,
   `credential_uri_2` varchar(500) DEFAULT NULL,
   `credential_username` varchar(500) DEFAULT NULL,
@@ -2353,6 +2357,7 @@ CREATE TABLE `settings` (
   `config_destructive_deletes_enable` tinyint(1) NOT NULL DEFAULT 0,
   `config_whitelabel_enabled` int(11) NOT NULL DEFAULT 0,
   `config_whitelabel_key` text DEFAULT NULL,
+  `config_google_places_api_key` varchar(255) DEFAULT NULL,
   `config_ticket_default_view` tinyint(1) NOT NULL DEFAULT 0,
   `config_ticket_ordering` tinyint(1) NOT NULL DEFAULT 0,
   `config_ticket_moving_columns` tinyint(1) NOT NULL DEFAULT 1,
@@ -3230,7 +3235,73 @@ CREATE TABLE `knowledge_base` (
   `kb_updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`kb_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+CREATE TABLE IF NOT EXISTS `lead_stages` (
+  `lead_stage_id` int(11) NOT NULL AUTO_INCREMENT,
+  `lead_stage_name` varchar(100) NOT NULL,
+  `lead_stage_color` varchar(50) NOT NULL DEFAULT '#6c757d',
+  `lead_stage_order` int(11) NOT NULL DEFAULT 0,
+  `lead_stage_active` tinyint(1) NOT NULL DEFAULT 1,
+  `lead_stage_is_won` tinyint(1) NOT NULL DEFAULT 0,
+  `lead_stage_is_lost` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`lead_stage_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `leads` (
+  `lead_id` int(11) NOT NULL AUTO_INCREMENT,
+  `lead_name` varchar(255) NOT NULL,
+  `lead_contact_name` varchar(255) DEFAULT NULL,
+  `lead_contact_title` varchar(100) DEFAULT NULL,
+  `lead_contact_email` varchar(255) DEFAULT NULL,
+  `lead_contact_phone` varchar(50) DEFAULT NULL,
+  `lead_contact_mobile` varchar(50) DEFAULT NULL,
+  `lead_website` varchar(255) DEFAULT NULL,
+  `lead_address` varchar(255) DEFAULT NULL,
+  `lead_city` varchar(100) DEFAULT NULL,
+  `lead_state` varchar(100) DEFAULT NULL,
+  `lead_zip` varchar(20) DEFAULT NULL,
+  `lead_country` varchar(100) DEFAULT NULL,
+  `lead_stage_id` int(11) NOT NULL,
+  `lead_status` varchar(50) NOT NULL DEFAULT 'Open',
+  `lead_source` varchar(100) DEFAULT NULL,
+  `lead_estimated_mrr` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `lead_estimated_seats` int(11) NOT NULL DEFAULT 0,
+  `lead_assigned_user_id` int(11) NOT NULL DEFAULT 0,
+  `lead_notes` longtext DEFAULT NULL,
+  `lead_next_follow_up` date DEFAULT NULL,
+  `lead_converted_client_id` int(11) DEFAULT NULL,
+  `lead_converted_at` datetime DEFAULT NULL,
+  `lead_created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `lead_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
+  `lead_archived_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`lead_id`),
+  KEY `lead_stage_id` (`lead_stage_id`),
+  KEY `lead_assigned_user_id` (`lead_assigned_user_id`),
+  KEY `lead_converted_client_id` (`lead_converted_client_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `lead_activities` (
+  `lead_activity_id` int(11) NOT NULL AUTO_INCREMENT,
+  `lead_activity_lead_id` int(11) NOT NULL,
+  `lead_activity_type` varchar(50) NOT NULL,
+  `lead_activity_title` varchar(255) NOT NULL,
+  `lead_activity_details` longtext DEFAULT NULL,
+  `lead_activity_created_by` int(11) NOT NULL DEFAULT 0,
+  `lead_activity_created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`lead_activity_id`),
+  KEY `lead_activity_lead_id` (`lead_activity_lead_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `lead_email_templates` (
+  `lead_email_template_id` int(11) NOT NULL AUTO_INCREMENT,
+  `lead_email_template_name` varchar(255) NOT NULL,
+  `lead_email_template_subject` varchar(255) NOT NULL,
+  `lead_email_template_body` longtext NOT NULL,
+  `lead_email_template_created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `lead_email_template_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
+  PRIMARY KEY (`lead_email_template_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

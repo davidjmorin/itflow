@@ -36,7 +36,7 @@ $sql_favorite_assets = mysqli_query(
 
 $sql_favorite_credentials = mysqli_query(
     $mysqli,
-    "SELECT credential_description, credential_id, credential_name, credential_otp_secret,
+    "SELECT credential_description, credential_id, credential_name, credential_type, credential_wifi_ssid, credential_wifi_passcode, credential_wifi_encryption, credential_otp_secret,
         credential_uri, credential_uri_2, credential_username FROM credentials
     WHERE credential_client_id = $client_id
         AND credential_favorite = 1
@@ -368,6 +368,9 @@ $sql_asset_retired = mysqli_query(
                 while ($row = mysqli_fetch_assoc($sql_favorite_credentials)) {
                     $credential_id = intval($row['credential_id']);
                     $credential_name = escapeHtml($row['credential_name']);
+                    $credential_type = escapeHtml($row['credential_type'] ?? 'Standard');
+                    $credential_wifi_ssid = escapeHtml($row['credential_wifi_ssid'] ?? '');
+                    $credential_wifi_passcode = $row['credential_wifi_passcode'] ?? '';
                     $credential_description = escapeHtml($row['credential_description']);
                     $credential_uri = escapeUrl($row['credential_uri']);
                     if (empty($credential_uri)) {
@@ -393,14 +396,45 @@ $sql_asset_retired = mysqli_query(
                     <tr>
                         <td>
                             <a href="#" class="ajax-modal"
+                                data-modal-size="lg"
                                 data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
-                                    <i class="fas fa-fw fa-key text-dark mr-1"></i><?= $credential_name ?>
+                                    <?php if ($credential_type == 'Wi-Fi') { ?>
+                                        <i class="fas fa-fw fa-wifi text-info mr-1"></i><?= $credential_name ?>
+                                    <?php } else { ?>
+                                        <i class="fas fa-fw fa-key text-dark mr-1"></i><?= $credential_name ?>
+                                    <?php } ?>
                             </a>
+                            <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_ssid)) { ?>
+                                <div><small class="text-muted"><i class="fa fa-wifi mr-1"></i><?= $credential_wifi_ssid ?></small></div>
+                            <?php } ?>
                         </td>
-                        <td><?= $credential_username_display ?></td>
+                        <td>
+                            <?php if ($credential_type == 'Wi-Fi' && !empty($credential_username)) { ?>
+                                <small class="text-secondary font-weight-bold">Admin:</small><br>
+                            <?php } ?>
+                            <?= $credential_username_display ?>
+                        </td>
                         <td class="text-nowrap">
-                            <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
-                            <div><?= $otp_display ?></div>
+                            <?php if ($credential_type == 'Wi-Fi') { ?>
+                                <?php if (!empty($credential_wifi_passcode)) { ?>
+                                    <div class="mb-1">
+                                        <small class="text-info font-weight-bold">Wi-Fi:</small>
+                                        <button class="btn p-0" type="button" onclick="showWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-info"></i><i class="fas fa-2x fa-ellipsis-h text-info"></i></button>
+                                        <button class="btn btn-sm" type="button" onclick="copyWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-info"></i></button>
+                                    </div>
+                                <?php } ?>
+                                <?php if (!empty($row['credential_username']) || !empty($otp_display)) { ?>
+                                    <div>
+                                        <small class="text-secondary font-weight-bold">Admin:</small>
+                                        <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button>
+                                        <button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                        <div><?= $otp_display ?></div>
+                                    </div>
+                                <?php } ?>
+                            <?php } else { ?>
+                                <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                <div><?= $otp_display ?></div>
+                            <?php } ?>
                         </td>
 
                     </tr>
@@ -804,7 +838,7 @@ $sql_asset_retired = mysqli_query(
 
 <!-- Include scripts to fetch TOTP codes and passwords via the credential ID -->
 <script src="js/credential_show_otp_via_id.js"></script>
-<script src="js/credential_show_password_via_id.js"></script>
+<script src="js/credential_show_password_via_id.js?v=2.6.8"></script>
 
 <script>
     function updateClientNotes(client_id) {

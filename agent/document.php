@@ -1,5 +1,14 @@
 <?php
 
+if (!isset($_GET['client_id']) && isset($_GET['document_id'])) {
+    require_once $_SERVER['DOCUMENT_ROOT'] . '/config.php';
+    $doc_lookup_id = intval($_GET['document_id']);
+    $sql_doc_lookup = mysqli_query($mysqli, "SELECT document_client_id FROM documents WHERE document_id = $doc_lookup_id LIMIT 1");
+    if ($sql_doc_lookup && mysqli_num_rows($sql_doc_lookup) > 0) {
+        $_GET['client_id'] = mysqli_fetch_assoc($sql_doc_lookup)['document_client_id'];
+    }
+}
+
 require_once "includes/inc_all_client.php";
 
 
@@ -432,7 +441,37 @@ $page_title = $row['document_name'];
 
 </div>
 
+<div class="modal fade" id="docPhotoModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl" role="document">
+        <div class="modal-content bg-dark border-0">
+            <div class="modal-header border-0 pb-0">
+                <h6 class="modal-title text-light font-weight-bold" id="docPhotoModalTitle">Photo Preview</h6>
+                <button type="button" class="close text-light" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body text-center p-3">
+                <img id="docPhotoModalImg" src="" alt="Full preview" class="img-fluid rounded" style="max-height: 80vh; object-fit: contain;">
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="../js/pretty_content.js"></script>
+<script>
+$(document).ready(function() {
+    $(document).on('click', '.onboarding-photo-thumbnail, .onboarding-doc-gallery a', function(e) {
+        e.preventDefault();
+        var src = $(this).attr('href') || $(this).find('img').attr('src');
+        var title = $(this).find('img').attr('alt') || $(this).attr('title') || 'Site Photo';
+        if (src) {
+            $('#docPhotoModalImg').attr('src', src);
+            $('#docPhotoModalTitle').text(title);
+            $('#docPhotoModal').modal('show');
+        }
+    });
+});
+</script>
 
 <?php
 

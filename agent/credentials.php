@@ -88,7 +88,7 @@ $sql = mysqli_query(
     $location_query_innerjoin
     WHERE $archive_query
     $tag_query
-    AND (c.credential_name LIKE '%$q%' OR c.credential_description LIKE '%$q%' OR c.credential_uri LIKE '%$q%' OR tag_name LIKE '%$q%' OR client_name LIKE '%$q%')
+    AND (c.credential_name LIKE '%$q%' OR c.credential_description LIKE '%$q%' OR c.credential_uri LIKE '%$q%' OR c.credential_wifi_ssid LIKE '%$q%' OR tag_name LIKE '%$q%' OR client_name LIKE '%$q%')
     $location_query
     " . clientScopeSql('credential_client_id') . "
     $client_query
@@ -106,7 +106,7 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
         <div class="card-tools">
             <?php if (lookupUserPermission("module_credential") >= 2) { ?>
                 <div class="btn-group">
-                <button type="button" class="btn btn-primary ajax-modal" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>" <?php if (!isset($_COOKIE['user_encryption_session_key'])) { echo "disabled"; } ?>>
+                <button type="button" class="btn btn-primary ajax-modal" data-modal-size="lg" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>" <?php if (!isset($_COOKIE['user_encryption_session_key'])) { echo "disabled"; } ?>>
                     <i class="fas fa-plus mr-2"></i>New Credential
                 </button>
                 <button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
@@ -317,6 +317,10 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                             $client_name = escapeHtml($row['client_name']);
                             $credential_id = intval($row['c_credential_id']);
                             $credential_name = escapeHtml($row['credential_name']);
+                            $credential_type = escapeHtml($row['credential_type'] ?? 'Standard');
+                            $credential_wifi_ssid = escapeHtml($row['credential_wifi_ssid'] ?? '');
+                            $credential_wifi_passcode = $row['credential_wifi_passcode'] ?? '';
+                            $credential_wifi_encryption = escapeHtml($row['credential_wifi_encryption'] ?? '');
                             $credential_description = escapeHtml($row['credential_description']);
                             $credential_uri = escapeUrl($row['credential_uri']);
                             if (empty($credential_uri)) {
@@ -350,15 +354,15 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                             $credential_tag_name_display_array = array();
                             $credential_tag_id_array = array();
                             $sql_credential_tags = mysqli_query($mysqli, "SELECT tag_color, tag_icon, credential_tags.tag_id, tag_name FROM credential_tags LEFT JOIN tags ON credential_tags.tag_id = tags.tag_id WHERE credential_id = $credential_id ORDER BY tag_name ASC");
-                            while ($row = mysqli_fetch_assoc($sql_credential_tags)) {
+                            while ($tag_row = mysqli_fetch_assoc($sql_credential_tags)) {
 
-                                $credential_tag_id = intval($row['tag_id']);
-                                $credential_tag_name = escapeHtml($row['tag_name']);
-                                $credential_tag_color = escapeHtml($row['tag_color']);
+                                $credential_tag_id = intval($tag_row['tag_id']);
+                                $credential_tag_name = escapeHtml($tag_row['tag_name']);
+                                $credential_tag_color = escapeHtml($tag_row['tag_color']);
                                 if (empty($credential_tag_color)) {
                                     $credential_tag_color = "dark";
                                 }
-                                $credential_tag_icon = escapeHtml($row['tag_icon']);
+                                $credential_tag_icon = escapeHtml($tag_row['tag_icon']);
                                 if (empty($credential_tag_icon)) {
                                     $credential_tag_icon = "tag";
                                 }
@@ -400,19 +404,19 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                                 LIMIT 1"
                             );
                             if (mysqli_num_rows($sql_shared) > 0) {
-                                $row = mysqli_fetch_assoc($sql_shared);
-                                $item_id = intval($row['item_id']);
-                                $item_active = escapeHtml($row['item_active']);
-                                $item_key = escapeHtml($row['item_key']);
-                                $item_type = escapeHtml($row['item_type']);
-                                $item_related_id = intval($row['item_related_id']);
-                                $item_note = escapeHtml($row['item_note']);
-                                $item_recipient = escapeHtml($row['item_recipient']);
-                                $item_views = escapeHtml($row['item_views']);
-                                $item_view_limit = escapeHtml($row['item_view_limit']);
-                                $item_created_at = escapeHtml($row['item_created_at']);
-                                $item_expire_at = escapeHtml($row['item_expire_at']);
-                                $item_expire_at_human = timeAgo($row['item_expire_at']);
+                                $share_row = mysqli_fetch_assoc($sql_shared);
+                                $item_id = intval($share_row['item_id']);
+                                $item_active = escapeHtml($share_row['item_active']);
+                                $item_key = escapeHtml($share_row['item_key']);
+                                $item_type = escapeHtml($share_row['item_type']);
+                                $item_related_id = intval($share_row['item_related_id']);
+                                $item_note = escapeHtml($share_row['item_note']);
+                                $item_recipient = escapeHtml($share_row['item_recipient']);
+                                $item_views = escapeHtml($share_row['item_views']);
+                                $item_view_limit = escapeHtml($share_row['item_view_limit']);
+                                $item_created_at = escapeHtml($share_row['item_created_at']);
+                                $item_expire_at = escapeHtml($share_row['item_expire_at']);
+                                $item_expire_at_human = timeAgo($share_row['item_expire_at']);
                             }
 
 
@@ -425,12 +429,26 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                                 </td>
                                 <td>
                                     <a class="text-dark ajax-modal" href="#"
+                                        data-modal-size="lg"
                                         data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                         <div class="media">
-                                            <i class="fa fa-fw fa-2x fa-key mr-3"></i>
+                                            <?php if ($credential_type == 'Wi-Fi') { ?>
+                                                <i class="fa fa-fw fa-2x fa-wifi text-info mr-3"></i>
+                                            <?php } else { ?>
+                                                <i class="fa fa-fw fa-2x fa-key mr-3"></i>
+                                            <?php } ?>
                                             <div class="media-body">
-                                                <div><?= $credential_name ?> <?php if ($credential_favorite) { echo "<i class='fas fa-fw fa-star text-warning' title='Favorite'></i>"; } ?></div>
-                                                <div><small class="text-secondary"><?= $credential_description ?></small></div>
+                                                <div>
+                                                    <?= $credential_name ?>
+                                                    <?php if ($credential_type == 'Wi-Fi') { echo "<span class='badge badge-info p-1 ml-1'><i class='fa fa-wifi mr-1'></i>Wi-Fi</span>"; } ?>
+                                                    <?php if ($credential_favorite) { echo "<i class='fas fa-fw fa-star text-warning ml-1' title='Favorite'></i>"; } ?>
+                                                </div>
+                                                <?php if (!empty($credential_description)) { ?>
+                                                    <div><small class="text-secondary"><?= $credential_description ?></small></div>
+                                                <?php } ?>
+                                                <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_ssid)) { ?>
+                                                    <div><small class="text-muted"><i class="fa fa-wifi mr-1"></i>SSID: <strong><?= $credential_wifi_ssid ?></strong><?php if (!empty($credential_wifi_encryption)) { echo " ($credential_wifi_encryption)"; } ?></small></div>
+                                                <?php } ?>
                                                 <?php
                                                 if (!empty($credential_tags_display)) { ?>
                                                     <div class="mt-1">
@@ -441,12 +459,44 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                                         </div>
                                     </a>
                                 </td>
-                                <td class="text-nowrap"><?= $credential_username_display ?></td>
                                 <td class="text-nowrap">
-                                    <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                    <?php if ($credential_type == 'Wi-Fi') { ?>
+                                        <?php if (!empty($credential_username)) { ?>
+                                            <div><small class="text-secondary font-weight-bold">Admin:</small><br><?= $credential_username_display ?></div>
+                                        <?php } else { echo "-"; } ?>
+                                    <?php } else { ?>
+                                        <?= $credential_username_display ?>
+                                    <?php } ?>
+                                </td>
+                                <td class="text-nowrap">
+                                    <?php if ($credential_type == 'Wi-Fi') { ?>
+                                        <?php if (!empty($credential_wifi_passcode)) { ?>
+                                            <div class="mb-1">
+                                                <small class="text-info font-weight-bold"><i class="fa fa-wifi mr-1"></i>Wi-Fi:</small>
+                                                <button class="btn p-0" type="button" title="Show Wi-Fi Passcode" onclick="showWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-info"></i><i class="fas fa-2x fa-ellipsis-h text-info"></i></button>
+                                                <button class="btn btn-sm" type="button" title="Copy Wi-Fi Passcode" onclick="copyWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-info"></i></button>
+                                            </div>
+                                        <?php } ?>
+                                        <?php if (!empty($row['credential_password'])) { ?>
+                                            <div>
+                                                <small class="text-secondary font-weight-bold"><i class="fa fa-lock mr-1"></i>Admin:</small>
+                                                <button class="btn p-0" type="button" title="Show Admin Password" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button>
+                                                <button class="btn btn-sm" type="button" title="Copy Admin Password" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                            </div>
+                                        <?php } ?>
+                                        <?php if (empty($credential_wifi_passcode) && empty($row['credential_password'])) { echo "-"; } ?>
+                                    <?php } else { ?>
+                                        <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                    <?php } ?>
                                 </td>
                                 <td class="text-nowrap"><?= $otp_display ?></td>
-                                <td><?= $credential_uri_display ?></td>
+                                <td>
+                                    <?php if ($credential_type == 'Wi-Fi' && !empty($credential_uri)) { ?>
+                                        <div><small class="text-secondary font-weight-bold">Admin:</small><br><?= $credential_uri_display ?></div>
+                                    <?php } else { ?>
+                                        <?= $credential_uri_display ?>
+                                    <?php } ?>
+                                </td>
                                 <td>
                                     <?= "$credential_contact_display$credential_asset_display" ?>
                                     <?php if (mysqli_num_rows($sql_shared) > 0) { ?>
@@ -490,6 +540,7 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
                                             </button>
                                             <div class="dropdown-menu">
                                                 <a class="dropdown-item ajax-modal" href="#"
+                                                    data-modal-size="lg"
                                                     data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                                     <i class="fas fa-fw fa-edit mr-2"></i>Edit
                                                 </a>
@@ -540,7 +591,7 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
 
 <!-- Include script to get TOTP code via the login ID -->
 <script src="js/credential_show_otp_via_id.js"></script>
-<script src="js/credential_show_password_via_id.js"></script>
+<script src="js/credential_show_password_via_id.js?v=2.6.8"></script>
 <script src="../js/bulk_actions.js"></script>
 
 <?php

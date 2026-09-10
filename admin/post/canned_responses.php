@@ -1,8 +1,5 @@
 <?php
-define('FROM_POST_HANDLER', true);
-require_once "../../config.php";
-require_once "../../functions.php";
-require_once "../../includes/check_login.php";
+defined('FROM_POST_HANDLER') || die("Direct file access is not allowed");
 
 if (isset($_POST['add_canned_response'])) {
     validateCSRFToken();

@@ -824,3 +824,198 @@ if (isset($_POST['guest_quote_upload_file'])) {
     }
 
 }
+
+if (isset($_POST['guest_submit_ticket'])) {
+
+    if (!empty($_POST['website_hp'])) {
+        header("Location: guest_submit_ticket.php");
+        exit;
+    }
+
+    $name = trim($_POST['name'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $phone = trim($_POST['phone'] ?? '');
+    $company_name = trim($_POST['company_name'] ?? '');
+    $subject = trim($_POST['subject'] ?? '');
+    $priority = trim($_POST['priority'] ?? 'Low');
+    $details = trim($_POST['details'] ?? '');
+
+    if (empty($name) || empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL) || empty($subject) || empty($details)) {
+        flashAlert("Please fill in all required fields with a valid email address.", 'danger');
+        header("Location: guest_submit_ticket.php");
+        exit;
+    }
+
+    if (!in_array($priority, ['Low', 'Medium', 'High', 'Urgent'])) {
+        $priority = 'Low';
+    }
+
+    $name_esc = mysqli_real_escape_string($mysqli, $name);
+    $email_esc = mysqli_real_escape_string($mysqli, $email);
+    $phone_esc = mysqli_real_escape_string($mysqli, $phone);
+    $company_name_esc = mysqli_real_escape_string($mysqli, $company_name);
+    $subject_esc = mysqli_real_escape_string($mysqli, $subject);
+    $priority_esc = mysqli_real_escape_string($mysqli, $priority);
+
+    $formatted_details = "<i>Submitted via Web Portal by <b>" . escapeHtml($name) . "</b> &lt;" . escapeHtml($email) . "&gt;</i><br><br>" . nl2br(escapeHtml($details));
+    $formatted_details_esc = mysqli_real_escape_string($mysqli, $formatted_details);
+
+    $duplicate_check_sql = mysqli_query($mysqli, "
+        SELECT ticket_id, ticket_url_key, ticket_prefix, ticket_number 
+        FROM tickets 
+        WHERE ticket_subject = '$subject_esc' 
+          AND ticket_details = '$formatted_details_esc' 
+          AND ticket_created_at >= NOW() - INTERVAL 30 SECOND 
+        LIMIT 1
+    ");
+
+    if ($duplicate_check_sql && mysqli_num_rows($duplicate_check_sql) > 0) {
+        $dup_row = mysqli_fetch_assoc($duplicate_check_sql);
+        $dup_ticket_id = intval($dup_row['ticket_id']);
+        $dup_url_key = $dup_row['ticket_url_key'];
+        $dup_prefix = $dup_row['ticket_prefix'];
+        $dup_number = $dup_row['ticket_number'];
+
+        flashAlert("Your ticket #$dup_prefix$dup_number has been submitted successfully!");
+        header("Location: guest_view_ticket.php?ticket_id=$dup_ticket_id&url_key=$dup_url_key");
+        exit;
+    }
+
+    $client_id = 0;
+    $contact_id = 0;
+
+    $contact_sql = mysqli_query($mysqli, "SELECT * FROM contacts WHERE contact_email = '$email_esc' AND contact_archived_at IS NULL LIMIT 1");
+    if ($contact_sql && mysqli_num_rows($contact_sql) === 1) {
+        $contact_row = mysqli_fetch_assoc($contact_sql);
+        $contact_id = intval($contact_row['contact_id']);
+        $client_id = intval($contact_row['contact_client_id']);
+    }
+
+    if (!$client_id) {
+        $domain_parts = explode('@', $email);
+        $domain = end($domain_parts);
+        $domain_esc = mysqli_real_escape_string($mysqli, $domain);
+
+        $public_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'mail.com', 'zoho.com', 'proton.me', 'protonmail.com'];
+        if (!in_array(strtolower($domain), $public_providers)) {
+            $domain_sql = mysqli_query($mysqli, "SELECT domain_client_id, domain_name FROM domains WHERE domain_name = '$domain_esc' AND domain_archived_at IS NULL LIMIT 1");
+            if ($domain_sql && mysqli_num_rows($domain_sql) === 1) {
+                $domain_row = mysqli_fetch_assoc($domain_sql);
+                $client_id = intval($domain_row['domain_client_id']);
+
+                mysqli_query($mysqli, "INSERT INTO contacts SET contact_name = '$name_esc', contact_email = '$email_esc', contact_phone = '$phone_esc', contact_notes = 'Added automatically via guest ticket submission.', contact_client_id = $client_id");
+                $contact_id = mysqli_insert_id($mysqli);
+            }
+        }
+    }
+
+    if (!$client_id && !empty($company_name)) {
+        $client_sql = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_name LIKE '%$company_name_esc%' AND client_archived_at IS NULL LIMIT 1");
+        if ($client_sql && mysqli_num_rows($client_sql) === 1) {
+            $client_row = mysqli_fetch_assoc($client_sql);
+            $client_id = intval($client_row['client_id']);
+
+            mysqli_query($mysqli, "INSERT INTO contacts SET contact_name = '$name_esc', contact_email = '$email_esc', contact_phone = '$phone_esc', contact_notes = 'Added automatically via guest ticket submission.', contact_client_id = $client_id");
+            $contact_id = mysqli_insert_id($mysqli);
+        }
+    }
+
+    if (!$client_id && !empty($company_name)) {
+        $currency_code = !empty($config_default_currency) ? escapeSql($config_default_currency) : 'USD';
+        mysqli_query($mysqli, "INSERT INTO clients SET client_name = '$company_name_esc', client_currency_code = '$currency_code', client_net_terms = 30, client_lead = 0, client_notes = 'Created automatically from guest ticket submission.'");
+        $client_id = mysqli_insert_id($mysqli);
+
+        mysqli_query($mysqli, "INSERT INTO contacts SET contact_name = '$name_esc', contact_email = '$email_esc', contact_phone = '$phone_esc', contact_primary = 1, contact_notes = 'Primary contact added automatically from guest ticket submission.', contact_client_id = $client_id");
+        $contact_id = mysqli_insert_id($mysqli);
+    }
+
+    mysqli_query($mysqli, "
+        UPDATE settings
+        SET
+            config_ticket_next_number = LAST_INSERT_ID(config_ticket_next_number),
+            config_ticket_next_number = config_ticket_next_number + 1
+        WHERE company_id = 1
+    ");
+    $ticket_number = mysqli_insert_id($mysqli);
+
+    $url_key = randomString(32);
+    $config_ticket_prefix_esc = mysqli_real_escape_string($mysqli, $config_ticket_prefix ?? 'ITF-');
+
+    $default_billable = intval($config_ticket_default_billable ?? 0);
+
+    mysqli_query($mysqli, "INSERT INTO tickets SET ticket_prefix = '$config_ticket_prefix_esc', ticket_number = $ticket_number, ticket_source = 'Portal', ticket_subject = '$subject_esc', ticket_details = '$formatted_details_esc', ticket_priority = '$priority_esc', ticket_status = 1, ticket_billable = $default_billable, ticket_created_by = 0, ticket_contact_id = $contact_id, ticket_client_id = $client_id, ticket_url_key = '$url_key'");
+    $ticket_id = mysqli_insert_id($mysqli);
+    applyTicketSla($ticket_id);
+
+    $allowed_extensions = ['jpg', 'jpeg', 'gif', 'png', 'webp', 'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'xls', 'xlsx', 'xlsm', 'zip', 'tar', 'gz'];
+    if (!empty($_FILES['attachments']['name'][0])) {
+        $ticket_dir = "../uploads/tickets/" . $ticket_id . "/";
+        mkdirMissing($ticket_dir);
+        foreach ($_FILES['attachments']['name'] as $key => $att_name) {
+            if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
+                $att_tmp = $_FILES['attachments']['tmp_name'][$key];
+                $att_ext = strtolower(pathinfo($att_name, PATHINFO_EXTENSION));
+                if (in_array($att_ext, $allowed_extensions)) {
+                    $att_saved_name = md5(uniqid(rand(), true)) . '.' . $att_ext;
+                    if (move_uploaded_file($att_tmp, $ticket_dir . $att_saved_name)) {
+                        $att_name_esc = mysqli_real_escape_string($mysqli, $att_name);
+                        $att_saved_name_esc = mysqli_real_escape_string($mysqli, $att_saved_name);
+                        mysqli_query($mysqli, "INSERT INTO ticket_attachments SET ticket_attachment_name = '$att_name_esc', ticket_attachment_reference_name = '$att_saved_name_esc', ticket_attachment_ticket_id = $ticket_id");
+                    }
+                }
+            }
+        }
+    }
+
+    $company_name_query = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT company_name FROM companies WHERE company_id = 1"));
+    $system_company_name = $company_name_query['company_name'] ?? 'Support Team';
+
+    if (!empty($config_ticket_new_ticket_notification_email)) {
+        $client_label = $company_name ?: ($name . ' (Guest)');
+        if ($client_id) {
+            $c_q = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT client_name FROM clients WHERE client_id = $client_id"));
+            if (!empty($c_q['client_name'])) {
+                $client_label = $c_q['client_name'];
+            }
+        }
+        $agent_email_subject = mysqli_real_escape_string($mysqli, "ITFlow - New Ticket - $client_label: $subject");
+        $agent_email_body = mysqli_real_escape_string($mysqli, "Hello,<br><br>A new ticket has been submitted via the guest portal.<br>Client: " . escapeHtml($client_label) . "<br>Contact: " . escapeHtml($name) . " &lt;" . escapeHtml($email) . "&gt;<br>Priority: $priority<br>Ticket: $config_ticket_prefix_esc$ticket_number<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$ticket_id<br><br><b>" . escapeHtml($subject) . "</b><br>" . nl2br(escapeHtml($details)));
+
+        $mail_data = [
+            [
+                'from' => $config_ticket_from_email,
+                'from_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
+                'recipient' => $config_ticket_new_ticket_notification_email,
+                'recipient_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
+                'subject' => $agent_email_subject,
+                'body' => $agent_email_body
+            ]
+        ];
+        addToMailQueue($mail_data);
+    }
+
+    $guest_view_url = "https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key";
+    $client_email_subject = mysqli_real_escape_string($mysqli, "[$config_ticket_prefix_esc$ticket_number] Ticket Received - $subject");
+    $client_email_body = mysqli_real_escape_string($mysqli, "Hello " . escapeHtml($name) . ",<br><br>Thank you for reaching out. We have received your support request.<br><br><b>Ticket Number:</b> $config_ticket_prefix_esc$ticket_number<br><b>Subject:</b> " . escapeHtml($subject) . "<br><br>You can track the progress and reply to this ticket online at:<br><a href='$guest_view_url'>$guest_view_url</a><br><br>Regards,<br>" . escapeHtml($system_company_name));
+
+    $client_mail_data = [
+        [
+            'from' => $config_ticket_from_email,
+            'from_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
+            'recipient' => $email,
+            'recipient_name' => mysqli_real_escape_string($mysqli, $name),
+            'subject' => $client_email_subject,
+            'body' => $client_email_body
+        ]
+    ];
+    addToMailQueue($client_mail_data);
+
+    triggerCustomAction('ticket_create', $ticket_id);
+    $audit_description = mysqli_real_escape_string($mysqli, "Guest $name ($email) created ticket $config_ticket_prefix_esc$ticket_number ($subject)");
+    logAudit("Ticket", "Create", $audit_description, $client_id, $ticket_id);
+
+    flashAlert("Your ticket #$config_ticket_prefix_esc$ticket_number has been submitted successfully!");
+    header("Location: guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key");
+    exit;
+}
+

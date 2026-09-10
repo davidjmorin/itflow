@@ -95,6 +95,12 @@
                             <p>Time by Technician</p>
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a href="/agent/reports/tech_weekly_summary.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "tech_weekly_summary.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-calendar-week"></i>
+                            <p>Tech Weekly Time & Mileage</p>
+                        </a>
+                    </li>
                 <?php } ?>
 
                 <?php if (($config_module_enable_ticketing && lookupUserPermission("module_support") >= 1) || lookupUserPermission("module_credential") >= 1) { ?>

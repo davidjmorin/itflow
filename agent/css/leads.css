@@ -1,0 +1,183 @@
+.lead-kanban-board {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 1.5rem;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.lead-kanban-column {
+    flex: 0 0 320px;
+    background-color: rgba(0, 0, 0, 0.03);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 220px);
+}
+
+.dark-mode .lead-kanban-column {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.lead-kanban-header {
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    border-top-left-radius: 0.5rem;
+    border-top-right-radius: 0.5rem;
+    border-bottom: 2px solid rgba(0, 0, 0, 0.06);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.lead-kanban-stage-list {
+    padding: 0.75rem;
+    overflow-y: auto;
+    flex-grow: 1;
+    min-height: 120px;
+}
+
+.lead-card {
+    background: #ffffff;
+    border-radius: 0.375rem;
+    border-left: 4px solid #007bff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    margin-bottom: 0.75rem;
+    padding: 0.85rem;
+    cursor: grab;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dark-mode .lead-card {
+    background: #343a40;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.lead-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.12);
+}
+
+.lead-card:active {
+    cursor: grabbing;
+}
+
+.lead-card-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+}
+
+.lead-card-contact {
+    font-size: 0.825rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.lead-card-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.lead-card-footer {
+    font-size: 0.75rem;
+    color: #6c757d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    padding-top: 0.4rem;
+    margin-top: 0.4rem;
+}
+
+.lead-timeline {
+    position: relative;
+    padding-left: 2rem;
+    list-style: none;
+}
+
+.lead-timeline::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0.75rem;
+    width: 2px;
+    background: #dee2e6;
+}
+
+.dark-mode .lead-timeline::before {
+    background: #495057;
+}
+
+.lead-timeline-item {
+    position: relative;
+    margin-bottom: 1.5rem;
+}
+
+.lead-timeline-icon {
+    position: absolute;
+    left: -2rem;
+    top: 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 1.6rem;
+    font-size: 0.75rem;
+    background: #007bff;
+    color: #ffffff;
+    box-shadow: 0 0 0 3px #ffffff;
+}
+
+.dark-mode .lead-timeline-icon {
+    box-shadow: 0 0 0 3px #343a40;
+}
+
+.lead-timeline-content {
+    background: #f8f9fa;
+    border-radius: 0.375rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e9ecef;
+}
+
+.dark-mode .lead-timeline-content {
+    background: #2b3035;
+    border-color: #3d4349;
+}
+
+.modal-dialog-scrollable .modal-content {
+    max-height: calc(100vh - 3.5rem);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-dialog-scrollable form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.modal-dialog-scrollable form .modal-body {
+    overflow-y: auto !important;
+    max-height: calc(80vh - 120px) !important;
+    flex: 1 1 auto;
+}
+
+.modal-dialog-scrollable form .modal-footer {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    z-index: 10;
+}
+
+.dark-mode .modal-dialog-scrollable form .modal-footer {
+    background: #343a40;
+}

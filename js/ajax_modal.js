@@ -37,7 +37,7 @@ $(document).on('click', '.ajax-modal', function (e) {
 
       const modalHtml = `
         <div class="modal fade" id="${modalId}" tabindex="-1">
-          <div class="modal-dialog modal-${modalSize}">
+          <div class="modal-dialog modal-dialog-scrollable modal-${modalSize}">
             <div class="modal-content border-dark">
               ${response.content}
             </div>

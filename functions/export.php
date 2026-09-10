@@ -164,12 +164,16 @@ function getExportColumns($export_type) {
         // Defaults match what this export has always emitted, secrets included.
         // The handler decrypts into credential_username / credential_password.
         'credentials' => [
-            'credential_name'        => ['label' => 'Name', 'weight' => 2],
-            'credential_description' => ['label' => 'Description', 'weight' => 3],
-            'credential_username'    => ['label' => 'Username'],
-            'credential_password'    => ['label' => 'Password'],
-            'credential_otp_secret'  => ['label' => 'TOTP'],
-            'credential_uri'         => ['label' => 'URI', 'weight' => 2],
+            'credential_name'            => ['label' => 'Name', 'weight' => 2],
+            'credential_type'            => ['label' => 'Type'],
+            'credential_wifi_ssid'       => ['label' => 'Wi-Fi SSID'],
+            'credential_wifi_passcode'   => ['label' => 'Wi-Fi Passcode'],
+            'credential_wifi_encryption' => ['label' => 'Wi-Fi Encryption'],
+            'credential_description'     => ['label' => 'Description', 'weight' => 3],
+            'credential_username'        => ['label' => 'Username / Admin User'],
+            'credential_password'        => ['label' => 'Password / Admin Pass'],
+            'credential_otp_secret'      => ['label' => 'TOTP'],
+            'credential_uri'             => ['label' => 'URI / Admin URL', 'weight' => 2],
         ],
 
         // assigned_to_assets / assigned_to_contacts are built by the handler

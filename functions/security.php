@@ -110,6 +110,9 @@ function generateUserSessionKey($site_encryption_master_key) {
 
 // Decrypts an encrypted password (website/asset credentials), returns it as a string
 function decryptCredentialEntry($credential_password_ciphertext) {
+    if (empty($credential_password_ciphertext) || strlen($credential_password_ciphertext) < 16) {
+        return '';
+    }
 
     // Split the credential into IV and Ciphertext
     $credential_iv =  substr($credential_password_ciphertext, 0, 16);
@@ -196,17 +199,21 @@ function checkCredentialLengths(array $fields) {
 
     // Encrypted before storage - ciphertext size follows the BYTE length of the cleartext.
     $byte_limits = [
-        'username'    => CREDENTIAL_ENTRY_MAX_LENGTH,
-        'password'    => CREDENTIAL_ENTRY_MAX_LENGTH,
+        'username'         => CREDENTIAL_ENTRY_MAX_LENGTH,
+        'password'         => CREDENTIAL_ENTRY_MAX_LENGTH,
+        'wifi_passcode'    => CREDENTIAL_ENTRY_MAX_LENGTH,
     ];
 
     // Stored as given - MySQL measures varchar in CHARACTERS, not bytes.
     $char_limits = [
-        'name'        => 200,
-        'description' => 500,
-        'uri'         => 500,
-        'uri_2'       => 500,
-        'otp_secret'  => 200,
+        'name'             => 200,
+        'description'      => 500,
+        'type'             => 50,
+        'wifi_ssid'        => 200,
+        'wifi_encryption'  => 100,
+        'uri'              => 500,
+        'uri_2'            => 500,
+        'otp_secret'       => 200,
     ];
 
     foreach ($byte_limits as $field => $limit) {

@@ -40,6 +40,133 @@ if (isset($_GET['certificate_fetch_parse_json_details'])) {
 
 }
 
+/*
+ * Google Places API (New) - Address Autocomplete
+ */
+if (isset($_GET['address_autocomplete'])) {
+    header('Content-Type: application/json');
+    $query = trim($_GET['query'] ?? '');
+    if (empty($query) || empty($config_google_places_api_key)) {
+        echo json_encode(['suggestions' => []]);
+        exit();
+    }
+
+    $url = "https://places.googleapis.com/v1/places:autocomplete";
+    $payload = json_encode(['input' => $query]);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'X-Goog-Api-Key: ' . $config_google_places_api_key
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code === 200 && $response) {
+        echo $response;
+    } else {
+        echo json_encode([
+            'error' => 'Google Places API request failed',
+            'http_code' => $http_code,
+            'details' => json_decode($response, true)
+        ]);
+    }
+    exit();
+}
+
+/*
+ * Google Places API (New) - Place Details
+ */
+if (isset($_GET['address_place_details'])) {
+    header('Content-Type: application/json');
+    $place_id = trim($_GET['place_id'] ?? '');
+    if (empty($place_id) || empty($config_google_places_api_key)) {
+        echo json_encode(['error' => 'Missing place ID or API key']);
+        exit();
+    }
+
+    // Clean up place_id if it already has "places/" prefix
+    if (str_starts_with($place_id, 'places/')) {
+        $place_id = substr($place_id, 7);
+    }
+
+    $url = "https://places.googleapis.com/v1/places/" . urlencode($place_id) . "?fields=addressComponents,formattedAddress,displayName,nationalPhoneNumber,internationalPhoneNumber,websiteUri";
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'X-Goog-Api-Key: ' . $config_google_places_api_key
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code === 200 && $response) {
+        echo $response;
+    } else {
+        echo json_encode([
+            'error' => 'Google Places details request failed',
+            'http_code' => $http_code,
+            'details' => json_decode($response, true)
+        ]);
+    }
+    exit();
+}
+
+/*
+ * Google Places API (New) - Test API Key
+ */
+if (isset($_POST['test_google_places_key'])) {
+    header('Content-Type: application/json');
+    validateCSRFToken();
+
+    $test_key = trim($_POST['api_key'] ?? '');
+    if (empty($test_key)) {
+        echo json_encode(['success' => false, 'message' => 'No API key provided']);
+        exit();
+    }
+
+    $url = "https://places.googleapis.com/v1/places:autocomplete";
+    $payload = json_encode(['input' => '1600 Amphitheatre']);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'X-Goog-Api-Key: ' . $test_key
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $json_res = json_decode($response, true);
+
+    if ($http_code === 200 && isset($json_res['suggestions'])) {
+        echo json_encode([
+            'success' => true,
+            'message' => 'Google Places API (New) key is valid and working properly!'
+        ]);
+    } else {
+        $error_msg = $json_res['error']['message'] ?? 'Request failed with HTTP ' . $http_code;
+        $error_status = $json_res['error']['status'] ?? 'ERROR';
+        echo json_encode([
+            'success' => false,
+            'message' => "Google Places API error ($error_status): $error_msg"
+        ]);
+    }
+    exit();
+}
+
+
 if (isset($_POST['client_set_notes'])) {
 
     validateCSRFToken();
@@ -502,7 +629,30 @@ if (isset($_POST['update_kanban_status_position'])) {
         mysqli_query($mysqli, "UPDATE ticket_statuses SET ticket_status_order = $kanban WHERE ticket_status_id = $status_id");
     }
 
-    // return a response
+    echo json_encode(['status' => 'success']);
+    exit;
+}
+
+if (isset($_POST['update_kanban_lead'])) {
+    enforceUserPermission('module_client', 2);
+    $lead_id = intval($_POST['lead_id']);
+    $stage_id = intval($_POST['stage_id']);
+    if ($lead_id > 0 && $stage_id > 0) {
+        $old_res = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT lead_stage_id FROM leads WHERE lead_id = $lead_id LIMIT 1"));
+        $old_stage_id = intval($old_res['lead_stage_id'] ?? 0);
+        if ($old_stage_id !== $stage_id) {
+            mysqli_query($mysqli, "UPDATE leads SET lead_stage_id = $stage_id WHERE lead_id = $lead_id");
+            $creator_id = intval($_SESSION['user_id'] ?? 0);
+            $stage_name_res = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT lead_stage_name FROM lead_stages WHERE lead_stage_id = $stage_id LIMIT 1"));
+            $stage_name = escapeSql($stage_name_res['lead_stage_name'] ?? 'Updated Stage');
+            mysqli_query($mysqli, "INSERT INTO lead_activities SET
+                lead_activity_lead_id = $lead_id,
+                lead_activity_type = 'Stage Change',
+                lead_activity_title = 'Stage Changed to $stage_name',
+                lead_activity_details = 'Moved on Kanban board.',
+                lead_activity_created_by = $creator_id");
+        }
+    }
     echo json_encode(['status' => 'success']);
     exit;
 }
@@ -1043,6 +1193,74 @@ if (isset($_GET['apex_domain_check'])) {
     echo json_encode($response);
 }
 
+if (isset($_GET['domain_lookup'])) {
+    enforceUserPermission('module_support', 1);
+
+    $domain = trim($_GET['domain'] ?? '');
+    $client_id = intval($_GET['client_id'] ?? 0);
+
+    $response = [
+        'success' => false,
+        'expire' => '',
+        'registrar' => '',
+        'matched_vendor_id' => 0,
+        'matched_vendor_name' => '',
+        'message' => ''
+    ];
+
+    $name = preg_replace("(^https?://)", "", $domain);
+    $name = preg_replace('/^www\./i', '', strtolower(trim($name)));
+
+    if (strlen($name) >= 3 && filter_var($name, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) && checkdnsrr($name, 'SOA')) {
+        $rdap = getDomainRdap($name);
+        if ($rdap !== null) {
+            $response['registrar'] = getRdapRegistrar($rdap);
+            $raw_expire = getRdapEventDate($rdap, 'expiration');
+            if (!empty($raw_expire)) {
+                $parsed = date_create($raw_expire);
+                if ($parsed) {
+                    $response['expire'] = $parsed->format('Y-m-d');
+                }
+            }
+        }
+
+        if (empty($response['expire'])) {
+            $expire = getDomainExpirationDate($name);
+            if ($expire) {
+                $response['expire'] = $expire;
+            }
+        }
+
+        if (empty($response['registrar'])) {
+            $whois_raw = getDomainWhois($name);
+            if (!empty($whois_raw) && stripos($whois_raw, 'rate limit') === false) {
+                if (preg_match('/(?:Registrar Name|Registrar|Sponsoring Registrar):\s*([^\r\n]+)/i', $whois_raw, $matches)) {
+                    $response['registrar'] = trim($matches[1]);
+                }
+            }
+        }
+
+        if (!empty($response['registrar'])) {
+            $sql_vendors = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_archived_at IS NULL AND (vendor_client_id = $client_id OR vendor_client_id = 0) ORDER BY vendor_client_id DESC, vendor_name ASC");
+            while ($v = mysqli_fetch_assoc($sql_vendors)) {
+                $v_name = $v['vendor_name'];
+                if (stripos($response['registrar'], $v_name) !== false || stripos($v_name, $response['registrar']) !== false) {
+                    $response['matched_vendor_id'] = intval($v['vendor_id']);
+                    $response['matched_vendor_name'] = $v_name;
+                    break;
+                }
+            }
+        }
+
+        $response['success'] = true;
+    } else {
+        $response['message'] = "<i class='fas fa-fw fa-exclamation-triangle mr-2'></i> Domain name is invalid or has no SOA record.";
+    }
+
+    echo json_encode($response);
+    exit();
+}
+
 // Get internal users/techs
 if (isset($_GET['get_internal_users'])) {
     enforceUserPermission('module_support');
@@ -1068,16 +1286,28 @@ if (isset($_GET['get_credential_via_id'])) {
 
     $credential_id = intval($_GET['credential_id']);
 
-    $sql = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT credential_name, credential_username, credential_password, credential_client_id FROM credentials WHERE credential_id = $credential_id"));
+    $sql = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT credential_name, credential_type, credential_wifi_ssid, credential_wifi_passcode, credential_wifi_encryption, credential_username, credential_password, credential_client_id FROM credentials WHERE credential_id = $credential_id LIMIT 1"));
+    if (!$sql) {
+        header('Content-Type: application/json');
+        echo json_encode(array('error' => 'Credential not found'));
+        exit;
+    }
+
     $name = escapeSql($sql['credential_name']);
     $client_id = intval($sql['credential_client_id']);
 
     enforceClientAccess($client_id);
 
     $response = array(
-        'username' => decryptCredentialEntry($sql['credential_username']),
-        'password' => decryptCredentialEntry($sql['credential_password'])
+        'type' => $sql['credential_type'] ?? 'Standard',
+        'wifi_ssid' => $sql['credential_wifi_ssid'] ?? '',
+        'wifi_passcode' => !empty($sql['credential_wifi_passcode']) ? (decryptCredentialEntry($sql['credential_wifi_passcode']) ?: '') : '',
+        'wifi_encryption' => $sql['credential_wifi_encryption'] ?? '',
+        'username' => !empty($sql['credential_username']) ? (decryptCredentialEntry($sql['credential_username']) ?: '') : '',
+        'password' => !empty($sql['credential_password']) ? (decryptCredentialEntry($sql['credential_password']) ?: '') : ''
     );
+
+    header('Content-Type: application/json');
     echo json_encode($response);
 
     // Only log if this user hasn't viewed this credential recently (mirrors TOTP dedup)
@@ -1085,5 +1315,19 @@ if (isset($_GET['get_credential_via_id'])) {
 
     if (intval($check_recent_view['recent_view']) == 0) {
         logAudit("Credential", "View", "$session_name viewed credential $name", $client_id, $credential_id);
+    }
+    exit;
+}
+
+if (isset($_GET['get_contract_template'])) {
+    
+    $contract_template_id = intval($_GET['contract_template_id']);
+    
+    $sql = mysqli_query($mysqli, "SELECT * FROM contract_templates WHERE contract_template_id = $contract_template_id LIMIT 1");
+    if (mysqli_num_rows($sql) > 0) {
+        $row = mysqli_fetch_assoc($sql);
+        echo json_encode($row);
+    } else {
+        echo json_encode(array('error' => 'Template not found'));
     }
 }

@@ -147,3 +147,62 @@ if (isset($_GET['get_share_totp_token'])) {
     ]);
     exit;
 }
+
+if (isset($_GET['check_guest_company'])) {
+    header('Content-Type: application/json');
+
+    $email = trim($_GET['email'] ?? '');
+    $company = trim($_GET['company'] ?? '');
+
+    $matched = false;
+    $client_name = '';
+    $match_type = '';
+
+    if (!empty($email) && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $email_esc = mysqli_real_escape_string($mysqli, $email);
+        
+        $contact_sql = mysqli_query($mysqli, "SELECT clients.client_id, clients.client_name FROM contacts LEFT JOIN clients ON contacts.contact_client_id = clients.client_id WHERE contacts.contact_email = '$email_esc' AND contacts.contact_archived_at IS NULL AND clients.client_archived_at IS NULL LIMIT 1");
+        if ($contact_sql && mysqli_num_rows($contact_sql) === 1) {
+            $row = mysqli_fetch_assoc($contact_sql);
+            $matched = true;
+            $client_name = $row['client_name'];
+            $match_type = 'contact';
+        }
+
+        if (!$matched) {
+            $domain_parts = explode('@', $email);
+            $domain = end($domain_parts);
+            $domain_esc = mysqli_real_escape_string($mysqli, $domain);
+
+            $public_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'mail.com', 'zoho.com', 'proton.me', 'protonmail.com'];
+            if (!in_array(strtolower($domain), $public_providers)) {
+                $domain_sql = mysqli_query($mysqli, "SELECT clients.client_id, clients.client_name FROM domains LEFT JOIN clients ON domains.domain_client_id = clients.client_id WHERE domains.domain_name = '$domain_esc' AND domains.domain_archived_at IS NULL AND clients.client_archived_at IS NULL LIMIT 1");
+                if ($domain_sql && mysqli_num_rows($domain_sql) === 1) {
+                    $row = mysqli_fetch_assoc($domain_sql);
+                    $matched = true;
+                    $client_name = $row['client_name'];
+                    $match_type = 'domain';
+                }
+            }
+        }
+    }
+
+    if (!$matched && !empty($company) && strlen($company) >= 2) {
+        $company_esc = mysqli_real_escape_string($mysqli, $company);
+        $client_sql = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_name LIKE '%$company_esc%' AND client_archived_at IS NULL LIMIT 1");
+        if ($client_sql && mysqli_num_rows($client_sql) === 1) {
+            $row = mysqli_fetch_assoc($client_sql);
+            $matched = true;
+            $client_name = $row['client_name'];
+            $match_type = 'name';
+        }
+    }
+
+    echo json_encode([
+        'matched' => $matched,
+        'client_name' => $client_name,
+        'match_type' => $match_type
+    ]);
+    exit;
+}
+

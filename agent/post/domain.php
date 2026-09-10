@@ -39,7 +39,20 @@ if (isset($_POST['add_domain'])) {
     $txt = escapeSql($records['txt']);
     $whois = escapeSql($records['whois']);
 
-    // Add domain record
+    if ($registrar === 0 && $client_id > 0) {
+        $rdap = getDomainRdap($name);
+        $detected_registrar = $rdap ? getRdapRegistrar($rdap) : '';
+        if (!empty($detected_registrar)) {
+            $sql_v = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_archived_at IS NULL AND vendor_client_id = $client_id");
+            while ($v = mysqli_fetch_assoc($sql_v)) {
+                if (stripos($detected_registrar, $v['vendor_name']) !== false || stripos($v['vendor_name'], $detected_registrar) !== false) {
+                    $registrar = intval($v['vendor_id']);
+                    break;
+                }
+            }
+        }
+    }
+
     mysqli_query($mysqli,"INSERT INTO domains SET domain_name = '$name', domain_description = '$description', domain_registrar = $registrar,  domain_webhost = $webhost, domain_dnshost = $dnshost, domain_mailhost = $mailhost, domain_expire = $expire, domain_ip = '$a', domain_name_servers = '$ns', domain_mail_servers = '$mx', domain_txt = '$txt', domain_raw_whois = '$whois', domain_notes = '$notes', domain_client_id = $client_id");
 
     // Get inserted ID (for linking certificate, if exists)
@@ -164,15 +177,14 @@ if (isset($_GET['refresh_domain'])) {
 
     $domain_id = intval($_GET['refresh_domain']);
 
-    // Get Name and Client ID for logging and alert message
-    $sql = mysqli_query($mysqli,"SELECT domain_name, domain_client_id FROM domains WHERE domain_id = $domain_id");
+    $sql = mysqli_query($mysqli,"SELECT domain_name, domain_client_id, domain_registrar FROM domains WHERE domain_id = $domain_id");
     $row = mysqli_fetch_assoc($sql);
     $domain_name = escapeSql($row['domain_name']);
     $client_id = intval($row['domain_client_id']);
+    $current_registrar = intval($row['domain_registrar']);
 
     enforceClientAccess();
 
-    // Lookup expiry date
     $expire = getDomainExpirationDate($domain_name);
     if (strtotime($expire)) {
         $expire = "'" . $expire . "'";
@@ -180,7 +192,6 @@ if (isset($_GET['refresh_domain'])) {
         $expire = 'NULL';
     }
 
-    // NS, MX, A and WHOIS records/data
     $records = getDnsRecords($domain_name);
     $a = escapeSql($records['a']);
     $ns = escapeSql($records['ns']);
@@ -188,7 +199,22 @@ if (isset($_GET['refresh_domain'])) {
     $txt = escapeSql($records['txt']);
     $whois = escapeSql($records['whois']);
 
-    mysqli_query($mysqli,"UPDATE domains SET domain_expire = $expire, domain_ip = '$a', domain_name_servers = '$ns', domain_mail_servers = '$mx', domain_txt = '$txt', domain_raw_whois = '$whois' WHERE domain_id = $domain_id");
+    $registrar_sql = "";
+    if ($current_registrar === 0 && $client_id > 0) {
+        $rdap = getDomainRdap($domain_name);
+        $detected_registrar = $rdap ? getRdapRegistrar($rdap) : '';
+        if (!empty($detected_registrar)) {
+            $sql_v = mysqli_query($mysqli, "SELECT vendor_id, vendor_name FROM vendors WHERE vendor_archived_at IS NULL AND vendor_client_id = $client_id");
+            while ($v = mysqli_fetch_assoc($sql_v)) {
+                if (stripos($detected_registrar, $v['vendor_name']) !== false || stripos($v['vendor_name'], $detected_registrar) !== false) {
+                    $registrar_sql = ", domain_registrar = " . intval($v['vendor_id']);
+                    break;
+                }
+            }
+        }
+    }
+
+    mysqli_query($mysqli,"UPDATE domains SET domain_expire = $expire, domain_ip = '$a', domain_name_servers = '$ns', domain_mail_servers = '$mx', domain_txt = '$txt', domain_raw_whois = '$whois' $registrar_sql WHERE domain_id = $domain_id");
 
     logAudit("Domain", "Refresh", "$session_name refreshed records for domain $domain_name", $client_id, $domain_id);
 

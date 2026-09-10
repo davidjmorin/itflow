@@ -38,6 +38,13 @@
                         </a>
                     <?php } ?>
 
+                    <?php if ($session_is_admin) { ?>
+                        <div class="dropdown-divider"></div>
+                        <a class="dropdown-item" href="/admin/client_merge.php?source_client_id=<?= $client_id ?>">
+                            <i class="fas fa-fw fa-code-branch mr-2"></i>Merge Client
+                        </a>
+                    <?php } ?>
+
                     <?php if (empty($client_archived_at)) { ?>
                         <div class="dropdown-divider"></div>
                         <a class="dropdown-item text-danger confirm-link" href="post.php?archive_client=<?= $client_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>">

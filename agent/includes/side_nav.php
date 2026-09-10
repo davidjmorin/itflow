@@ -20,6 +20,17 @@
                 </li>
                 <?php if (lookupUserPermission("module_client") >= 1) { ?>
                     <li class="nav-item">
+                        <a href="/agent/leads.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "leads.php" || basename($_SERVER["PHP_SELF"]) == "lead.php" || basename($_SERVER["PHP_SELF"]) == "lead_email_templates.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-funnel-dollar"></i>
+                            <p>
+                                Leads
+                                <?php if (!empty($num_active_leads)) { ?>
+                                    <span class="right badge badge-info" data-toggle="tooltip" title="Active Leads"><?= $num_active_leads ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a href="/agent/clients.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "clients.php") { echo "active"; } ?>">
                             <i class="nav-icon fas fa-users"></i>
                             <p>
@@ -94,6 +105,12 @@
 
                 <?php if ($config_module_enable_accounting == 1 && lookupUserPermission("module_sales") >= 1) { ?>
                     <li class="nav-header mt-3">BILLING</li>
+                    <li class="nav-item">
+                        <a href="/agent/contracts.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "contracts.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-file-contract"></i>
+                            <p>Contracts</p>
+                        </a>
+                    </li>
                     <li class="nav-item">
                         <a href="/agent/quotes.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "quotes.php" || basename($_SERVER["PHP_SELF"]) == "quote.php") { echo "active"; } ?>">
                             <i class="nav-icon fas fa-comment-dollar"></i>

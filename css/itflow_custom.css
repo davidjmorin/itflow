@@ -58,3 +58,129 @@
     position: static;
     margin: 0;
 }
+
+/* Google Places Autocomplete Styling */
+.pac-container {
+    z-index: 1060 !important; /* Must float above Bootstrap 4 modals (z-index 1050) */
+    border-radius: 0.25rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.175);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    font-family: inherit;
+    margin-top: 2px;
+}
+
+.pac-item {
+    padding: 6px 10px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    line-height: 1.5;
+}
+
+.pac-item:hover, .pac-item-selected {
+    background-color: #f4f6f9;
+}
+
+/* Modern ITFlow Autocomplete Dropdown (Places API New) */
+.itflow-autocomplete-dropdown {
+    position: absolute;
+    z-index: 1060 !important;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 0.25rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.175);
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 2px;
+    padding: 4px 0;
+}
+
+.itflow-autocomplete-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #f4f6f9;
+}
+
+.itflow-autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.itflow-autocomplete-item:hover,
+.itflow-autocomplete-item.active {
+    background-color: #e9ecef;
+}
+
+.itflow-autocomplete-item .item-icon {
+    margin-right: 10px;
+    color: #007bff;
+    font-size: 1rem;
+}
+
+.itflow-autocomplete-item .item-main {
+    font-weight: 600;
+    color: #212529;
+}
+
+.itflow-autocomplete-item .item-secondary {
+    color: #6c757d;
+    font-size: 0.8rem;
+    margin-left: 6px;
+}
+
+.itflow-autocomplete-footer {
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    color: #adb5bd;
+    text-align: right;
+    border-top: 1px solid #f0f0f0;
+}
+
+/* Dark mode styling for Google Places dropdown */
+.dark-mode .pac-container,
+.dark-mode .itflow-autocomplete-dropdown {
+    background-color: #343a40;
+    border-color: #4b545c;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .pac-item,
+.dark-mode .itflow-autocomplete-item {
+    color: #ced4da;
+    border-top-color: #4b545c;
+    border-bottom-color: #3f474e;
+}
+
+.dark-mode .pac-item:hover,
+.dark-mode .pac-item-selected,
+.dark-mode .itflow-autocomplete-item:hover,
+.dark-mode .itflow-autocomplete-item.active {
+    background-color: #3f474e;
+}
+
+.dark-mode .pac-item-query,
+.dark-mode .itflow-autocomplete-item .item-main {
+    color: #ffffff;
+}
+
+.dark-mode .pac-matched {
+    color: #4aa0e0;
+}
+
+.dark-mode .itflow-autocomplete-item .item-secondary {
+    color: #adb5bd;
+}
+
+.dark-mode .itflow-autocomplete-footer {
+    border-top-color: #4b545c;
+    color: #6c757d;
+}
+
+/* Autocomplete populate animation highlight */
+.is-autocomplete-filled {
+    border-color: #28a745 !important;
+    box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25) !important;
+    transition: border-color 0.25s ease-in-out, box-shadow 0.25s ease-in-out;
+}

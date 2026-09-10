@@ -1,12 +1,10 @@
 <?php
 
-// Default Column Sort by Filter
 $sort = "contract_template_name";
 $order = "ASC";
 
 require_once "includes/inc_all_admin.php";
 
-// Search query
 $sql = mysqli_query(
     $mysqli,
     "SELECT SQL_CALC_FOUND_ROWS * FROM contract_templates

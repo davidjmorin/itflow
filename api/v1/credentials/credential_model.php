@@ -10,13 +10,17 @@
  * Only the fields present are checked, which keeps partial updates working.
  */
 $credential_field_too_long = checkCredentialLengths([
-    'name'        => $_POST['credential_name'] ?? null,
-    'description' => $_POST['credential_description'] ?? null,
-    'uri'         => $_POST['credential_uri'] ?? null,
-    'uri_2'       => $_POST['credential_uri_2'] ?? null,
-    'username'    => $_POST['credential_username'] ?? null,
-    'password'    => $_POST['credential_password'] ?? null,
-    'otp_secret'  => $_POST['credential_otp_secret'] ?? null,
+    'name'            => $_POST['credential_name'] ?? null,
+    'description'     => $_POST['credential_description'] ?? null,
+    'type'            => $_POST['credential_type'] ?? null,
+    'wifi_ssid'       => $_POST['credential_wifi_ssid'] ?? null,
+    'wifi_passcode'   => $_POST['credential_wifi_passcode'] ?? null,
+    'wifi_encryption' => $_POST['credential_wifi_encryption'] ?? null,
+    'uri'             => $_POST['credential_uri'] ?? null,
+    'uri_2'           => $_POST['credential_uri_2'] ?? null,
+    'username'        => $_POST['credential_username'] ?? null,
+    'password'        => $_POST['credential_password'] ?? null,
+    'otp_secret'      => $_POST['credential_otp_secret'] ?? null,
 ]);
 
 if ($credential_field_too_long) {
@@ -37,6 +41,39 @@ if (isset($_POST['credential_name'])) {
     $name = mysqli_real_escape_string($mysqli, $credential_row['credential_name']);
 } else {
     $name = '';
+}
+
+if (isset($_POST['credential_type'])) {
+    $type = escapeSql($_POST['credential_type']);
+} elseif (isset($credential_row) && isset($credential_row['credential_type'])) {
+    $type = mysqli_real_escape_string($mysqli, $credential_row['credential_type']);
+} else {
+    $type = 'Standard';
+}
+
+if (isset($_POST['credential_wifi_ssid'])) {
+    $wifi_ssid = escapeSql($_POST['credential_wifi_ssid']);
+} elseif (isset($credential_row) && isset($credential_row['credential_wifi_ssid'])) {
+    $wifi_ssid = mysqli_real_escape_string($mysqli, $credential_row['credential_wifi_ssid']);
+} else {
+    $wifi_ssid = '';
+}
+
+if (isset($_POST['credential_wifi_passcode'])) {
+    $wifi_passcode = $_POST['credential_wifi_passcode'];
+    $wifi_passcode = !empty($wifi_passcode) ? apiEncryptCredentialEntry($wifi_passcode, $api_key_decrypt_hash, $api_key_decrypt_password) : '';
+} elseif (isset($credential_row) && isset($credential_row['credential_wifi_passcode'])) {
+    $wifi_passcode = $credential_row['credential_wifi_passcode'];
+} else {
+    $wifi_passcode = '';
+}
+
+if (isset($_POST['credential_wifi_encryption'])) {
+    $wifi_encryption = escapeSql($_POST['credential_wifi_encryption']);
+} elseif (isset($credential_row) && isset($credential_row['credential_wifi_encryption'])) {
+    $wifi_encryption = mysqli_real_escape_string($mysqli, $credential_row['credential_wifi_encryption']);
+} else {
+    $wifi_encryption = '';
 }
 
 if (isset($_POST['credential_description'])) {

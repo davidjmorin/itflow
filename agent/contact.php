@@ -304,7 +304,7 @@ if (isset($_GET['contact_id'])) {
                             <i class="fa fa-fw fa-desktop mr-2"></i>New Asset
                         </a>
                         <div class="dropdown-divider"></div>
-                        <a class="dropdown-item text-dark ajax-modal" href="#" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>&contact_id=<?= $contact_id ?>">
+                        <a class="dropdown-item text-dark ajax-modal" href="#" data-modal-size="lg" data-modal-url="modals/credential/credential_add.php?<?= $client_url ?>&contact_id=<?= $contact_id ?>">
                             <i class="fa fa-fw fa-key mr-2"></i>New Credential
                         </a>
                         <div class="dropdown-divider"></div>
@@ -609,18 +609,43 @@ if (isset($_GET['contact_id'])) {
                                 $credential_tags_display = implode('', $credential_tag_name_display_array);
 
                                 ?>
+                                <?php
+                                $credential_type = escapeHtml($row['credential_type'] ?? 'Standard');
+                                $credential_wifi_ssid = escapeHtml($row['credential_wifi_ssid'] ?? '');
+                                $credential_wifi_passcode = $row['credential_wifi_passcode'] ?? '';
+                                ?>
                                 <tr>
                                     <td>
-                                        <i class="fa fa-fw fa-key text-secondary"></i>
+                                        <?php if ($credential_type == 'Wi-Fi') { ?>
+                                            <i class="fa fa-fw fa-wifi text-info"></i>
+                                        <?php } else { ?>
+                                            <i class="fa fa-fw fa-key text-secondary"></i>
+                                        <?php } ?>
                                         <a class="text-dark ajax-modal" href="#"
+                                            data-modal-size="lg"
                                             data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                             <?= $credential_name ?>
                                         </a>
+                                        <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_ssid)) { ?>
+                                            <div><small class="text-muted"><i class="fa fa-wifi mr-1"></i><?= $credential_wifi_ssid ?></small></div>
+                                        <?php } ?>
                                     </td>
                                     <td><?= $credential_description ?></td>
                                     <td><?= $credential_username_display ?></td>
-                                    <td>
-                                        <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                    <td class="text-nowrap">
+                                        <?php if ($credential_type == 'Wi-Fi' && !empty($credential_wifi_passcode)) { ?>
+                                            <div class="mb-1">
+                                                <small class="text-info font-weight-bold">Wi-Fi:</small>
+                                                <button class="btn p-0" type="button" title="Show Wi-Fi Passcode" onclick="showWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-info"></i><i class="fas fa-2x fa-ellipsis-h text-info"></i></button>
+                                                <button class="btn btn-sm" type="button" title="Copy Wi-Fi Passcode" onclick="copyWifiPasscodeViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-info"></i></button>
+                                            </div>
+                                        <?php } ?>
+                                        <?php if ($credential_type != 'Wi-Fi' || !empty($row['credential_password'])) { ?>
+                                            <div>
+                                                <?php if ($credential_type == 'Wi-Fi') { echo "<small class='text-secondary font-weight-bold'>Admin:</small> "; } ?>
+                                                <button class="btn p-0" type="button" onclick="showPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="fas fa-2x fa-ellipsis-h text-secondary"></i><i class="fas fa-2x fa-ellipsis-h text-secondary"></i></button><button class="btn btn-sm" type="button" onclick="copyPasswordViaCredentialID(this, <?= $credential_id ?>)"><i class="far fa-copy text-secondary"></i></button>
+                                            </div>
+                                        <?php } ?>
                                     </td>
                                     <td><?= $otp_display ?></td>
                                     <td><?= $credential_uri_display ?></td>
@@ -631,6 +656,7 @@ if (isset($_GET['contact_id'])) {
                                             </button>
                                             <div class="dropdown-menu">
                                                 <a class="dropdown-item ajax-modal" href="#"
+                                                    data-modal-size="lg"
                                                     data-modal-url="modals/credential/credential_edit.php?id=<?= $credential_id ?>">
                                                     <i class="fas fa-fw fa-edit mr-2"></i>Edit
                                                 </a>
@@ -1243,7 +1269,7 @@ if (isset($_GET['contact_id'])) {
 
     <!-- Include scripts to fetch TOTP codes and passwords via the credential ID -->
     <script src="js/credential_show_otp_via_id.js"></script>
-    <script src="js/credential_show_password_via_id.js"></script>
+    <script src="js/credential_show_password_via_id.js?v=2.6.8"></script>
 
 <?php
 require_once "../includes/footer.php";

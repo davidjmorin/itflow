@@ -26,6 +26,19 @@ $client_notes = escapeHtml($row['client_notes']);
 $client_created_at = escapeHtml($row['client_created_at']);
 $client_archived_at = escapeHtml($row['client_archived_at']);
 
+// Primary location / address
+$sql_primary_location = mysqli_query($mysqli, "SELECT location_id, location_address, location_city, location_state, location_zip, location_country FROM locations WHERE location_client_id = $client_id AND location_primary = 1 LIMIT 1");
+$primary_location = mysqli_fetch_assoc($sql_primary_location);
+$current_primary_address = '';
+if ($primary_location) {
+    $current_primary_address = implode(', ', array_filter([
+        $primary_location['location_address'],
+        $primary_location['location_city'],
+        trim(($primary_location['location_state'] ?? '') . ' ' . ($primary_location['location_zip'] ?? '')),
+        $primary_location['location_country']
+    ]));
+}
+
 // Client SLA assignments
 $client_sla_assignments = [];
 $sql_client_slas = mysqli_query($mysqli, "SELECT sla_assignment_priority, sla_assignment_sla_id FROM sla_assignments WHERE sla_assignment_client_id = $client_id");
@@ -63,11 +76,18 @@ ob_start();
     </button>
 </div>
 
-<form action="post.php" method="post" autocomplete="off">
+<form action="post.php" method="post" autocomplete="off" style="display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden;">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="client_id" value="<?= $client_id ?>">
+    <input type="hidden" name="update_primary_address" id="update_primary_address<?= $client_id ?>" value="0">
+    <input type="hidden" name="primary_address" id="primary_address<?= $client_id ?>" value="">
+    <input type="hidden" name="primary_city" id="primary_city<?= $client_id ?>" value="">
+    <input type="hidden" name="primary_state" id="primary_state<?= $client_id ?>" value="">
+    <input type="hidden" name="primary_zip" id="primary_zip<?= $client_id ?>" value="">
+    <input type="hidden" name="primary_country" id="primary_country<?= $client_id ?>" value="">
+    <input type="hidden" name="primary_phone" id="primary_phone<?= $client_id ?>" value="">
 
-    <ul class="modal-header nav nav-pills nav-justified mb-3">
+    <ul class="modal-header nav nav-pills nav-justified mb-3" style="flex-shrink: 0;">
         <li class="nav-item">
             <a class="nav-link active" data-toggle="pill" href="#pills-client-details<?= $client_id ?>">Details</a>
         </li>
@@ -81,11 +101,13 @@ ob_start();
         </li>
     </ul>
 
-    <div class="modal-body">
+    <div class="modal-body" style="overflow-y: auto; max-height: calc(75vh - 120px); flex: 1 1 auto; min-height: 0;">
 
         <div class="tab-content">
 
             <div class="tab-pane fade show active" id="pills-client-details<?= $client_id ?>">
+
+                <div id="primaryAddressPendingContainer<?= $client_id ?>"></div>
 
                 <div class="form-group">
                     <label>Name <strong class="text-danger">*</strong> / <span class="text-secondary">Is Lead</span></label>
@@ -93,14 +115,21 @@ ob_start();
                         <div class="input-group-prepend">
                             <span class="input-group-text"><i class="fa fa-fw fa-id-badge"></i></span>
                         </div>
-                        <input type="text" class="form-control" name="name" placeholder="Name or Company" maxlength="200"
-                               value="<?= $client_name ?>" required>
+                        <input type="text" class="form-control company-autocomplete" name="name" id="client_name" placeholder="Name or Company" maxlength="200"
+                               value="<?= $client_name ?>" required
+                               data-current-primary-address="<?= escapeHtml($current_primary_address) ?>"
+                               data-client-id="<?= $client_id ?>">
                         <div class="input-group-append">
                             <div class="input-group-text">
                                 <input type="checkbox" name="lead" value="1" <?php if($client_is_lead == 1){ echo "checked"; } ?>>
                             </div>
                         </div>
                     </div>
+                    <?php if (!empty($current_primary_address)) { ?>
+                        <small class="form-text text-muted mt-1" id="current_primary_address_display">
+                            <i class="fas fa-map-marker-alt text-secondary mr-1"></i>Primary Address: <span class="text-secondary"><?= $current_primary_address ?></span>
+                        </small>
+                    <?php } ?>
                 </div>
 
                 <div class="form-group">
@@ -286,7 +315,7 @@ ob_start();
 
         </div>
     </div>
-    <div class="modal-footer">
+    <div class="modal-footer" style="flex-shrink: 0;">
         <button type="submit" name="edit_client" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Save</button>
         <button type="button" class="btn btn-outline-secondary" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
     </div>

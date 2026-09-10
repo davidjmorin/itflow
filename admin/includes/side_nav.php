@@ -128,7 +128,6 @@
                     </li>
                 <?php } ?>
                 <?php if ($config_module_enable_itdoc) { ?>
-                    <!-- 2025-11-16 JQ - Hide Contracts not yet ready
                     <li class="nav-item">
                         <a href="/admin/contract_templates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'contract_templates.php' ? 'active' : '') ?>">
                             <i class="nav-icon fas fa-file-contract"></i>
@@ -138,7 +137,6 @@
                             </p>
                         </a>
                     </li>
-                    -->
                     <li class="nav-item">
                         <a href="/admin/vendor_templates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'vendor_templates.php' ? 'active' : '') ?>">
                             <i class="nav-icon fas fa-building"></i>
@@ -211,7 +209,7 @@
                 </li>
 
                 <!-- SETTINGS Section -->
-                <li class="nav-item has-treeview mt-2 <?= (in_array(basename($_SERVER['PHP_SELF']), ['settings_company.php', 'settings_localization.php', 'settings_theme.php', 'settings_security.php', 'settings_mail.php', 'settings_notification.php', 'settings_default.php', 'settings_invoice.php', 'settings_quote.php', 'settings_online_payment.php', 'settings_online_payment_clients.php', 'settings_project.php', 'settings_ticket.php', 'settings_ai.php', 'identity_providers.php', 'settings_telemetry.php', 'settings_module.php']) ? 'menu-open' : '') ?>">
+                <li class="nav-item has-treeview mt-2 <?= (in_array(basename($_SERVER['PHP_SELF']), ['settings_company.php', 'settings_localization.php', 'settings_theme.php', 'settings_security.php', 'settings_mail.php', 'settings_notification.php', 'settings_default.php', 'settings_invoice.php', 'settings_quote.php', 'settings_online_payment.php', 'settings_online_payment_clients.php', 'settings_project.php', 'settings_ticket.php', 'settings_ai.php', 'identity_providers.php', 'settings_telemetry.php', 'settings_module.php', 'client_merge.php']) ? 'menu-open' : '') ?>">
                     <a href="#" class="nav-link">
                         <p>
                             SETTINGS
@@ -308,6 +306,12 @@
                             <a href="/admin/settings_module.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_module.php' ? 'active' : '') ?>">
                                 <i class="nav-icon fas fa-cube"></i>
                                 <p>Modules</p>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/admin/client_merge.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'client_merge.php' ? 'active' : '') ?>">
+                                <i class="nav-icon fas fa-code-branch"></i>
+                                <p>Merge Clients</p>
                             </a>
                         </li>
                     </ul>
