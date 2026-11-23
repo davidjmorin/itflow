@@ -18,6 +18,11 @@
                             <i class="fas fa-fw fa-life-ring mr-2"></i>New Ticket
                         </a>
                     <?php } ?>
+                    <?php if (tbrHasPermission('schedule')) { ?>
+                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/tbr/tbr_schedule.php?client_id=<?= $client_id ?>" data-modal-size="lg">
+                            <i class="fas fa-fw fa-chart-line mr-2"></i>Schedule TBR
+                        </a>
+                    <?php } ?>
                     <div class="dropdown-divider"></div>
                     <a class="dropdown-item ajax-modal" href="#"
                         data-modal-url="modals/client/client_edit.php?id=<?= $client_id ?>">

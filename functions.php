@@ -26,3 +26,7 @@ require_once __DIR__ . '/functions/ai.php';
 require_once __DIR__ . '/functions/export.php';
 require_once __DIR__ . '/functions/calendar.php';
 require_once __DIR__ . '/functions/backup.php';
+require_once __DIR__ . '/functions/smsgate.php';
+require_once __DIR__ . '/functions/passkey.php';
+require_once __DIR__ . '/functions/tbr.php';
+require_once __DIR__ . '/functions/meetings.php';

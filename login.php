@@ -2,7 +2,7 @@
 
 // Unified login (Agent + Client) using one email & password
 
-header("Content-Security-Policy: default-src 'self'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
 
 if (!file_exists('config.php')) {
     header("Location: /setup");
@@ -731,11 +731,12 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
             <form method="post">
 
                 <?php if ($show_login_form): ?>
-                    <!-- STEP 1: Email + Password -->
                     <div class="input-group mb-3">
                         <input type="email" class="form-control"
                             placeholder="<?php if ($config_login_key_required) { if (!isset($_GET['key']) || $_GET['key'] !== $config_login_key_secret) { echo "Client "; } } echo "Email"; ?>"
                             name="email"
+                            id="login_email"
+                            autocomplete="username webauthn"
                             value="<?= htmlspecialchars($email ?? '', ENT_QUOTES) ?>"
                             required autofocus
                         >
@@ -746,20 +747,33 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
                         </div>
                     </div>
 
-                    <div class="input-group mb-3">
-                        <input type="password" class="form-control" placeholder="Password" name="password" required>
-                        <div class="input-group-append">
-                            <div class="input-group-text">
-                                <span class="fas fa-lock"></span>
-                            </div>
+                    <div id="passkey_detect_container" class="d-none mb-3">
+                        <div class="alert alert-info py-2 mb-2 text-center small">
+                            <i class="fas fa-fingerprint mr-1"></i> Passkey detected for this account
+                        </div>
+                        <button type="button" class="btn btn-success btn-block mb-2" id="passkey_login_btn">
+                            <i class="fas fa-fingerprint mr-2"></i>Sign In with Passkey
+                        </button>
+                        <div class="text-center">
+                            <a href="#" id="fallback_password_link" class="text-muted small">Sign in with password instead</a>
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary btn-block mb-3" name="login">Sign In</button>
+                    <div id="password_container">
+                        <div class="input-group mb-3">
+                            <input type="password" class="form-control" placeholder="Password" name="password" id="login_password" required>
+                            <div class="input-group-append">
+                                <div class="input-group-text">
+                                    <span class="fas fa-lock"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-block mb-3" name="login">Sign In</button>
+                    </div>
                 <?php endif; ?>
 
                 <?php if ($show_role_choice): ?>
-                    <!-- STEP 2: Role choice only -->
                     <input type="hidden" name="pending_login_token"
                            value="<?= htmlspecialchars($_SESSION['pending_dual_login']['token'] ?? '', ENT_QUOTES) ?>">
 
@@ -774,7 +788,23 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
                 <?php endif; ?>
 
                 <?php if ($show_mfa_form): ?>
-                    <!-- STEP 3: MFA only -->
+                    <?php
+                    $mfa_agent_id = intval($_SESSION['pending_mfa_login']['agent_user_id'] ?? 0);
+                    $has_mfa_passkey = false;
+                    if ($mfa_agent_id > 0) {
+                        $pk_check = mysqli_query($mysqli, "SELECT passkey_id FROM user_passkeys WHERE passkey_user_id = $mfa_agent_id LIMIT 1");
+                        if ($pk_check && mysqli_num_rows($pk_check) > 0) {
+                            $has_mfa_passkey = true;
+                        }
+                    }
+                    ?>
+                    <?php if ($has_mfa_passkey): ?>
+                        <button type="button" class="btn btn-success btn-block mb-3" id="mfa_passkey_btn">
+                            <i class="fas fa-fingerprint mr-2"></i>Verify with Passkey
+                        </button>
+                        <div class="text-center text-muted mb-2 small">— or enter 2FA code —</div>
+                    <?php endif; ?>
+
                     <?= $token_field ?>
 
                     <input type="hidden" name="pending_mfa_token"
@@ -823,6 +853,8 @@ echo '<small class="text-muted">Powered by ' . escapeHtml($company_name) . '</sm
 <script src="libs/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="libs/adminlte/js/adminlte.min.js"></script>
 <script src="js/login_prevent_resubmit.js"></script>
+<script src="js/passkey.js"></script>
+<script src="js/login_passkey.js"></script>
 
 </body>
 </html>

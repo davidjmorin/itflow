@@ -3,10 +3,10 @@
    - Make the button full-width, display:block
 */
 @media (max-width: 575.98px) {
-  .btn-responsive {
-    display: block;
-    width: 100%;
-  }
+    .btn-responsive {
+        display: block;
+        width: 100%;
+    }
 }
 
 /*
@@ -14,10 +14,10 @@
    - Revert to an inline style
 */
 @media (min-width: 576px) {
-  .btn-responsive {
-    display: inline-block;
-    width: auto;
-  }
+    .btn-responsive {
+        display: inline-block;
+        width: auto;
+    }
 }
 
 .drag-handle {
@@ -38,7 +38,7 @@
     color: #adb5bd;
 }
 
-.star-toggle input:checked + i {
+.star-toggle input:checked+i {
     color: #f1c40f;
     font-weight: 900;
 }
@@ -61,7 +61,8 @@
 
 /* Google Places Autocomplete Styling */
 .pac-container {
-    z-index: 1060 !important; /* Must float above Bootstrap 4 modals (z-index 1050) */
+    z-index: 1060 !important;
+    /* Must float above Bootstrap 4 modals (z-index 1050) */
     border-radius: 0.25rem;
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.175);
     border: 1px solid rgba(0, 0, 0, 0.15);
@@ -76,7 +77,8 @@
     line-height: 1.5;
 }
 
-.pac-item:hover, .pac-item-selected {
+.pac-item:hover,
+.pac-item-selected {
     background-color: #f4f6f9;
 }
 
@@ -183,4 +185,129 @@
     border-color: #28a745 !important;
     box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25) !important;
     transition: border-color 0.25s ease-in-out, box-shadow 0.25s ease-in-out;
+}
+
+.modal-dialog,
+.modal-dialog-scrollable {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100% - 1rem);
+}
+
+@media (min-width: 576px) {
+
+    .modal-dialog,
+    .modal-dialog-scrollable {
+        max-height: calc(100% - 3.5rem);
+    }
+}
+
+.modal-dialog .modal-content,
+.modal-dialog-scrollable .modal-content {
+    max-height: calc(100vh - 1rem);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+@media (min-width: 576px) {
+
+    .modal-dialog .modal-content,
+    .modal-dialog-scrollable .modal-content {
+        max-height: calc(100vh - 3.5rem);
+    }
+}
+
+.modal-dialog.modal-dialog-centered,
+.modal-dialog-scrollable.modal-dialog-centered {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 100%;
+}
+
+.modal-dialog.modal-dialog-centered::before,
+.modal-dialog-scrollable.modal-dialog-centered::before {
+    content: none !important;
+}
+
+.modal-dialog.modal-dialog-centered .modal-content,
+.modal-dialog-scrollable.modal-dialog-centered .modal-content {
+    max-height: calc(100vh - 1rem);
+}
+
+@media (min-width: 576px) {
+
+    .modal-dialog.modal-dialog-centered .modal-content,
+    .modal-dialog-scrollable.modal-dialog-centered .modal-content {
+        max-height: calc(100vh - 3.5rem);
+    }
+}
+
+.modal-dialog .modal-header,
+.modal-dialog .modal-footer,
+.modal-dialog-scrollable .modal-header,
+.modal-dialog-scrollable .modal-footer {
+    flex-shrink: 0;
+}
+
+.modal-dialog .modal-body,
+.modal-dialog-scrollable .modal-body {
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.modal-dialog .modal-content>form,
+.modal-dialog-scrollable .modal-content>form,
+.modal-dialog form,
+.modal-dialog-scrollable form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.modal-dialog .modal-content>form>.modal-body,
+.modal-dialog-scrollable .modal-content>form>.modal-body,
+.modal-dialog form>.modal-body,
+.modal-dialog-scrollable form>.modal-body {
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.modal-dialog .modal-content>form>.modal-footer,
+.modal-dialog-scrollable .modal-content>form>.modal-footer,
+.modal-dialog form>.modal-footer,
+.modal-dialog-scrollable form>.modal-footer {
+    flex-shrink: 0;
+}
+
+.list-group-item.active {
+    background: #e0e073;
+}
+
+.accent-red .btn-link,
+.accent-red .nav-tabs .nav-link,
+.accent-red a:not(.dropdown-item):not(.btn-app):not(.nav-link):not(.brand-link):not(.page-link):not(.badge):not(.btn) {
+    color: rgb(0, 0, 0);
+}
+
+.text-light {
+    color: rgb(0, 0, 0) !important;
+}
+
+span.right.badge.text-light[data-toggle="tooltip"] {
+    background-color: #800000 !important;
+    color: #ffffff !important;
+}
+
+.right.badge.text-light {
+    color: white !important;
+}
+
+.badge.badge-pill.text-light.p-2 {
+    color: #ff6347 !important;
 }

@@ -275,7 +275,8 @@ function sendQueueEmail(
     $mail->Body = $html_body;
 
     if (!empty($ics_str)) {
-        $mail->addStringAttachment($ics_str, 'Scheduled_ticket.ics', 'base64', 'text/calendar');
+        $ics_name = (strpos($ics_str, 'UID:tbr-') !== false) ? 'TBR_Meeting.ics' : 'Scheduled_ticket.ics';
+        $mail->addStringAttachment($ics_str, $ics_name, 'base64', 'text/calendar');
     }
 
     // File attachments arrive as a manifest of app-root-relative paths. Each one is

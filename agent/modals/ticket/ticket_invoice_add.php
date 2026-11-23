@@ -89,6 +89,27 @@ $ticket_total_reply_time_display = formatDuration($ticket_total_reply_time);
 $sql_invoices = mysqli_query($mysqli, "SELECT invoice_amount, invoice_date, invoice_due, invoice_id, invoice_number, invoice_prefix,
     invoice_scope, invoice_status FROM invoices WHERE invoice_status LIKE 'Draft' AND invoice_client_id = $client_id ORDER BY invoice_number ASC");
 
+$ticket_products = [];
+$ticket_products_total = 0.0;
+$sql_tp = mysqli_query($mysqli, "
+    SELECT tp.*, ii.item_serial, tx.tax_name, tx.tax_percent
+    FROM ticket_products tp
+    LEFT JOIN inventory_items ii ON tp.ticket_product_inventory_item_id = ii.item_id
+    LEFT JOIN taxes tx ON tp.ticket_product_tax_id = tx.tax_id
+    WHERE tp.ticket_product_ticket_id = $ticket_id
+      AND tp.ticket_product_invoiced = 0
+    ORDER BY tp.ticket_product_id ASC
+");
+if ($sql_tp) {
+    while ($tp_row = mysqli_fetch_assoc($sql_tp)) {
+        $ticket_products[] = $tp_row;
+        $ticket_products_total += floatval($tp_row['ticket_product_total']);
+    }
+}
+
+$has_logged_time = !empty($ticket_total_reply_time) && $ticket_total_reply_time !== '00:00:00';
+$include_labor_default = $has_logged_time || empty($ticket_products);
+
 ob_start();
 
 ?>
@@ -226,112 +247,177 @@ ob_start();
 
         </div>
 
-        <div class="form-group">
-            <label>Item <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-box"></i></span>
-                </div>
-                <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" value="Support [Hourly]" required>
+        <hr>
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="font-weight-bold mb-0"><i class="fas fa-fw fa-clock mr-1 text-primary"></i>Support Labor Line Item</h6>
+            <div class="custom-control custom-switch">
+                <input type="hidden" name="include_labor" value="0">
+                <input type="checkbox" class="custom-control-input" id="includeLaborSwitch" name="include_labor" value="1" <?= $include_labor_default ? 'checked' : '' ?>>
+                <label class="custom-control-label font-weight-bold" for="includeLaborSwitch">Include Labor</label>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Item Description</label>
-            <div class="input-group">
-                <textarea class="form-control" rows="10" name="item_description"><?php
-                    // Build description text cleanly in PHP, not mixed with HTML
-                    $description = "Ticket: {$ticket_prefix}{$ticket_number} - $ticket_subject\n";
-                    $description .= "Work Performed: Support (see ticket notes)\n";
-                    $description .= "\n";
-                    $description .= "Opened: {$ticket_date}\n";
-                    if ($ticket_first_response_date_time) {
-                        $description .= "Initial Response: {$ticket_first_response_date_time}\n";
-                    }
-                    if ($ticket_resolved_date) {
-                        $description .= "Resolved: {$ticket_resolved_date}\n";
-                    }
-                    $description .= "\n";
-                    if ($ticket_assigned_agent) {
-                        $description .= "Agent: {$ticket_assigned_agent}\n";
-                    }
-                    if ($location_id) {
-                        $description .= "Location: {$location_name}\n";
-                    }
-                    if ($contact_id) {
-                        $description .= "Contact: {$contact_name}\n";
-                    }
-                    if ($asset_id) {
-                        $description .= "Asset: {$asset_name}\n";
-                    }
-                    if ($ticket_total_reply_time) {
-                        $description .= "Time Spent: {$ticket_total_reply_time_display}";
-                    }
-
-                    echo trim($description); // Trim any leading/trailing spaces/newlines
-                ?></textarea>
-            </div>
-        </div>
-
-        <div class="form-row">
-            <div class="col">
-
-                <div class="form-group">
-                    <label>QTY <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-balance-scale"></i></span>
-                        </div>
-                        <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" value="<?= roundToNearest15Min($ticket_total_reply_time) ?>" required>
+        <div id="laborLineItemSection" class="<?= $include_labor_default ? '' : 'd-none' ?>">
+            <div class="form-group">
+                <label>Item <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text"><i class="fa fa-fw fa-box"></i></span>
                     </div>
-                    <small class="form-text text-muted">
-                        Based off Ticket time spent <strong><?= $ticket_total_reply_time ?></strong> in 15 Min Increments rounded up.
-                    </small>
+                    <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" value="Support [Hourly]" required>
                 </div>
-
             </div>
 
-            <div class="col">
+            <div class="form-group">
+                <label>Item Description</label>
+                <div class="input-group">
+                    <textarea class="form-control" rows="6" name="item_description"><?php
+                        $description = "Ticket: {$ticket_prefix}{$ticket_number} - $ticket_subject\n";
+                        $description .= "Work Performed: Support (see ticket notes)\n";
+                        $description .= "\n";
+                        $description .= "Opened: {$ticket_date}\n";
+                        if ($ticket_first_response_date_time) {
+                            $description .= "Initial Response: {$ticket_first_response_date_time}\n";
+                        }
+                        if ($ticket_resolved_date) {
+                            $description .= "Resolved: {$ticket_resolved_date}\n";
+                        }
+                        $description .= "\n";
+                        if ($ticket_assigned_agent) {
+                            $description .= "Agent: {$ticket_assigned_agent}\n";
+                        }
+                        if ($location_id) {
+                            $description .= "Location: {$location_name}\n";
+                        }
+                        if ($contact_id) {
+                            $description .= "Contact: {$contact_name}\n";
+                        }
+                        if ($asset_id) {
+                            $description .= "Asset: {$asset_name}\n";
+                        }
+                        if ($ticket_total_reply_time) {
+                            $description .= "Time Spent: {$ticket_total_reply_time_display}";
+                        }
 
-                <div class="form-group">
-                    <label>Price <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
+                        echo trim($description);
+                    ?></textarea>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="col">
+
+                    <div class="form-group">
+                        <label>QTY <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text"><i class="fa fa-fw fa-balance-scale"></i></span>
+                            </div>
+                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" value="<?= roundToNearest15Min($ticket_total_reply_time) ?>" required>
                         </div>
-                        <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
+                        <small class="form-text text-muted">
+                            Based off Ticket time spent <strong><?= $ticket_total_reply_time ?></strong> in 15 Min Increments rounded up.
+                        </small>
                     </div>
-                    <small class="form-text text-muted">
-                        Based off Hourly Client rate of <strong><?= numfmt_format_currency($currency_format, $client_rate, $session_company_currency); ?></strong>
-                    </small>
+
+                </div>
+
+                <div class="col">
+
+                    <div class="form-group">
+                        <label>Price <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
+                            </div>
+                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
+                        </div>
+                        <small class="form-text text-muted">
+                            Based off Hourly Client rate of <strong><?= numfmt_format_currency($currency_format, $client_rate, $session_company_currency); ?></strong>
+                        </small>
+                    </div>
+
                 </div>
 
             </div>
 
-        </div>
+            <div class="form-group">
+                <label>Tax <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text"><i class="fa fa-fw fa-piggy-bank"></i></span>
+                    </div>
+                    <select class="form-control select2" name="tax_id" required>
+                        <option value="0">None</option>
+                        <?php
 
-        <div class="form-group">
-            <label>Tax <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-piggy-bank"></i></span>
+                        $taxes_sql = mysqli_query($mysqli, "SELECT tax_id, tax_name, tax_percent FROM taxes WHERE tax_archived_at IS NULL ORDER BY tax_name ASC");
+                        while ($row = mysqli_fetch_assoc($taxes_sql)) {
+                            $tax_id_select = intval($row['tax_id']);
+                            $tax_name = escapeHtml($row['tax_name']);
+                            $tax_percent = floatval($row['tax_percent']);
+                            ?>
+                            <option value="<?= $tax_id_select ?>"><?= "$tax_name $tax_percent%" ?></option>
+                        <?php } ?>
+                    </select>
+
                 </div>
-                <select class="form-control select2" name="tax_id" required>
-                    <option value="0">None</option>
-                    <?php
-
-                    $taxes_sql = mysqli_query($mysqli, "SELECT tax_id, tax_name, tax_percent FROM taxes WHERE tax_archived_at IS NULL ORDER BY tax_name ASC");
-                    while ($row = mysqli_fetch_assoc($taxes_sql)) {
-                        $tax_id_select = intval($row['tax_id']);
-                        $tax_name = escapeHtml($row['tax_name']);
-                        $tax_percent = floatval($row['tax_percent']);
-                        ?>
-                        <option value="<?= $tax_id_select ?>"><?= "$tax_name $tax_percent%" ?></option>
-                    <?php } ?>
-                </select>
-
             </div>
         </div>
+
+        <?php if (!empty($ticket_products)) { ?>
+            <hr>
+            <h6 class="font-weight-bold mb-2"><i class="fas fa-fw fa-box-open mr-1 text-success"></i>Products &amp; Hardware Charges on Ticket</h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="thead-light">
+                        <tr>
+                            <th style="width: 36px;" class="text-center">Inc</th>
+                            <th>Product</th>
+                            <th class="text-right">QTY</th>
+                            <th class="text-right">Price</th>
+                            <th class="text-right">Tax</th>
+                            <th class="text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($ticket_products as $tp) {
+                            $tp_id = intval($tp['ticket_product_id']);
+                            $is_serialized = intval($tp['ticket_product_inventory_item_id']) > 0;
+                            $tp_qty = floatval($tp['ticket_product_qty']);
+                            ?>
+                            <tr>
+                                <td class="text-center align-middle">
+                                    <input type="checkbox" name="ticket_product_ids[]" value="<?= $tp_id ?>" checked>
+                                </td>
+                                <td class="align-middle">
+                                    <div class="font-weight-bold"><?= escapeHtml($tp['ticket_product_name']) ?></div>
+                                    <?php if ($is_serialized) { ?>
+                                        <div>
+                                            <?php if (!empty($tp['item_serial'])) { ?>
+                                                <span class="badge badge-info">S/N: <?= escapeHtml($tp['item_serial']) ?></span>
+                                            <?php } ?>
+                                            <small class="text-muted">Will link to Client Assets upon invoicing (<?= escapeHtml($tp['ticket_product_asset_type'] ?: 'Other') ?>)</small>
+                                        </div>
+                                    <?php } ?>
+                                </td>
+                                <td class="text-right align-middle"><?= number_format($tp_qty, $tp_qty == floor($tp_qty) ? 0 : 2) ?></td>
+                                <td class="text-right align-middle"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_price']), $session_company_currency) ?></td>
+                                <td class="text-right align-middle"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_tax']), $session_company_currency) ?></td>
+                                <td class="text-right align-middle font-weight-bold"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_total']), $session_company_currency) ?></td>
+                            </tr>
+                        <?php } ?>
+                    </tbody>
+                    <tfoot>
+                        <tr class="bg-light font-weight-bold">
+                            <td colspan="5" class="text-right">Ticket Products Total</td>
+                            <td class="text-right"><?= numfmt_format_currency($currency_format, $ticket_products_total, $session_company_currency) ?></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        <?php } ?>
 
     </div>
     <div class="modal-footer">
@@ -339,6 +425,19 @@ ob_start();
         <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
     </div>
 </form>
+
+<script>
+(function () {
+    function syncLaborVisibility() {
+        var enabled = $('#includeLaborSwitch').is(':checked');
+        var $section = $('#laborLineItemSection');
+        $section.toggleClass('d-none', !enabled);
+        $section.find('input, textarea, select').prop('disabled', !enabled);
+    }
+    $('#includeLaborSwitch').on('change', syncLaborVisibility);
+    syncLaborVisibility();
+})();
+</script>
 
 <?php
 require_once '../../../includes/modal_footer.php';

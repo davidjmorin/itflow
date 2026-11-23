@@ -115,5 +115,19 @@ require_once "includes/inc_all_admin.php";
         </div>
     </div>
 
+    <div class="card card-dark">
+        <div class="card-header py-3">
+            <h3 class="card-title"><i class="fas fa-fw fa-sms mr-2"></i>SMS Notifications &amp; Weekly Technician Summary (SMS Gate)</h3>
+            <div class="card-tools">
+                <a href="settings_smsgate.php#weekly-tech-summary" class="btn btn-sm btn-info mr-1"><i class="fas fa-user-clock mr-1"></i>Weekly Tech Summary</a>
+                <a href="settings_smsgate.php" class="btn btn-sm btn-primary"><i class="fas fa-cog mr-1"></i>Configure SMS Gate</a>
+            </div>
+        </div>
+        <div class="card-body">
+            <p class="mb-2">SMS Gate is <?= !empty($config_smsgate_enable) ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-secondary">Disabled</span>' ?>. Emergency urgent ticket notifications and ticket submission acknowledgements are managed in <a href="settings_smsgate.php">SMS Gate Settings</a>.</p>
+            <p class="mb-0">Monday Weekly Technician Time &amp; Mileage Summary is <?= !empty($config_tech_weekly_summary_enable) ? '<span class="badge badge-success">Enabled (Mondays at ' . escapeHtml($config_tech_weekly_summary_time ?: '08:00') . ')</span>' : '<span class="badge badge-secondary">Disabled</span>' ?>. Configure technician recipients, multiple SMS numbers, and email fallback in <a href="settings_smsgate.php#weekly-tech-summary">Weekly Technician Summary Settings</a>.</p>
+        </div>
+    </div>
+
 <?php
 require_once "../includes/footer.php";

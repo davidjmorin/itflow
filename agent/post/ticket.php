@@ -139,17 +139,16 @@ if (isset($_POST['add_ticket'])) {
 
         // EMAILING
 
-        $subject = "Ticket Created [$ticket_prefix$ticket_number] - $ticket_subject";
-        $body = "<i style=\'color: #808080\'>##- Please type your reply above this line -##</i><br><br>Hello $contact_name,<br><br>A ticket regarding \"$ticket_subject\" has been created for you.<br><br>--------------------------------<br>$ticket_details--------------------------------<br><br>Ticket: $ticket_prefix$ticket_number<br>Subject: $ticket_subject<br>Status: Open<br>Portal: <a href=\'https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key\'>View ticket</a><br><br>--<br>$company_name - Support<br>$config_ticket_from_email<br>$company_phone";
+        $rendered_mail = renderTicketCreatedEmail($ticket_id, $contact_name, $contact_email, false);
+        $subject = $rendered_mail['subject'];
+        $body = $rendered_mail['body'];
 
         // Verify contact email is valid
+        $data = [];
         if (filter_var($contact_email, FILTER_VALIDATE_EMAIL)) {
-
 
             // Email Ticket Contact
             // Queue Mail
-            $data = [];
-
             $data[] = [
                 'from' => $config_ticket_from_email,
                 'from_name' => $config_ticket_from_name,
@@ -178,7 +177,9 @@ if (isset($_POST['add_ticket'])) {
                 'attachments' => $emailable_attachments['send']
             ];
         }
-        addToMailQueue($data);
+        if (!empty($data)) {
+            addToMailQueue($data);
+        }
 
         // END EMAILING
 
@@ -456,7 +457,7 @@ if (isset($_POST['edit_ticket_contact'])) {
 
     $ticket_id = intval($_POST['ticket_id']);
     $contact_id = intval($_POST['contact']);
-    $notify = intval($_POST['contact_notify']) ?? 0;
+    $notify = intval($_POST['contact_notify'] ?? 0);
 
     // Get Original contact, and ticket details
     $sql = mysqli_query($mysqli, "SELECT
@@ -1841,9 +1842,12 @@ if (isset($_POST['add_ticket_reply'])) {
     $ticket_status = intval($_POST['status']);
     
     // Read the ticket as it stands before the reply changes anything
-    $original_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT ticket_client_id, ticket_status FROM tickets WHERE ticket_id = $ticket_id"));
+    $original_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT ticket_client_id, ticket_status, ticket_prefix, ticket_number, ticket_subject FROM tickets WHERE ticket_id = $ticket_id"));
     $client_id = intval($original_row['ticket_client_id'] ?? 0);
     $original_ticket_status = intval($original_row['ticket_status'] ?? 0);
+    $ticket_prefix = escapeSql($original_row['ticket_prefix'] ?? '');
+    $ticket_number = intval($original_row['ticket_number'] ?? 0);
+    $ticket_subject = escapeSql($original_row['ticket_subject'] ?? '');
 
     // Don't Enforce Client Access if Ticket doesn't have an assigned client
     if ($client_id) {
@@ -2384,9 +2388,8 @@ if (isset($_GET['resolve_ticket'])) {
         $body = "<i style=\'color: #808080\'>##- Please type your reply above this line -##</i><br><br>Hello $contact_name,<br><br>Your ticket regarding $ticket_subject has been marked as solved and is pending closure.<br><br>If your request/issue is resolved, you can simply ignore this email. If you need further assistance, please reply or <a href=\'https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key\'>re-open</a> to let us know! <br><br>Ticket: $ticket_prefix$ticket_number<br>Subject: $ticket_subject<br>Status: $ticket_status<br>Portal: <a href=\'https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key\'>View ticket</a><br><br>--<br>$company_name - Support<br>$config_ticket_from_email<br>$company_phone";
 
         // Check email valid
+        $data = [];
         if (filter_var($contact_email, FILTER_VALIDATE_EMAIL)) {
-
-            $data = [];
 
             // Email Ticket Contact
             // Queue Mail
@@ -2417,7 +2420,9 @@ if (isset($_GET['resolve_ticket'])) {
                 'body' => $body
             ];
         }
-        addToMailQueue($data);
+        if (!empty($data)) {
+            addToMailQueue($data);
+        }
     }
     //End Mail IF
 
@@ -2486,9 +2491,8 @@ if (isset($_GET['close_ticket'])) {
         $body = "Hello $contact_name,<br><br>Your ticket regarding \"$ticket_subject\" has been closed. <br><br> We hope the request/issue was resolved to your satisfaction, please provide your feedback <a href=\'https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key\'>here</a>. <br>If you need further assistance, please raise a new ticket using the below details. Please do not reply to this email. <br><br>Ticket: $ticket_prefix$ticket_number<br>Subject: $ticket_subject<br>Portal: https://$config_base_url/client/ticket.php?id=$ticket_id<br><br>--<br>$company_name - Support<br>$config_ticket_from_email<br>$company_phone";
 
         // Check email valid
+        $data = [];
         if (filter_var($contact_email, FILTER_VALIDATE_EMAIL)) {
-
-            $data = [];
 
             // Email Ticket Contact
             // Queue Mail
@@ -2519,7 +2523,9 @@ if (isset($_GET['close_ticket'])) {
                 'body' => $body
             ];
         }
-        addToMailQueue($data);
+        if (!empty($data)) {
+            addToMailQueue($data);
+        }
     }
     //End Mail IF
 
@@ -2560,6 +2566,229 @@ if (isset($_GET['reopen_ticket'])) {
 
 }
 
+if (isset($_POST['add_ticket_product'])) {
+
+    validateCSRFToken();
+
+    enforceUserPermission('module_support', 2);
+
+    $ticket_id = intval($_POST['ticket_id'] ?? 0);
+    $product_id = intval($_POST['product_id'] ?? 0);
+    $inventory_item_id = intval($_POST['inventory_item_id'] ?? 0);
+    $name_raw = trim((string) ($_POST['name'] ?? ''));
+    $name = escapeSql($name_raw);
+    $description = escapeSql(trim((string) ($_POST['description'] ?? '')));
+    $qty = floatval($_POST['qty'] ?? 1);
+    $price = floatval($_POST['price'] ?? 0);
+    $tax_id = intval($_POST['tax_id'] ?? 0);
+    $raw_asset_type = trim((string) ($_POST['asset_type'] ?? ''));
+
+    $ticket_sql = mysqli_query($mysqli, "SELECT ticket_client_id, ticket_prefix, ticket_number FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
+    $ticket_row = $ticket_sql ? mysqli_fetch_assoc($ticket_sql) : null;
+    if (!$ticket_row) {
+        flashAlert("Ticket not found", 'error');
+        redirect();
+    }
+
+    $client_id = intval($ticket_row['ticket_client_id']);
+    if ($client_id) {
+        enforceClientAccess();
+    }
+
+    if ($name_raw === '' || $qty <= 0) {
+        flashAlert("Product name and quantity greater than 0 are required", 'error');
+        redirect();
+    }
+
+    $asset_type = 'Other';
+    if ($inventory_item_id > 0) {
+        $qty = 1.00;
+        $inv_check = mysqli_query($mysqli, "SELECT item_id, item_product_id, item_status FROM inventory_items WHERE item_id = $inventory_item_id AND item_archived_at IS NULL LIMIT 1");
+        $inv_row = $inv_check ? mysqli_fetch_assoc($inv_check) : null;
+        if (!$inv_row || $inv_row['item_status'] !== 'In Stock') {
+            flashAlert("Selected serialized item is no longer in stock", 'error');
+            redirect();
+        }
+        if ($product_id === 0) {
+            $product_id = intval($inv_row['item_product_id']);
+        }
+        mysqli_query($mysqli, "UPDATE inventory_items SET item_status = 'Reserved', item_client_id = $client_id WHERE item_id = $inventory_item_id AND item_status = 'In Stock'");
+        if (mysqli_affected_rows($mysqli) !== 1) {
+            flashAlert("Could not reserve serialized inventory item", 'error');
+            redirect();
+        }
+        $asset_type = ($raw_asset_type !== '' && isset($asset_types_array) && array_key_exists($raw_asset_type, $asset_types_array))
+            ? $raw_asset_type
+            : inferAssetTypeFromProductName($name_raw);
+    }
+
+    $subtotal = round($qty * $price, 2);
+    $tax_amount = 0.00;
+    if ($tax_id > 0) {
+        $tax_sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id LIMIT 1");
+        if ($tax_sql && $tax_row = mysqli_fetch_assoc($tax_sql)) {
+            $tax_amount = round($subtotal * floatval($tax_row['tax_percent']) / 100, 2);
+        }
+    }
+    $total = round($subtotal + $tax_amount, 2);
+    $asset_type_esc = escapeSql($asset_type);
+
+    mysqli_query($mysqli, "INSERT INTO ticket_products SET
+        ticket_product_ticket_id = $ticket_id,
+        ticket_product_product_id = $product_id,
+        ticket_product_inventory_item_id = $inventory_item_id,
+        ticket_product_name = '$name',
+        ticket_product_description = '$description',
+        ticket_product_qty = $qty,
+        ticket_product_price = $price,
+        ticket_product_tax_id = $tax_id,
+        ticket_product_tax = $tax_amount,
+        ticket_product_subtotal = $subtotal,
+        ticket_product_total = $total,
+        ticket_product_asset_type = '$asset_type_esc',
+        ticket_product_added_by = $session_user_id");
+
+    mysqli_query($mysqli, "UPDATE tickets SET ticket_billable = 1 WHERE ticket_id = $ticket_id");
+
+    logTicketHistory($ticket_id, "$session_name added product $name");
+    logAudit("Ticket", "Edit", "$session_name added product $name to ticket {$ticket_row['ticket_prefix']}{$ticket_row['ticket_number']}", $client_id, $ticket_id);
+
+    flashAlert("Product <strong>" . escapeHtml($name_raw) . "</strong> added to ticket");
+    redirect();
+
+}
+
+if (isset($_POST['edit_ticket_product'])) {
+
+    validateCSRFToken();
+
+    enforceUserPermission('module_support', 2);
+
+    $ticket_product_id = intval($_POST['ticket_product_id'] ?? 0);
+    $name_raw = trim((string) ($_POST['name'] ?? ''));
+    $name = escapeSql($name_raw);
+    $description = escapeSql(trim((string) ($_POST['description'] ?? '')));
+    $qty = floatval($_POST['qty'] ?? 1);
+    $price = floatval($_POST['price'] ?? 0);
+    $tax_id = intval($_POST['tax_id'] ?? 0);
+    $raw_asset_type = trim((string) ($_POST['asset_type'] ?? ''));
+
+    $tp_sql = mysqli_query($mysqli, "
+        SELECT tp.*, t.ticket_client_id, t.ticket_prefix, t.ticket_number
+        FROM ticket_products tp
+        JOIN tickets t ON tp.ticket_product_ticket_id = t.ticket_id
+        WHERE tp.ticket_product_id = $ticket_product_id
+        LIMIT 1
+    ");
+    $tp_row = $tp_sql ? mysqli_fetch_assoc($tp_sql) : null;
+    if (!$tp_row) {
+        flashAlert("Ticket product not found", 'error');
+        redirect();
+    }
+
+    $ticket_id = intval($tp_row['ticket_product_ticket_id']);
+    $client_id = intval($tp_row['ticket_client_id']);
+    if ($client_id) {
+        enforceClientAccess();
+    }
+
+    if (intval($tp_row['ticket_product_invoiced']) === 1) {
+        flashAlert("Invoiced products cannot be modified", 'error');
+        redirect();
+    }
+
+    if ($name_raw === '' || $qty <= 0) {
+        flashAlert("Product name and quantity greater than 0 are required", 'error');
+        redirect();
+    }
+
+    $asset_type = $tp_row['ticket_product_asset_type'] ?: 'Other';
+    if (intval($tp_row['ticket_product_inventory_item_id']) > 0) {
+        $qty = 1.00;
+        if ($raw_asset_type !== '' && isset($asset_types_array) && array_key_exists($raw_asset_type, $asset_types_array)) {
+            $asset_type = $raw_asset_type;
+        }
+    }
+
+    $subtotal = round($qty * $price, 2);
+    $tax_amount = 0.00;
+    if ($tax_id > 0) {
+        $tax_sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id LIMIT 1");
+        if ($tax_sql && $tax_row = mysqli_fetch_assoc($tax_sql)) {
+            $tax_amount = round($subtotal * floatval($tax_row['tax_percent']) / 100, 2);
+        }
+    }
+    $total = round($subtotal + $tax_amount, 2);
+    $asset_type_esc = escapeSql($asset_type);
+
+    mysqli_query($mysqli, "UPDATE ticket_products SET
+        ticket_product_name = '$name',
+        ticket_product_description = '$description',
+        ticket_product_qty = $qty,
+        ticket_product_price = $price,
+        ticket_product_tax_id = $tax_id,
+        ticket_product_tax = $tax_amount,
+        ticket_product_subtotal = $subtotal,
+        ticket_product_total = $total,
+        ticket_product_asset_type = '$asset_type_esc'
+        WHERE ticket_product_id = $ticket_product_id");
+
+    logTicketHistory($ticket_id, "$session_name updated product $name");
+    logAudit("Ticket", "Edit", "$session_name updated product $name on ticket {$tp_row['ticket_prefix']}{$tp_row['ticket_number']}", $client_id, $ticket_id);
+
+    flashAlert("Product <strong>" . escapeHtml($name_raw) . "</strong> updated");
+    redirect();
+
+}
+
+if (isset($_GET['delete_ticket_product'])) {
+
+    validateCSRFToken();
+
+    enforceUserPermission('module_support', 2);
+
+    $ticket_product_id = intval($_GET['delete_ticket_product'] ?? 0);
+
+    $tp_sql = mysqli_query($mysqli, "
+        SELECT tp.*, t.ticket_client_id, t.ticket_prefix, t.ticket_number
+        FROM ticket_products tp
+        JOIN tickets t ON tp.ticket_product_ticket_id = t.ticket_id
+        WHERE tp.ticket_product_id = $ticket_product_id
+        LIMIT 1
+    ");
+    $tp_row = $tp_sql ? mysqli_fetch_assoc($tp_sql) : null;
+    if (!$tp_row) {
+        flashAlert("Ticket product not found", 'error');
+        redirect();
+    }
+
+    $ticket_id = intval($tp_row['ticket_product_ticket_id']);
+    $client_id = intval($tp_row['ticket_client_id']);
+    if ($client_id) {
+        enforceClientAccess();
+    }
+
+    if (intval($tp_row['ticket_product_invoiced']) === 1) {
+        flashAlert("Invoiced products cannot be removed from the ticket", 'error');
+        redirect();
+    }
+
+    $inv_item_id = intval($tp_row['ticket_product_inventory_item_id']);
+    if ($inv_item_id > 0) {
+        mysqli_query($mysqli, "UPDATE inventory_items SET item_status = 'In Stock', item_client_id = 0 WHERE item_id = $inv_item_id AND item_status = 'Reserved'");
+    }
+
+    mysqli_query($mysqli, "DELETE FROM ticket_products WHERE ticket_product_id = $ticket_product_id");
+
+    $prod_name_esc = escapeSql($tp_row['ticket_product_name']);
+    logTicketHistory($ticket_id, "$session_name removed product $prod_name_esc");
+    logAudit("Ticket", "Edit", "$session_name removed product $prod_name_esc from ticket {$tp_row['ticket_prefix']}{$tp_row['ticket_number']}", $client_id, $ticket_id);
+
+    flashAlert("Product removed from ticket", 'error');
+    redirect();
+
+}
+
 if (isset($_POST['add_invoice_from_ticket'])) {
 
     validateCSRFToken();
@@ -2567,11 +2796,21 @@ if (isset($_POST['add_invoice_from_ticket'])) {
     enforceUserPermission('module_support', 2);
     enforceUserPermission('module_sales', 2);
 
-    $invoice_id = intval($_POST['invoice_id']);
+    $invoice_id = intval($_POST['invoice_id'] ?? 0);
     $ticket_id = intval($_POST['ticket_id']);
-    $date = escapeSql($_POST['date']);
-    $category = intval($_POST['category']);
-    $scope = escapeSql($_POST['scope']);
+    $date = escapeSql($_POST['date'] ?? date('Y-m-d'));
+    $category = intval($_POST['category'] ?? 0);
+    $scope = escapeSql($_POST['scope'] ?? '');
+    $include_labor = isset($_POST['include_labor']) ? intval($_POST['include_labor']) : 1;
+    $selected_tp_ids = [];
+    if (!empty($_POST['ticket_product_ids']) && is_array($_POST['ticket_product_ids'])) {
+        foreach ($_POST['ticket_product_ids'] as $tp_id_raw) {
+            $tp_id_int = intval($tp_id_raw);
+            if ($tp_id_int > 0) {
+                $selected_tp_ids[] = $tp_id_int;
+            }
+        }
+    }
 
     $sql = mysqli_query(
         $mysqli,
@@ -2610,11 +2849,23 @@ if (isset($_POST['add_invoice_from_ticket'])) {
 
     enforceClientAccess();
 
+    $item_name = escapeSql($_POST['item_name'] ?? '');
+    $item_description = escapeSql($_POST['item_description'] ?? '');
+    $qty = floatval($_POST['qty'] ?? 0);
+    $price = floatval($_POST['price'] ?? 0);
+    $tax_id = intval($_POST['tax_id'] ?? 0);
+
+    $add_labor_line = ($include_labor === 1) && ($qty > 0 || empty($selected_tp_ids));
+
+    if (!$add_labor_line && empty($selected_tp_ids)) {
+        flashAlert("Please include support labor or select at least one ticket product to invoice", 'error');
+        redirect();
+    }
+
     if ($invoice_id == 0) {
 
         $invoice_prefix = escapeSql($config_invoice_prefix);
 
-        // Atomically increment and get the new invoice number
         mysqli_query($mysqli, "
             UPDATE settings
             SET
@@ -2625,53 +2876,77 @@ if (isset($_POST['add_invoice_from_ticket'])) {
 
         $invoice_number = mysqli_insert_id($mysqli);
 
-        //Generate a unique URL key for clients to access
         $url_key = randomString(32);
 
         mysqli_query($mysqli, "INSERT INTO invoices SET invoice_prefix = '$config_invoice_prefix', invoice_number = $invoice_number, invoice_scope = '$scope', invoice_date = '$date', invoice_due = DATE_ADD('$date', INTERVAL $client_net_terms day), invoice_currency_code = '$session_company_currency', invoice_category_id = $category, invoice_status = 'Draft', invoice_url_key = '$url_key', invoice_client_id = $client_id");
         $invoice_id = mysqli_insert_id($mysqli);
+        $order_num = 1;
     } else {
         $sql_invoice = mysqli_query($mysqli, "SELECT invoice_prefix, invoice_number FROM invoices WHERE invoice_id = $invoice_id");
         $row = mysqli_fetch_assoc($sql_invoice);
         $invoice_prefix = escapeSql($row['invoice_prefix']);
         $invoice_number = intval($row['invoice_number']);
+        $max_order_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COALESCE(MAX(item_order), 0) AS max_order FROM invoice_items WHERE item_invoice_id = $invoice_id"));
+        $order_num = intval($max_order_row['max_order'] ?? 0) + 1;
     }
 
-    //Add Item
-    $item_name = escapeSql($_POST['item_name']);
-    $item_description = escapeSql($_POST['item_description']);
-    $qty = floatval($_POST['qty']);
-    $price = floatval($_POST['price']);
-    $tax_id = intval($_POST['tax_id']);
+    $added_total = 0.0;
 
-    $subtotal = $price * $qty;
+    if ($add_labor_line) {
+        $subtotal = $price * $qty;
 
-    if ($tax_id > 0) {
-        $sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
-        $row = mysqli_fetch_assoc($sql);
-        $tax_percent = floatval($row['tax_percent']);
-        $tax_amount = $subtotal * $tax_percent / 100;
-    } else {
-        $tax_amount = 0;
+        if ($tax_id > 0) {
+            $sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
+            $row = mysqli_fetch_assoc($sql);
+            $tax_percent = floatval($row['tax_percent']);
+            $tax_amount = $subtotal * $tax_percent / 100;
+        } else {
+            $tax_amount = 0;
+        }
+
+        $total = $subtotal + $tax_amount;
+
+        mysqli_query($mysqli, "INSERT INTO invoice_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = $order_num, item_tax_id = $tax_id, item_invoice_id = $invoice_id");
+        $order_num++;
+        $added_total += $total;
     }
 
-    $total = $subtotal + $tax_amount;
+    if (!empty($selected_tp_ids)) {
+        $ids_str = implode(',', $selected_tp_ids);
+        $tp_q = mysqli_query($mysqli, "SELECT * FROM ticket_products WHERE ticket_product_ticket_id = $ticket_id AND ticket_product_invoiced = 0 AND ticket_product_id IN ($ids_str) ORDER BY ticket_product_id ASC");
+        if ($tp_q) {
+            while ($tp = mysqli_fetch_assoc($tp_q)) {
+                $tp_name = escapeSql($tp['ticket_product_name']);
+                $tp_desc = escapeSql($tp['ticket_product_description'] ?? '');
+                $tp_qty = floatval($tp['ticket_product_qty']);
+                $tp_price = floatval($tp['ticket_product_price']);
+                $tp_sub = floatval($tp['ticket_product_subtotal']);
+                $tp_tax = floatval($tp['ticket_product_tax']);
+                $tp_tot = floatval($tp['ticket_product_total']);
+                $tp_tax_id = intval($tp['ticket_product_tax_id']);
+                $tp_prod_id = intval($tp['ticket_product_product_id']);
 
-    mysqli_query($mysqli, "INSERT INTO invoice_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = 1, item_tax_id = $tax_id, item_invoice_id = $invoice_id");
-
-    //Update Invoice Balances
+                mysqli_query($mysqli, "INSERT INTO invoice_items SET item_name = '$tp_name', item_description = '$tp_desc', item_quantity = $tp_qty, item_price = $tp_price, item_subtotal = $tp_sub, item_tax = $tp_tax, item_total = $tp_tot, item_order = $order_num, item_tax_id = $tp_tax_id, item_product_id = $tp_prod_id, item_invoice_id = $invoice_id");
+                $order_num++;
+                $added_total += $tp_tot;
+            }
+        }
+    }
 
     $sql = mysqli_query($mysqli, "SELECT invoice_amount FROM invoices WHERE invoice_id = $invoice_id");
     $row = mysqli_fetch_assoc($sql);
 
-    $new_invoice_amount = floatval($row['invoice_amount']) + $total;
+    $new_invoice_amount = floatval($row['invoice_amount']) + $added_total;
 
     mysqli_query($mysqli, "UPDATE invoices SET invoice_amount = $new_invoice_amount WHERE invoice_id = $invoice_id");
 
+    if (!empty($selected_tp_ids)) {
+        fulfillTicketProductsOnInvoice($mysqli, $ticket_id, $invoice_id, $selected_tp_ids);
+    }
+
     mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Draft', history_description = 'Invoice created from Ticket $ticket_prefix$ticket_number', history_invoice_id = $invoice_id");
 
-    // Add internal note to ticket, and link to invoice in database
-    mysqli_query($mysqli, "INSERT INTO ticket_replies SET ticket_reply = 'Created invoice <a href=\"invoice.php?invoice_id=$invoice_id\">$config_invoice_prefix$invoice_number</a> for this ticket.', ticket_reply_type = 'Internal', ticket_reply_time_worked = '00:00:00', ticket_reply_by = $session_user_id, ticket_reply_ticket_id = $ticket_id");
+    mysqli_query($mysqli, "INSERT INTO ticket_replies SET ticket_reply = 'Created invoice <a href=\"invoice.php?invoice_id=$invoice_id\">$invoice_prefix$invoice_number</a> for this ticket.', ticket_reply_type = 'Internal', ticket_reply_time_worked = '00:00:00', ticket_reply_by = $session_user_id, ticket_reply_ticket_id = $ticket_id");
 
     mysqli_query($mysqli, "UPDATE tickets SET ticket_invoice_id = $invoice_id WHERE ticket_id = $ticket_id");
 
@@ -2693,24 +2968,44 @@ if (isset($_POST['add_quote_from_ticket'])) {
     require_once 'quote_model.php';
 
     $ticket_id = intval($_POST['ticket_id']);
-    $item_name = escapeSql($_POST['item_name']);
-    $item_description = escapeSql($_POST['item_description']);
-    $qty = floatval($_POST['qty']);
-    $price = floatval($_POST['price']);
-    $tax_id = intval($_POST['tax_id']);
-
-    // Totals
-    $subtotal = $price * $qty;
-    $tax_amount = 0;
-    if ($tax_id > 0) {
-        $sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
-        $row = mysqli_fetch_assoc($sql);
-        $tax_percent = floatval($row['tax_percent']);
-        $tax_amount = $subtotal * $tax_percent / 100;
+    $item_name = escapeSql($_POST['item_name'] ?? '');
+    $item_description = escapeSql($_POST['item_description'] ?? '');
+    $qty = floatval($_POST['qty'] ?? 0);
+    $price = floatval($_POST['price'] ?? 0);
+    $tax_id = intval($_POST['tax_id'] ?? 0);
+    $include_labor = isset($_POST['include_labor']) ? intval($_POST['include_labor']) : 1;
+    $selected_tp_ids = [];
+    if (!empty($_POST['ticket_product_ids']) && is_array($_POST['ticket_product_ids'])) {
+        foreach ($_POST['ticket_product_ids'] as $tp_id_raw) {
+            $tp_id_int = intval($tp_id_raw);
+            if ($tp_id_int > 0) {
+                $selected_tp_ids[] = $tp_id_int;
+            }
+        }
     }
-    $total = floatval($subtotal + $tax_amount);
 
-    // Ticket info
+    $add_labor_line = ($include_labor === 1) && ($qty > 0 || empty($selected_tp_ids));
+    if (!$add_labor_line && empty($selected_tp_ids)) {
+        flashAlert("Please include support labor or select at least one ticket product to quote", 'error');
+        redirect();
+    }
+
+    $quote_total_amount = 0.0;
+    $subtotal = 0.0;
+    $tax_amount = 0.0;
+    $total = 0.0;
+    if ($add_labor_line) {
+        $subtotal = $price * $qty;
+        if ($tax_id > 0) {
+            $sql = mysqli_query($mysqli, "SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
+            $row = mysqli_fetch_assoc($sql);
+            $tax_percent = floatval($row['tax_percent']);
+            $tax_amount = $subtotal * $tax_percent / 100;
+        }
+        $total = floatval($subtotal + $tax_amount);
+        $quote_total_amount += $total;
+    }
+
     $sql = mysqli_query(
         $mysqli,
         "SELECT ticket_prefix, ticket_number, ticket_client_id FROM tickets WHERE ticket_id = $ticket_id LIMIT 1"
@@ -2722,7 +3017,6 @@ if (isset($_POST['add_quote_from_ticket'])) {
 
     enforceClientAccess();
 
-    // Atomically increment and get the new quote number
     mysqli_query($mysqli, "
         UPDATE settings
         SET
@@ -2733,21 +3027,45 @@ if (isset($_POST['add_quote_from_ticket'])) {
 
     $quote_number = mysqli_insert_id($mysqli);
 
-    //Generate a unique URL key for clients to access
     $quote_url_key = randomString(32);
 
-    mysqli_query($mysqli,"INSERT INTO quotes SET quote_prefix = '$config_quote_prefix', quote_number = $quote_number, quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_amount = $total, quote_currency_code = '$session_company_currency', quote_category_id = $category, quote_status = 'Draft', quote_url_key = '$quote_url_key', quote_client_id = $client_id");
+    mysqli_query($mysqli,"INSERT INTO quotes SET quote_prefix = '$config_quote_prefix', quote_number = $quote_number, quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_amount = 0, quote_currency_code = '$session_company_currency', quote_category_id = $category, quote_status = 'Draft', quote_url_key = '$quote_url_key', quote_client_id = $client_id");
 
     $quote_id = mysqli_insert_id($mysqli);
 
-    // Add line item
-    mysqli_query($mysqli, "INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = 1, item_tax_id = $tax_id, item_quote_id = $quote_id");
+    $order_num = 1;
+    if ($add_labor_line) {
+        mysqli_query($mysqli, "INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = $order_num, item_tax_id = $tax_id, item_quote_id = $quote_id");
+        $order_num++;
+    }
 
-    // Add internal note to ticket, and link to invoice in database
+    if (!empty($selected_tp_ids)) {
+        $ids_str = implode(',', $selected_tp_ids);
+        $tp_q = mysqli_query($mysqli, "SELECT * FROM ticket_products WHERE ticket_product_ticket_id = $ticket_id AND ticket_product_invoiced = 0 AND ticket_product_id IN ($ids_str) ORDER BY ticket_product_id ASC");
+        if ($tp_q) {
+            while ($tp = mysqli_fetch_assoc($tp_q)) {
+                $tp_name = escapeSql($tp['ticket_product_name']);
+                $tp_desc = escapeSql($tp['ticket_product_description'] ?? '');
+                $tp_qty = floatval($tp['ticket_product_qty']);
+                $tp_price = floatval($tp['ticket_product_price']);
+                $tp_sub = floatval($tp['ticket_product_subtotal']);
+                $tp_tax = floatval($tp['ticket_product_tax']);
+                $tp_tot = floatval($tp['ticket_product_total']);
+                $tp_tax_id = intval($tp['ticket_product_tax_id']);
+                $tp_prod_id = intval($tp['ticket_product_product_id']);
+
+                mysqli_query($mysqli, "INSERT INTO quote_items SET item_name = '$tp_name', item_description = '$tp_desc', item_quantity = $tp_qty, item_price = $tp_price, item_subtotal = $tp_sub, item_tax = $tp_tax, item_total = $tp_tot, item_order = $order_num, item_tax_id = $tp_tax_id, item_product_id = $tp_prod_id, item_quote_id = $quote_id");
+                $order_num++;
+                $quote_total_amount += $tp_tot;
+            }
+        }
+    }
+
+    mysqli_query($mysqli, "UPDATE quotes SET quote_amount = $quote_total_amount WHERE quote_id = $quote_id");
+
     mysqli_query($mysqli, "INSERT INTO ticket_replies SET ticket_reply = 'Created quote <a href=\"quote.php?quote_id=$quote_id\">$config_quote_prefix$quote_number</a> for this ticket.', ticket_reply_type = 'Internal', ticket_reply_time_worked = '00:00:00', ticket_reply_by = $session_user_id, ticket_reply_ticket_id = $ticket_id");
     mysqli_query($mysqli, "UPDATE tickets SET ticket_quote_id = $quote_id WHERE ticket_id = $ticket_id LIMIT 1");
 
-    // Logging + redirects
     mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Draft', history_description = 'Quote created from Ticket $ticket_prefix$ticket_number!', history_quote_id = $quote_id");
     logAudit("Quote", "Create", "$session_name created quote $config_quote_prefix$quote_number from ticket $ticket_prefix$ticket_number", $client_id, $quote_id);
 

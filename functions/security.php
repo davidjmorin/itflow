@@ -108,6 +108,33 @@ function generateUserSessionKey($site_encryption_master_key) {
     }
 }
 
+// True if the session holds a working vault key (false after a passkey login until unlocked)
+function vaultUnlocked() {
+    if (empty($_SESSION['user_encryption_session_ciphertext']) || empty($_COOKIE['user_encryption_session_key'])) {
+        return false;
+    }
+    $iv = base64_decode($_SESSION['user_encryption_session_iv'] ?? '');
+    $key = base64_decode($_COOKIE['user_encryption_session_key']);
+    $master = openssl_decrypt($_SESSION['user_encryption_session_ciphertext'], 'aes-128-cbc', $key, 0, $iv);
+    return !empty($master);
+}
+
+// Verifies the user's password and, if valid, creates the vault session key. Returns bool.
+function unlockVault($user_id, $password) {
+    global $mysqli;
+    $user_id = intval($user_id);
+    $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT user_password, user_specific_encryption_ciphertext FROM users WHERE user_id = $user_id AND user_status = 1 AND user_archived_at IS NULL"));
+    if (!$row || empty($row['user_specific_encryption_ciphertext']) || !password_verify($password, $row['user_password'])) {
+        return false;
+    }
+    $master = decryptUserSpecificKey($row['user_specific_encryption_ciphertext'], $password);
+    if (empty($master)) {
+        return false;
+    }
+    generateUserSessionKey($master);
+    return true;
+}
+
 // Decrypts an encrypted password (website/asset credentials), returns it as a string
 function decryptCredentialEntry($credential_password_ciphertext) {
     if (empty($credential_password_ciphertext) || strlen($credential_password_ciphertext) < 16) {

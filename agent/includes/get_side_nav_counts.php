@@ -34,3 +34,8 @@ $num_open_quotes = $row['num'];
 // Recurring Expenses Count
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('recurring_expense_id') AS num FROM recurring_expenses WHERE recurring_expense_archived_at IS NULL"));
 $num_recurring_expenses = $row['num'];
+
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('tbr_id') AS num FROM tbr_meetings WHERE tbr_archived_at IS NULL AND tbr_status IN ('Scheduled', 'In Progress') " . clientScopeSql('tbr_client_id') . ""));
+$num_upcoming_tbrs = intval($row['num'] ?? 0);
+
+$num_meetings = count(meetingListAccessibleSeries(intval($session_user_id ?? 0), !empty($session_is_admin)));

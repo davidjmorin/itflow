@@ -49,6 +49,11 @@ $mrr_display = floatval($lead['lead_estimated_mrr']) > 0 ? numfmt_format_currenc
             <button type="button" class="btn btn-primary ajax-modal" data-modal-url="modals/lead/lead_send_email.php?lead_id=<?= $lead_id ?>" data-modal-size="xl">
                 <i class="fas fa-paper-plane mr-1"></i>Send Email
             </button>
+            <?php if (lookupUserPermission("module_sales") >= 2) { ?>
+                <button type="button" class="btn btn-info ajax-modal" data-modal-url="modals/quote/quote_add.php?lead_id=<?= $lead_id ?>">
+                    <i class="fas fa-comment-dollar mr-1"></i>New Quote
+                </button>
+            <?php } ?>
             <?php if ($lead['lead_status'] !== 'Converted') { ?>
                 <button type="button" class="btn btn-success ajax-modal" data-modal-url="modals/lead/lead_convert.php?lead_id=<?= $lead_id ?>" data-modal-size="lg">
                     <i class="fas fa-user-check mr-1"></i>Convert to Client
@@ -230,6 +235,80 @@ $mrr_display = floatval($lead['lead_estimated_mrr']) > 0 ? numfmt_format_currenc
         </div>
 
         <div class="card card-dark">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="card-title"><i class="fas fa-comment-dollar mr-2"></i>Quotes</h3>
+                <?php if (lookupUserPermission("module_sales") >= 2) { ?>
+                    <div class="card-tools ml-auto">
+                        <button type="button" class="btn btn-primary btn-sm ajax-modal" data-modal-url="modals/quote/quote_add.php?lead_id=<?= $lead_id ?>">
+                            <i class="fas fa-plus mr-1"></i>New Quote
+                        </button>
+                    </div>
+                <?php } ?>
+            </div>
+            <div class="card-body p-0">
+                <?php
+                $quotes_sql = mysqli_query($mysqli, "SELECT * FROM quotes WHERE quote_lead_id = $lead_id AND quote_archived_at IS NULL ORDER BY quote_id DESC");
+                if (mysqli_num_rows($quotes_sql) === 0) {
+                    echo "<div class='text-center text-muted py-4'>No quotes created for this lead yet.</div>";
+                } else {
+                ?>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>Quote #</th>
+                                    <th>Scope</th>
+                                    <th>Date</th>
+                                    <th>Expire</th>
+                                    <th class="text-right">Amount</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php while ($q = mysqli_fetch_assoc($quotes_sql)) {
+                                    $q_id = intval($q['quote_id']);
+                                    $q_num = escapeHtml($q['quote_prefix'] . $q['quote_number']);
+                                    $q_scope = escapeHtml($q['quote_scope'] ?: '-');
+                                    $q_date = escapeHtml($q['quote_date']);
+                                    $q_expire = escapeHtml($q['quote_expire']);
+                                    $q_status = escapeHtml($q['quote_status']);
+                                    $q_amount = floatval($q['quote_amount']);
+                                    $q_currency = escapeHtml($q['quote_currency_code']);
+
+                                    $badge_class = 'secondary';
+                                    if ($q_status === 'Sent') $badge_class = 'warning text-white';
+                                    elseif ($q_status === 'Viewed') $badge_class = 'primary';
+                                    elseif ($q_status === 'Accepted') $badge_class = 'success';
+                                    elseif ($q_status === 'Declined') $badge_class = 'danger';
+                                    elseif ($q_status === 'Invoiced') $badge_class = 'info';
+                                ?>
+                                    <tr>
+                                        <td class="font-weight-bold">
+                                            <a href="quote.php?quote_id=<?= $q_id ?>"><?= $q_num ?></a>
+                                        </td>
+                                        <td><?= $q_scope ?></td>
+                                        <td><?= $q_date ?></td>
+                                        <td><?= $q_expire ?></td>
+                                        <td class="text-right font-weight-bold"><?= numfmt_format_currency($currency_format, $q_amount, $q_currency) ?></td>
+                                        <td class="text-center">
+                                            <span class="badge badge-<?= $badge_class ?>"><?= $q_status ?></span>
+                                        </td>
+                                        <td class="text-right">
+                                            <a href="quote.php?quote_id=<?= $q_id ?>" class="btn btn-sm btn-light">
+                                                <i class="fas fa-eye"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php } ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php } ?>
+            </div>
+        </div>
+
+        <div class="card card-dark">
             <div class="card-header">
                 <h3 class="card-title"><i class="fas fa-history mr-2"></i>Activity & Communication Timeline</h3>
             </div>
@@ -263,6 +342,9 @@ $mrr_display = floatval($lead['lead_estimated_mrr']) > 0 ? numfmt_format_currenc
                             } elseif ($type === 'Assessment') {
                                 $icon = 'fa-shield-alt';
                                 $icon_bg = '#fd7e14';
+                            } elseif ($type === 'Quote') {
+                                $icon = 'fa-comment-dollar';
+                                $icon_bg = '#20c997';
                             }
                         ?>
                             <li class="lead-timeline-item">

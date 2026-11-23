@@ -17,15 +17,15 @@ if (isset($_GET['accept_quote'], $_GET['url_key'])) {
     $quote_id = intval($_GET['accept_quote']);
     $url_key = escapeSql($_GET['url_key']);
 
-    // Select only the necessary fields
-    $sql = mysqli_query($mysqli, "SELECT quote_prefix, quote_number, client_name, client_id FROM quotes LEFT JOIN clients ON quote_client_id = client_id WHERE quote_id = $quote_id AND quote_url_key = '$url_key'");
+    $sql = mysqli_query($mysqli, "SELECT quote_prefix, quote_number, client_name, client_id, quote_lead_id, lead_name FROM quotes LEFT JOIN clients ON quote_client_id = client_id LEFT JOIN leads ON quote_lead_id = lead_id WHERE quote_id = $quote_id AND quote_url_key = '$url_key'");
 
     if (mysqli_num_rows($sql) == 1) {
         $row = mysqli_fetch_assoc($sql);
         $quote_prefix = escapeSql($row['quote_prefix']);
         $quote_number = intval($row['quote_number']);
-        $client_name = escapeSql($row['client_name']);
         $client_id = intval($row['client_id']);
+        $quote_lead_id = intval($row['quote_lead_id']);
+        $client_name = escapeSql(!empty($row['client_name']) ? $row['client_name'] : ($row['lead_name'] ?? ''));
 
         // Claim the response - only a quote still awaiting one can be accepted,
         // and only the first request through wins
@@ -36,9 +36,12 @@ if (isset($_GET['accept_quote'], $_GET['url_key'])) {
             redirect();
         }
 
-        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Accepted', history_description = 'Client accepted Quote!', history_quote_id = $quote_id");
+        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Accepted', history_description = 'Quote accepted!', history_quote_id = $quote_id");
 
-        // Notification
+        if ($quote_lead_id > 0) {
+            mysqli_query($mysqli, "INSERT INTO lead_activities SET lead_activity_lead_id = $quote_lead_id, lead_activity_type = 'Quote', lead_activity_title = 'Quote $quote_prefix$quote_number Accepted', lead_activity_details = 'Quote was accepted online.', lead_activity_created_by = 0");
+        }
+
         appNotify("Quote Accepted", "Quote $quote_prefix$quote_number has been accepted by $client_name", "/agent/quote.php?quote_id=$quote_id", $client_id);
         triggerCustomAction('quote_accept', $quote_id);
 
@@ -92,15 +95,15 @@ if (isset($_GET['decline_quote'], $_GET['url_key'])) {
     $quote_id = intval($_GET['decline_quote']);
     $url_key = escapeSql($_GET['url_key']);
 
-    // Select only the necessary fields
-    $sql = mysqli_query($mysqli, "SELECT quote_prefix, quote_number, client_name, client_id FROM quotes LEFT JOIN clients ON quote_client_id = client_id WHERE quote_id = $quote_id AND quote_url_key = '$url_key'");
+    $sql = mysqli_query($mysqli, "SELECT quote_prefix, quote_number, client_name, client_id, quote_lead_id, lead_name FROM quotes LEFT JOIN clients ON quote_client_id = client_id LEFT JOIN leads ON quote_lead_id = lead_id WHERE quote_id = $quote_id AND quote_url_key = '$url_key'");
 
     if (mysqli_num_rows($sql) == 1) {
         $row = mysqli_fetch_assoc($sql);
         $quote_prefix = escapeSql($row['quote_prefix']);
         $quote_number = intval($row['quote_number']);
-        $client_name = escapeSql($row['client_name']);
         $client_id = intval($row['client_id']);
+        $quote_lead_id = intval($row['quote_lead_id']);
+        $client_name = escapeSql(!empty($row['client_name']) ? $row['client_name'] : ($row['lead_name'] ?? ''));
 
         // Claim the response - only a quote still awaiting one can be declined,
         // and only the first request through wins
@@ -111,9 +114,12 @@ if (isset($_GET['decline_quote'], $_GET['url_key'])) {
             redirect();
         }
 
-        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Declined', history_description = 'Client declined Quote!', history_quote_id = $quote_id");
+        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Declined', history_description = 'Quote declined!', history_quote_id = $quote_id");
 
-        // Notification
+        if ($quote_lead_id > 0) {
+            mysqli_query($mysqli, "INSERT INTO lead_activities SET lead_activity_lead_id = $quote_lead_id, lead_activity_type = 'Quote', lead_activity_title = 'Quote $quote_prefix$quote_number Declined', lead_activity_details = 'Quote was declined online.', lead_activity_created_by = 0");
+        }
+
         appNotify("Quote Declined", "Quote $quote_prefix$quote_number has been declined by $client_name", "/agent/quote.php?quote_id=$quote_id", $client_id);
         triggerCustomAction('quote_decline', $quote_id);
 
@@ -994,22 +1000,20 @@ if (isset($_POST['guest_submit_ticket'])) {
         addToMailQueue($mail_data);
     }
 
-    $guest_view_url = "https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key";
-    $client_email_subject = mysqli_real_escape_string($mysqli, "[$config_ticket_prefix_esc$ticket_number] Ticket Received - $subject");
-    $client_email_body = mysqli_real_escape_string($mysqli, "Hello " . escapeHtml($name) . ",<br><br>Thank you for reaching out. We have received your support request.<br><br><b>Ticket Number:</b> $config_ticket_prefix_esc$ticket_number<br><b>Subject:</b> " . escapeHtml($subject) . "<br><br>You can track the progress and reply to this ticket online at:<br><a href='$guest_view_url'>$guest_view_url</a><br><br>Regards,<br>" . escapeHtml($system_company_name));
-
+    $rendered_mail = renderTicketCreatedEmail($ticket_id, $name, $email, true);
     $client_mail_data = [
         [
             'from' => $config_ticket_from_email,
             'from_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
             'recipient' => $email,
             'recipient_name' => mysqli_real_escape_string($mysqli, $name),
-            'subject' => $client_email_subject,
-            'body' => $client_email_body
+            'subject' => mysqli_real_escape_string($mysqli, $rendered_mail['subject']),
+            'body' => mysqli_real_escape_string($mysqli, $rendered_mail['body'])
         ]
     ];
     addToMailQueue($client_mail_data);
 
+    smsgateTicketNotify($ticket_id, $phone);
     triggerCustomAction('ticket_create', $ticket_id);
     $audit_description = mysqli_real_escape_string($mysqli, "Guest $name ($email) created ticket $config_ticket_prefix_esc$ticket_number ($subject)");
     logAudit("Ticket", "Create", $audit_description, $client_id, $ticket_id);

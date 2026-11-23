@@ -57,7 +57,7 @@ $filter_client_id = intval($_GET['client_id'] ?? 0);
 $sql_tech_users = mysqli_query($mysqli, "
     SELECT user_id, user_name 
     FROM users 
-    WHERE user_status = 1 AND user_archived_at IS NULL 
+    WHERE user_type = 1 AND user_status = 1 AND user_archived_at IS NULL 
     ORDER BY user_name ASC
 ");
 
@@ -74,7 +74,7 @@ $tech_condition = $filter_user_id > 0 ? "AND user_id = $filter_user_id" : "";
 $sql_report_techs = mysqli_query($mysqli, "
     SELECT user_id, user_name, user_avatar 
     FROM users 
-    WHERE user_status = 1 AND user_archived_at IS NULL 
+    WHERE user_type = 1 AND user_status = 1 AND user_archived_at IS NULL 
     $tech_condition
     ORDER BY user_name ASC
 ");
@@ -93,6 +93,11 @@ $grand_total_trips   = 0;
             <i class="fas fa-fw fa-user-clock mr-2"></i>Technician Weekly Time & Mileage Summary
         </h3>
         <div class="card-tools">
+            <?php if (!empty($session_is_admin)) { ?>
+                <a href="/admin/settings_smsgate.php#weekly-tech-summary" class="btn btn-outline-light mr-2 d-print-none">
+                    <i class="fas fa-fw fa-sms mr-1"></i>Monday SMS &amp; Email Settings
+                </a>
+            <?php } ?>
             <button type="button" class="btn btn-primary d-print-none" onclick="window.print();">
                 <i class="fas fa-fw fa-print mr-2"></i>Print Report
             </button>

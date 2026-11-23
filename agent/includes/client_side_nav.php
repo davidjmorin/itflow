@@ -77,6 +77,20 @@
                     </a>
                 </li>
 
+                <?php if (tbrHasPermission('view')) { ?>
+                    <li class="nav-item">
+                        <a href="/agent/tbrs.php?client_id=<?= $client_id ?>" class="nav-link <?php if (in_array(basename($_SERVER["PHP_SELF"]), ["tbrs.php", "tbr.php"])) { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-chart-line"></i>
+                            <p>
+                                Business Reviews (TBR)
+                                <?php if (!empty($num_tbrs)) { ?>
+                                    <span class="right badge text-light"><?= $num_tbrs ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                <?php } ?>
+
                 <?php if ($config_module_enable_ticketing == 1 && lookupUserPermission("module_support") >= 1) { ?>
                     <li class="nav-header mt-3">SUPPORT</li>
 

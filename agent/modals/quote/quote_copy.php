@@ -6,15 +6,21 @@ enforceUserPermission('module_sales', 2);
 
 $quote_id = intval($_GET['id']);
 
-$sql = mysqli_query($mysqli, "SELECT client_id, client_name, quote_number, quote_prefix FROM quotes LEFT JOIN clients ON quote_client_id = client_id WHERE quote_id = $quote_id LIMIT 1");
+$sql = mysqli_query($mysqli, "SELECT client_id, client_name, quote_lead_id, lead_name, quote_number, quote_prefix FROM quotes LEFT JOIN clients ON quote_client_id = client_id LEFT JOIN leads ON quote_lead_id = lead_id WHERE quote_id = $quote_id LIMIT 1");
 
 $row = mysqli_fetch_assoc($sql);
 $quote_prefix = escapeHtml($row['quote_prefix']);
 $quote_number = intval($row['quote_number']);
 $client_id = intval($row['client_id']);
-$client_name = escapeHtml($row['client_name']);
+$quote_lead_id = intval($row['quote_lead_id']);
 
-enforceClientAccess();
+if ($client_id > 0) {
+    $client_name = escapeHtml($row['client_name']);
+    enforceClientAccess($client_id);
+} else {
+    $client_name = escapeHtml($row['lead_name']) . " (Lead)";
+    enforceUserPermission('module_client', 1);
+}
 
 ob_start();
 

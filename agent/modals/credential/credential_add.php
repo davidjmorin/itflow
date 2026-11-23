@@ -15,6 +15,28 @@ ob_start();
         <span>&times;</span>
     </button>
 </div>
+<?php if (!vaultUnlocked()) { ?>
+<form action="post.php" method="post" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+    <div class="modal-body">
+        <p class="text-muted">You signed in with a passkey, so the credential vault is locked. Enter your account password to unlock it for this session.</p>
+        <div class="input-group">
+            <div class="input-group-prepend">
+                <span class="input-group-text"><i class="fa fa-fw fa-lock"></i></span>
+            </div>
+            <input type="password" class="form-control" name="vault_password" placeholder="Your password" autocomplete="current-password" required autofocus>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button type="submit" name="unlock_vault" class="btn btn-primary text-bold"><i class="fa fa-unlock mr-2"></i>Unlock</button>
+        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+    </div>
+</form>
+<?php
+require_once '../../../includes/modal_footer.php';
+exit;
+}
+?>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 

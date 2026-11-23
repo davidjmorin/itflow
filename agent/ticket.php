@@ -305,6 +305,27 @@ if (isset($_GET['ticket_id'])) {
             AND assets.asset_id != $asset_id"
         );
 
+        $ticket_products_list = [];
+        $ticket_products_total = 0.0;
+        $ticket_products_uninvoiced_count = 0;
+        $sql_ticket_products = mysqli_query($mysqli, "
+            SELECT tp.*, ii.item_serial, ii.item_mac, ii.item_status, a.asset_name AS linked_asset_name
+            FROM ticket_products tp
+            LEFT JOIN inventory_items ii ON tp.ticket_product_inventory_item_id = ii.item_id
+            LEFT JOIN assets a ON tp.ticket_product_asset_id = a.asset_id
+            WHERE tp.ticket_product_ticket_id = $ticket_id
+            ORDER BY tp.ticket_product_id ASC
+        ");
+        if ($sql_ticket_products) {
+            while ($tp_row = mysqli_fetch_assoc($sql_ticket_products)) {
+                $ticket_products_list[] = $tp_row;
+                $ticket_products_total += floatval($tp_row['ticket_product_total']);
+                if (intval($tp_row['ticket_product_invoiced']) === 0) {
+                    $ticket_products_uninvoiced_count++;
+                }
+            }
+        }
+
         // Get Tasks
         $sql_tasks = mysqli_query($mysqli, "SELECT task_completed_at, task_completion_estimate, task_id, task_name FROM tasks WHERE task_ticket_id = $ticket_id ORDER BY task_order ASC, task_id ASC");
         $task_count = mysqli_num_rows($sql_tasks);
@@ -677,6 +698,16 @@ if (isset($_GET['ticket_id'])) {
                         </div>
                     <?php } ?>
 
+                    <?php if (!empty($ticket_products_list)) { ?>
+                        <div class="ticket-field">
+                            <div class="ticket-field-label">Products / Charges</div>
+                            <div class="ticket-field-value">
+                                <?= numfmt_format_currency($currency_format, $ticket_products_total, $session_company_currency) ?>
+                                <span class="text-muted small">(<?= count($ticket_products_list) ?> item<?= count($ticket_products_list) === 1 ? '' : 's' ?>)</span>
+                            </div>
+                        </div>
+                    <?php } ?>
+
                     <?php if ($task_count) { ?>
                         <div class="ticket-field">
                             <div class="ticket-field-label">Tasks</div>
@@ -994,6 +1025,91 @@ if (isset($_GET['ticket_id'])) {
             </div>
 
             <div class="col-lg-3">
+
+                <?php if (!empty($ticket_products_list) || ($can_edit_ticket && !$ticket_is_closed && empty($invoice_id))) { ?>
+                    <div class="card">
+                        <div class="card-header px-3 py-2">
+                            <h5 class="card-title mt-1">
+                                <i class="fas fa-fw fa-box-open mr-2"></i>Products &amp; Charges
+                            </h5>
+                            <div class="card-tools">
+                                <?php if ($can_edit_ticket && !$ticket_is_closed && empty($invoice_id)) { ?>
+                                    <a class="btn btn-tool ajax-modal" href="#" data-modal-url="modals/ticket/ticket_product_add.php?ticket_id=<?= $ticket_id ?>" data-modal-size="lg" title="Add Product or Charge">
+                                        <i class="fas fa-plus"></i>
+                                    </a>
+                                <?php } ?>
+                                <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <?php if (empty($ticket_products_list)) { ?>
+                                <div class="p-3 text-muted small">
+                                    No products added yet. Use <i class="fas fa-fw fa-plus"></i> to add hardware or charges to this ticket.
+                                </div>
+                            <?php } else { ?>
+                                <div class="list-group list-group-flush">
+                                    <?php foreach ($ticket_products_list as $tp) {
+                                        $tp_id = intval($tp['ticket_product_id']);
+                                        $tp_invoiced = intval($tp['ticket_product_invoiced']) === 1;
+                                        $tp_asset_id = intval($tp['ticket_product_asset_id']);
+                                        $tp_qty = floatval($tp['ticket_product_qty']);
+                                        $tp_price = floatval($tp['ticket_product_price']);
+                                        $tp_total = floatval($tp['ticket_product_total']);
+                                        ?>
+                                        <div class="list-group-item px-3 py-2">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div class="pr-2" style="min-width: 0;">
+                                                    <div class="font-weight-bold text-dark"><?= escapeHtml($tp['ticket_product_name']) ?></div>
+                                                    <div class="small text-muted">
+                                                        <?= number_format($tp_qty, $tp_qty == floor($tp_qty) ? 0 : 2) ?> &times; <?= numfmt_format_currency($currency_format, $tp_price, $session_company_currency) ?>
+                                                        <?php if (floatval($tp['ticket_product_tax']) > 0) { ?>
+                                                            <span class="ml-1">(+tax)</span>
+                                                        <?php } ?>
+                                                    </div>
+                                                    <?php if (!empty($tp['item_serial'])) { ?>
+                                                        <div class="mt-1">
+                                                            <span class="badge badge-info">S/N: <?= escapeHtml($tp['item_serial']) ?></span>
+                                                            <?php if (!$tp_invoiced) { ?>
+                                                                <span class="badge badge-warning text-dark">Reserved</span>
+                                                            <?php } elseif ($tp_asset_id > 0) { ?>
+                                                                <a class="badge badge-success ajax-modal" href="#" data-modal-size="lg" data-modal-url="modals/asset/asset.php?<?= $client_url ?>&id=<?= $tp_asset_id ?>" title="View Client Asset">
+                                                                    <i class="fas fa-desktop mr-1"></i><?= escapeHtml($tp['linked_asset_name'] ?: 'Asset') ?>
+                                                                </a>
+                                                            <?php } ?>
+                                                        </div>
+                                                    <?php } elseif ($tp_invoiced) { ?>
+                                                        <div class="mt-1">
+                                                            <span class="badge badge-success">Invoiced</span>
+                                                        </div>
+                                                    <?php } ?>
+                                                </div>
+                                                <div class="text-right text-nowrap">
+                                                    <div class="font-weight-bold text-dark"><?= numfmt_format_currency($currency_format, $tp_total, $session_company_currency) ?></div>
+                                                    <?php if ($can_edit_ticket && !$tp_invoiced && !$ticket_is_closed) { ?>
+                                                        <div class="mt-1">
+                                                            <a href="#" class="text-secondary ajax-modal mr-2" data-modal-url="modals/ticket/ticket_product_edit.php?id=<?= $tp_id ?>" title="Edit">
+                                                                <i class="fas fa-edit fa-sm"></i>
+                                                            </a>
+                                                            <a href="post.php?delete_ticket_product=<?= $tp_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>" class="text-danger confirm-link" title="Remove">
+                                                                <i class="fas fa-trash-alt fa-sm"></i>
+                                                            </a>
+                                                        </div>
+                                                    <?php } ?>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    <?php } ?>
+                                </div>
+                                <div class="px-3 py-2 bg-light border-top d-flex justify-content-between align-items-center font-weight-bold">
+                                    <span>Products Total</span>
+                                    <span><?= numfmt_format_currency($currency_format, $ticket_products_total, $session_company_currency) ?></span>
+                                </div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                <?php } ?>
 
                 <!-- Tasks -->
                 <?php if (!$ticket_is_resolved || $task_count) { ?>

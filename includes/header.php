@@ -34,8 +34,8 @@ header("X-Frame-Options: DENY");
     <link rel="stylesheet" href="/libs/toastr/toastr.min.css">
     <link rel="stylesheet" href="/libs/DataTables/datatables.min.css">
     <link rel="stylesheet" href="/libs/intl-tel-input/css/intlTelInput.min.css">
-    <link rel="stylesheet" href="/css/itflow_custom.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'] . '/css/itflow_custom.css') ?>">
     <link rel="stylesheet" href="/libs/adminlte/css/adminlte.min.css">
+    <link rel="stylesheet" href="/css/itflow_custom.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'] . '/css/itflow_custom.css') ?>">
 
     <!-- Scripts -->
     <script src="/libs/jquery/jquery.min.js"></script>

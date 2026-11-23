@@ -210,6 +210,8 @@ if (isset($_POST['convert_lead'])) {
         lead_converted_at = NOW()
         WHERE lead_id = $lead_id");
 
+    mysqli_query($mysqli, "UPDATE quotes SET quote_client_id = $client_id WHERE quote_lead_id = $lead_id AND (quote_client_id = 0 OR quote_client_id IS NULL)");
+
     $creator_id = intval($_SESSION['user_id'] ?? 0);
     mysqli_query($mysqli, "INSERT INTO lead_activities SET
         lead_activity_lead_id = $lead_id,

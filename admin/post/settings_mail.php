@@ -515,10 +515,17 @@ if (isset($_POST['test_oauth_token_refresh'])) {
 if (isset($_POST['edit_mail_templates'])) {
     validateCSRFToken();
 
-    $config_email_header = escapeSql($_POST['config_email_header'] ?? '');
-    $config_email_footer = escapeSql($_POST['config_email_footer'] ?? '');
+    $config_email_header = mysqli_real_escape_string($mysqli, $_POST['config_email_header'] ?? '');
+    $config_email_footer = mysqli_real_escape_string($mysqli, $_POST['config_email_footer'] ?? '');
+    $config_ticket_client_email_subject = escapeSql($_POST['config_ticket_client_email_subject'] ?? '');
+    $config_ticket_client_email_body = mysqli_real_escape_string($mysqli, $_POST['config_ticket_client_email_body'] ?? '');
 
-    mysqli_query($mysqli, "UPDATE settings SET config_email_header = '$config_email_header', config_email_footer = '$config_email_footer' WHERE company_id = 1");
+    mysqli_query($mysqli, "UPDATE settings SET 
+        config_email_header = '$config_email_header', 
+        config_email_footer = '$config_email_footer',
+        config_ticket_client_email_subject = '$config_ticket_client_email_subject',
+        config_ticket_client_email_body = '$config_ticket_client_email_body'
+        WHERE company_id = 1");
 
     logAudit("Settings", "Edit", "$session_name updated email template settings");
 

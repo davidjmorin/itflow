@@ -64,6 +64,40 @@
                     </a>
                 </li>
 
+                <?php if (!empty($session_is_admin) || lookupUserPermission("module_meetings") >= 1) { ?>
+                    <li class="nav-item">
+                        <a href="/agent/meetings.php" class="nav-link <?php if (in_array(basename($_SERVER["PHP_SELF"]), ["meetings.php", "meeting.php"])) { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-comments"></i>
+                            <p>
+                                Meetings &amp; Huddles
+                                <?php if (!empty($num_meetings)) { ?>
+                                    <span class="right badge text-light" data-toggle="tooltip" title="Accessible Meetings"><?= $num_meetings ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/agent/metrics.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "metrics.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-tachometer-alt"></i>
+                            <p>Metrics &amp; KPIs</p>
+                        </a>
+                    </li>
+                <?php } ?>
+
+                <?php if (tbrHasPermission('view')) { ?>
+                    <li class="nav-item">
+                        <a href="/agent/tbrs.php" class="nav-link <?php if (in_array(basename($_SERVER["PHP_SELF"]), ["tbrs.php", "tbr.php"])) { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-chart-line"></i>
+                            <p>
+                                Business Reviews (TBR)
+                                <?php if (!empty($num_upcoming_tbrs)) { ?>
+                                    <span class="right badge text-light" data-toggle="tooltip" title="Active / Scheduled TBRs"><?= $num_upcoming_tbrs ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                <?php } ?>
+
                 <?php if (lookupUserPermission("module_support") >= 1) { ?>
                     <?php if ($config_module_enable_ticketing == 1) { ?>
                         <li class="nav-header mt-3">SUPPORT</li>
@@ -150,6 +184,14 @@
                             <p>Products</p>
                         </a>
                     </li>
+                    <?php if (empty($session_is_admin) ? ($session_user_role >= 2) : true) { ?>
+                    <li class="nav-item">
+                        <a href="/agent/inventory.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "inventory.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-warehouse"></i>
+                            <p>Inventory</p>
+                        </a>
+                    </li>
+                    <?php } ?>
                 <?php } ?>
 
                 <?php if ($config_module_enable_accounting == 1) { ?>

@@ -56,3 +56,10 @@ api/v1/custom/*
 .zed
 
 *.patch
+uploads/tbr/*
+!uploads/tbr/index.php
+!uploads/tbr/.htaccess
+uploads/meetings/*
+!uploads/meetings/index.php
+!uploads/meetings/.htaccess
+File_Backups/

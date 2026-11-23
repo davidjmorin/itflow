@@ -2,6 +2,13 @@
 // Model of reusable variables for client credentials - not to be confused with the ITFLow login process
 defined('FROM_POST_HANDLER') || die("Direct file access is not allowed");
 
+// Passkey logins have no vault key until the user unlocks with their password
+if (!vaultUnlocked()) {
+    flashAlert("Credential vault is locked. Open New Credential again and enter your password to unlock it.", 'error');
+    redirect();
+    exit;
+}
+
 // The form maxlength is client-side only - a hand-rolled POST gets here without it
 if ($credential_field_too_long = checkCredentialLengths($_POST)) {
     flashAlert("Credential <strong>$credential_field_too_long</strong> is too long to store", 'error');

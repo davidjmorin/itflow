@@ -439,21 +439,91 @@ $imap_ready = $imap_standard_ready || $imap_oauth_ready;
             </div>
 
             <!-- ============================ TEMPLATES ============================ -->
+            <!-- ============================ TEMPLATES ============================ -->
             <div class="tab-pane fade <?php if ($active_tab === 'templates') { echo 'show active'; } ?>" id="tab-templates" role="tabpanel">
-                <form action="post.php" method="post" autocomplete="off">
+                <form action="post.php" method="post" autocomplete="off" onsubmit="if (typeof tinymce !== 'undefined') tinymce.triggerSave();">
                     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                     <input type="hidden" name="tab" value="templates">
 
-                    <p class="text-muted">Global HTML header and footer that will wrap all outgoing emails (tickets, quotes, invoices).</p>
+                    <div class="card card-outline card-primary mb-4">
+                        <div class="card-header">
+                            <h3 class="card-title"><i class="fas fa-ticket-alt mr-2"></i>Ticket Creation Email (Sent to User / Guest)</h3>
+                            <div class="card-tools">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadDefaultTicketTemplate()"><i class="fas fa-undo mr-1"></i>Load Default Template</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">This email is automatically queued and sent to the client contact or guest whenever a new ticket is submitted (via email, guest portal, client portal, or by an agent).</p>
 
-                    <div class="form-group">
-                        <label>Email Header HTML</label>
-                        <textarea class="form-control" name="config_email_header" rows="5" placeholder="<html><body>..."><?= escapeHtml($config_email_header ?? '') ?></textarea>
+                            <div class="form-group">
+                                <label>Email Subject</label>
+                                <div class="input-group">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text"><i class="fa fa-fw fa-envelope"></i></span>
+                                    </div>
+                                    <input type="text" class="form-control" name="config_ticket_client_email_subject" id="config_ticket_client_email_subject" value="<?= escapeHtml($config_ticket_client_email_subject ?: '[{{ticket_prefix}}{{ticket_number}}] Ticket Received - {{ticket_subject}}') ?>" placeholder="[{{ticket_prefix}}{{ticket_number}}] Ticket Received - {{ticket_subject}}">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Available Merge Tags <small class="text-muted">(click any tag to insert into the editor)</small></label>
+                                <div>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_prefix}}')"><code>{{ticket_prefix}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_number}}')"><code>{{ticket_number}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_prefix_number}}')"><code>{{ticket_prefix_number}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_subject}}')"><code>{{ticket_subject}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_details}}')"><code>{{ticket_details}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_priority}}')"><code>{{ticket_priority}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{ticket_status}}')"><code>{{ticket_status}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{contact_name}}')"><code>{{contact_name}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{client_name}}')"><code>{{client_name}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{portal_url}}')"><code>{{portal_url}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{company_name}}')"><code>{{company_name}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{company_phone}}')"><code>{{company_phone}}</code></button>
+                                    <button type="button" class="btn btn-xs btn-outline-secondary mb-1" onclick="insertTicketTag('{{reply_above_line}}')"><code>{{reply_above_line}}</code></button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Email Body (WYSIWYG &amp; HTML)</label>
+                                <?php
+                                $default_body_display = '<p><i style="color: #808080;">##- Please type your reply above this line -##</i></p>' . "\n" .
+                                    '<p>Hello {{contact_name}},</p>' . "\n" .
+                                    '<p>Thank you for reaching out. We have received your support request regarding "<strong>{{ticket_subject}}</strong>".</p>' . "\n" .
+                                    '<table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 15px 0;">' . "\n" .
+                                    '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold; width: 130px;">Ticket Number:</td><td style="padding: 6px 0;">{{ticket_prefix}}{{ticket_number}}</td></tr>' . "\n" .
+                                    '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Subject:</td><td style="padding: 6px 0;">{{ticket_subject}}</td></tr>' . "\n" .
+                                    '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Status:</td><td style="padding: 6px 0;">{{ticket_status}}</td></tr>' . "\n" .
+                                    '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Priority:</td><td style="padding: 6px 0;">{{ticket_priority}}</td></tr>' . "\n" .
+                                    '</table>' . "\n" .
+                                    '<p>You can track the progress and reply to this ticket online at:<br>' . "\n" .
+                                    '<a href="{{portal_url}}">{{portal_url}}</a></p>' . "\n" .
+                                    '<p>--<br><strong>{{company_name}}</strong> - Support<br>{{company_phone}}</p>';
+                                $ticket_body_value = !empty($config_ticket_client_email_body) ? $config_ticket_client_email_body : $default_body_display;
+                                ?>
+                                <textarea class="form-control tinymce" name="config_ticket_client_email_body" id="config_ticket_client_email_body" rows="12"><?= htmlspecialchars($ticket_body_value, ENT_QUOTES, 'UTF-8') ?></textarea>
+                                <small class="form-text text-muted">Use the rich text editor to format text and tables, or click the <strong>&lt;&gt;</strong> code button in the toolbar to view and edit the raw HTML source.</small>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>Email Footer HTML</label>
-                        <textarea class="form-control" name="config_email_footer" rows="5" placeholder="...</body></html>"><?= escapeHtml($config_email_footer ?? '') ?></textarea>
+                    <div class="card card-outline card-secondary mb-4">
+                        <div class="card-header">
+                            <h3 class="card-title"><i class="fas fa-layer-group mr-2"></i>Global Email Wrapper</h3>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Global HTML header and footer that wrap all outgoing emails (tickets, quotes, invoices).</p>
+
+                            <div class="form-group">
+                                <label>Email Header HTML</label>
+                                <textarea class="form-control" name="config_email_header" rows="4" placeholder="<html><body>..."><?= escapeHtml($config_email_header ?? '') ?></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Email Footer HTML</label>
+                                <textarea class="form-control" name="config_email_footer" rows="4" placeholder="...</body></html>"><?= escapeHtml($config_email_footer ?? '') ?></textarea>
+                            </div>
+                        </div>
                     </div>
 
                     <button type="submit" name="edit_mail_templates" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save Templates</button>
@@ -501,7 +571,45 @@ $imap_ready = $imap_standard_ready || $imap_oauth_ready;
             p.classList.toggle('active', on);
             p.classList.toggle('show', on);
         });
+        if (target === '#tab-templates' && typeof tinymce !== 'undefined') {
+            const editor = tinymce.get('config_ticket_client_email_body');
+            if (editor) {
+                editor.execCommand('mceAutoResize');
+            }
+        }
     }
+    window.insertTicketTag = function(tag) {
+        if (typeof tinymce !== 'undefined' && tinymce.get('config_ticket_client_email_body')) {
+            tinymce.get('config_ticket_client_email_body').insertContent(tag);
+        } else {
+            const el = document.getElementById('config_ticket_client_email_body');
+            if (el) {
+                el.value += tag;
+            }
+        }
+    };
+    window.loadDefaultTicketTemplate = function() {
+        const defaultSubject = '[{{ticket_prefix}}{{ticket_number}}] Ticket Received - {{ticket_subject}}';
+        const defaultBody = '<p><i style="color: #808080;">##- Please type your reply above this line -##</i></p>\n' +
+            '<p>Hello {{contact_name}},</p>\n' +
+            '<p>Thank you for reaching out. We have received your support request regarding "<strong>{{ticket_subject}}</strong>".</p>\n' +
+            '<table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 15px 0;">\n' +
+            '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold; width: 130px;">Ticket Number:</td><td style="padding: 6px 0;">{{ticket_prefix}}{{ticket_number}}</td></tr>\n' +
+            '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Subject:</td><td style="padding: 6px 0;">{{ticket_subject}}</td></tr>\n' +
+            '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Status:</td><td style="padding: 6px 0;">{{ticket_status}}</td></tr>\n' +
+            '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Priority:</td><td style="padding: 6px 0;">{{ticket_priority}}</td></tr>\n' +
+            '</table>\n' +
+            '<p>You can track the progress and reply to this ticket online at:<br>\n' +
+            '<a href="{{portal_url}}">{{portal_url}}</a></p>\n' +
+            '<p>--<br><strong>{{company_name}}</strong> - Support<br>{{company_phone}}</p>';
+
+        document.getElementById('config_ticket_client_email_subject').value = defaultSubject;
+        if (typeof tinymce !== 'undefined' && tinymce.get('config_ticket_client_email_body')) {
+            tinymce.get('config_ticket_client_email_body').setContent(defaultBody);
+        } else {
+            document.getElementById('config_ticket_client_email_body').value = defaultBody;
+        }
+    };
     navLinks.forEach(l => l.addEventListener('click', function (e) {
         e.preventDefault();
         activateTab(l.getAttribute('data-target'));

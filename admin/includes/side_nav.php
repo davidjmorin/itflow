@@ -84,7 +84,14 @@
                             <p>SLAs</p>
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a href="/admin/ticket_rules.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'ticket_rules.php' ? 'active' : '') ?>">
+                            <i class="nav-icon fas fa-filter"></i>
+                            <p>Inbound Rules</p>
+                        </a>
+                    </li>
                 <?php } ?>
+
 
                 <li class="nav-header">INTEGRATIONS</li>
                 <?php if ($config_module_enable_accounting) { ?>
@@ -209,7 +216,7 @@
                 </li>
 
                 <!-- SETTINGS Section -->
-                <li class="nav-item has-treeview mt-2 <?= (in_array(basename($_SERVER['PHP_SELF']), ['settings_company.php', 'settings_localization.php', 'settings_theme.php', 'settings_security.php', 'settings_mail.php', 'settings_notification.php', 'settings_default.php', 'settings_invoice.php', 'settings_quote.php', 'settings_online_payment.php', 'settings_online_payment_clients.php', 'settings_project.php', 'settings_ticket.php', 'settings_ai.php', 'identity_providers.php', 'settings_telemetry.php', 'settings_module.php', 'client_merge.php']) ? 'menu-open' : '') ?>">
+                <li class="nav-item has-treeview mt-2 <?= (in_array(basename($_SERVER['PHP_SELF']), ['settings_company.php', 'settings_localization.php', 'settings_theme.php', 'settings_security.php', 'settings_mail.php', 'settings_notification.php', 'settings_smsgate.php', 'settings_default.php', 'settings_invoice.php', 'settings_quote.php', 'settings_online_payment.php', 'settings_online_payment_clients.php', 'settings_project.php', 'settings_ticket.php', 'settings_tbr.php', 'settings_ai.php', 'identity_providers.php', 'settings_telemetry.php', 'settings_module.php', 'client_merge.php']) ? 'menu-open' : '') ?>">
                     <a href="#" class="nav-link">
                         <p>
                             SETTINGS
@@ -251,6 +258,12 @@
                             <a href="/admin/settings_notification.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_notification.php' ? 'active' : '') ?>">
                                 <i class="nav-icon far fa-bell"></i>
                                 <p>Notifications</p>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/admin/settings_smsgate.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_smsgate.php' ? 'active' : '') ?>">
+                                <i class="nav-icon fas fa-sms"></i>
+                                <p>SMS Gate</p>
                             </a>
                         </li>
                         <li class="nav-item">
@@ -306,6 +319,12 @@
                             <a href="/admin/settings_module.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_module.php' ? 'active' : '') ?>">
                                 <i class="nav-icon fas fa-cube"></i>
                                 <p>Modules</p>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/admin/settings_tbr.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_tbr.php' ? 'active' : '') ?>">
+                                <i class="nav-icon fas fa-chart-line"></i>
+                                <p>TBR Management</p>
                             </a>
                         </li>
                         <li class="nav-item">

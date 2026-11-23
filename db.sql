@@ -1695,7 +1695,40 @@ CREATE TABLE `products` (
   `product_archived_at` datetime DEFAULT NULL,
   `product_tax_id` int(11) NOT NULL DEFAULT 0,
   `product_category_id` int(11) NOT NULL,
+  `product_tracking_type` enum('serialized','bulk') NOT NULL DEFAULT 'serialized',
+  `product_cost` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `product_min_stock` int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`product_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `inventory_items`
+--
+
+DROP TABLE IF EXISTS `inventory_items`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `inventory_items` (
+  `item_id` int(11) NOT NULL AUTO_INCREMENT,
+  `item_product_id` int(11) NOT NULL,
+  `item_serial` varchar(200) NOT NULL,
+  `item_status` varchar(50) NOT NULL DEFAULT 'In Stock',
+  `item_location` varchar(200) DEFAULT NULL,
+  `item_mac` varchar(50) DEFAULT NULL,
+  `item_cost` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `item_price` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `item_client_id` int(11) NOT NULL DEFAULT 0,
+  `item_invoice_id` int(11) NOT NULL DEFAULT 0,
+  `item_notes` text DEFAULT NULL,
+  `item_created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `item_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
+  `item_archived_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`item_id`),
+  KEY `idx_item_product` (`item_product_id`),
+  KEY `idx_item_serial` (`item_serial`),
+  KEY `idx_item_status` (`item_status`),
+  KEY `idx_item_client` (`item_client_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1824,8 +1857,10 @@ CREATE TABLE `quotes` (
   `quote_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
   `quote_archived_at` datetime DEFAULT NULL,
   `quote_category_id` int(11) NOT NULL,
-  `quote_client_id` int(11) NOT NULL,
-  PRIMARY KEY (`quote_id`)
+  `quote_client_id` int(11) NOT NULL DEFAULT 0,
+  `quote_lead_id` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`quote_id`),
+  KEY `idx_quote_lead_id` (`quote_lead_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -2369,6 +2404,8 @@ CREATE TABLE `settings` (
   `config_email_footer` text DEFAULT NULL,
   `config_client_onboarding_email_subject` varchar(255) DEFAULT NULL,
   `config_client_onboarding_email_body` text DEFAULT NULL,
+  `config_ticket_client_email_subject` varchar(255) DEFAULT NULL,
+  `config_ticket_client_email_body` mediumtext DEFAULT NULL,
   PRIMARY KEY (`company_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3300,6 +3337,30 @@ CREATE TABLE IF NOT EXISTS `lead_email_templates` (
   `lead_email_template_created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `lead_email_template_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
   PRIMARY KEY (`lead_email_template_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `ticket_rules` (
+  `ticket_rule_id` int(11) NOT NULL AUTO_INCREMENT,
+  `ticket_rule_order` int(11) NOT NULL DEFAULT 0,
+  `ticket_rule_active` tinyint(1) NOT NULL DEFAULT 1,
+  `ticket_rule_name` varchar(255) NOT NULL,
+  `ticket_rule_match_type` varchar(20) NOT NULL DEFAULT 'all',
+  `ticket_rule_sender_email` varchar(255) DEFAULT NULL,
+  `ticket_rule_sender_domain` varchar(255) DEFAULT NULL,
+  `ticket_rule_subject` varchar(255) DEFAULT NULL,
+  `ticket_rule_body` text DEFAULT NULL,
+  `ticket_rule_use_regex` tinyint(1) NOT NULL DEFAULT 0,
+  `ticket_rule_action` varchar(50) NOT NULL DEFAULT 'route',
+  `ticket_rule_client_id` int(11) NOT NULL DEFAULT 0,
+  `ticket_rule_priority` varchar(50) DEFAULT NULL,
+  `ticket_rule_category` varchar(200) DEFAULT NULL,
+  `ticket_rule_assigned_to` int(11) NOT NULL DEFAULT 0,
+  `ticket_rule_status` int(11) NOT NULL DEFAULT 1,
+  `ticket_rule_stop_processing` tinyint(1) NOT NULL DEFAULT 1,
+  `ticket_rule_created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `ticket_rule_updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
+  PRIMARY KEY (`ticket_rule_id`),
+  KEY `ticket_rule_active_order` (`ticket_rule_active`, `ticket_rule_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

@@ -392,6 +392,10 @@ $(document).ready(function() {
     // ClipboardJS fix for Bootstrap modals
     $.fn.modal.Constructor.prototype._enforceFocus = function() {};
 
+    $(document).on('show.bs.modal', '.modal', function() {
+        $(this).find('.modal-dialog').addClass('modal-dialog-scrollable');
+    });
+
     // Clipboard
     var clipboard = new ClipboardJS('.clipboardjs');
 

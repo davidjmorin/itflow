@@ -134,12 +134,13 @@ if (isset($_GET['query'])) {
     );
 
     $sql_quotes = !$can_sales ? false : mysqli_query($mysqli, "SELECT client_id, client_name, quote_amount, quote_currency_code, quote_id, quote_number,
-        quote_prefix, quote_status
+        quote_prefix, quote_status, quote_lead_id, lead_name
         FROM quotes
         LEFT JOIN clients ON quote_client_id = client_id
+        LEFT JOIN leads ON quote_lead_id = lead_id
         LEFT JOIN categories ON quote_category_id = category_id
         WHERE quote_archived_at IS NULL
-            AND (CONCAT(quote_prefix,quote_number) LIKE '%$query%' OR quote_number LIKE '%$query%' OR quote_scope LIKE '%$query%')
+            AND (CONCAT(quote_prefix,quote_number) LIKE '%$query%' OR quote_number LIKE '%$query%' OR quote_scope LIKE '%$query%' OR client_name LIKE '%$query%' OR lead_name LIKE '%$query%')
             " . clientScopeSql('quote_client_id') . "
         ORDER BY quote_number DESC LIMIT 5"
     );
@@ -701,16 +702,25 @@ if (isset($_GET['query'])) {
                                 $quote_number = intval($row['quote_number']);
                                 $quote_amount = floatval($row['quote_amount']);
                                 $quote_currency_code = escapeHtml($row['quote_currency_code']);
-                                $quote_status = escapeHtml($row['quote_status']);
+                                $quote_lead_id = intval($row['quote_lead_id']);
                                 $client_id = intval($row['client_id']);
                                 $client_name = escapeHtml($row['client_name']);
+                                $lead_name = escapeHtml($row['lead_name'] ?? '');
 
                                 ?>
                                 <tr>
-                                    <td><a href="quote.php?client_id=<?= $client_id ?>&quote_id=<?= $quote_id ?>"><?= "$quote_prefix$quote_number" ?></a></td>
+                                    <td><a href="quote.php?<?= $client_id > 0 ? "client_id=$client_id&" : "" ?>quote_id=<?= $quote_id ?>"><?= "$quote_prefix$quote_number" ?></a></td>
                                     <td><?= $quote_status ?></td>
                                     <td><?= numfmt_format_currency($currency_format, $quote_amount, $quote_currency_code) ?></td>
-                                    <td><a href="client_overview.php?client_id=<?= $client_id ?>"><?= $client_name ?></a></td>
+                                    <td>
+                                        <?php if ($client_id > 0) { ?>
+                                            <a href="client_overview.php?client_id=<?= $client_id ?>"><?= $client_name ?></a>
+                                        <?php } elseif ($quote_lead_id > 0) { ?>
+                                            <a href="lead.php?lead_id=<?= $quote_lead_id ?>"><?= $lead_name ?></a> <span class="badge badge-info ml-1">Lead</span>
+                                        <?php } else { ?>
+                                            -
+                                        <?php } ?>
+                                    </td>
                                 </tr>
 
                             <?php } ?>

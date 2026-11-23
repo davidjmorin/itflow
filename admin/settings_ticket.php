@@ -44,6 +44,12 @@ require_once "includes/inc_all_admin.php";
                     </div>
                 </div>
 
+                <div class="form-group pl-4">
+                    <a href="ticket_rules.php" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-filter mr-1"></i> Configure Inbound Email Rules &amp; Spam Filter &rarr;
+                    </a>
+                </div>
+
                 <?php if ($config_module_enable_accounting) { ?>
                 <div class="form-group">
                     <div class="custom-control custom-switch">

@@ -32,6 +32,15 @@ function escapeSql($input) {
     return $input;
 }
 
+function removeEmoji($text) {
+    if (empty($text)) {
+        return (string) $text;
+    }
+    // Remove 4-byte UTF-8 characters and common misc unicode emoji symbols
+    $cleaned = preg_replace('/[\x{10000}-\x{10FFFF}]|[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}]/u', '', (string) $text);
+    return $cleaned !== null ? $cleaned : (string) $text;
+}
+
 function toAlphanumeric($string) {
     // Gets rid of non-alphanumerics
     return preg_replace('/[^A-Za-z0-9_-]/', '', $string);

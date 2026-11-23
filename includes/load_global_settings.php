@@ -31,7 +31,7 @@ $sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azu
     config_ticket_from_name, config_ticket_moving_columns,
     config_ticket_new_ticket_notification_email, config_ticket_next_number,
     config_ticket_ordering, config_ticket_prefix, config_ticket_timer_autostart,
-    config_timezone, config_whitelabel_enabled, config_whitelabel_key, config_google_places_api_key, config_email_header, config_email_footer, config_client_onboarding_email_subject, config_client_onboarding_email_body FROM settings WHERE company_id = 1");
+    config_timezone, config_whitelabel_enabled, config_whitelabel_key, config_google_places_api_key, config_email_header, config_email_footer, config_client_onboarding_email_subject, config_client_onboarding_email_body, config_ticket_client_email_subject, config_ticket_client_email_body, config_smsgate_enable, config_smsgate_url, config_smsgate_username, config_smsgate_password, config_smsgate_emergency_recipients, config_smsgate_ack_message, config_smsgate_urgent_message, config_tech_weekly_summary_enable, config_tech_weekly_summary_time, config_tech_weekly_summary_last_sent_week FROM settings WHERE company_id = 1");
 $row = mysqli_fetch_assoc($sql_settings);
 
 // Database version
@@ -104,6 +104,8 @@ $config_email_header = $row['config_email_header'] ?? '';
 $config_email_footer = $row['config_email_footer'] ?? '';
 $config_client_onboarding_email_subject = $row['config_client_onboarding_email_subject'] ?? '';
 $config_client_onboarding_email_body = $row['config_client_onboarding_email_body'] ?? '';
+$config_ticket_client_email_subject = $row['config_ticket_client_email_subject'] ?? '';
+$config_ticket_client_email_body = $row['config_ticket_client_email_body'] ?? '';
 $config_quote_from_name = $row['config_quote_from_name'];
 $config_quote_from_email = $row['config_quote_from_email'];
 $config_quote_notification_email = $row['config_quote_notification_email'];
@@ -170,6 +172,17 @@ $config_whitelabel_key = $row['config_whitelabel_key'];
 
 // Google Places
 $config_google_places_api_key = $row['config_google_places_api_key'] ?? '';
+
+$config_smsgate_enable = intval($row['config_smsgate_enable'] ?? 0);
+$config_smsgate_url = $row['config_smsgate_url'] ?? 'https://api.sms-gate.app/3rdparty/v1/messages';
+$config_smsgate_username = $row['config_smsgate_username'] ?? '';
+$config_smsgate_password = $row['config_smsgate_password'] ?? '';
+$config_smsgate_emergency_recipients = $row['config_smsgate_emergency_recipients'] ?? '';
+$config_smsgate_ack_message = $row['config_smsgate_ack_message'] ?? '';
+$config_smsgate_urgent_message = $row['config_smsgate_urgent_message'] ?? '';
+$config_tech_weekly_summary_enable = intval($row['config_tech_weekly_summary_enable'] ?? 0);
+$config_tech_weekly_summary_time = $row['config_tech_weekly_summary_time'] ?? '08:00';
+$config_tech_weekly_summary_last_sent_week = $row['config_tech_weekly_summary_last_sent_week'] ?? '';
 
 
 // Select Arrays

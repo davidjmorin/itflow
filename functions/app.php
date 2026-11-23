@@ -366,6 +366,10 @@ function getQuarterlyTax($tax_name, $quarter, $year, $mysqli) {
 
 function addToMailQueue($data) {
 
+    if (empty($data) || !is_iterable($data)) {
+        return;
+    }
+
     global $mysqli;
 
     $settings_sql = mysqli_query($mysqli, "SELECT config_email_header, config_email_footer FROM settings WHERE company_id = 1");
@@ -482,4 +486,298 @@ function createiCalStrCancel($datetime, $title, $uid) {
     $event->addNode(new ZCiCalDataNode("STATUS:CANCELLED"));
 
     return $cal_event->export();
+}
+
+function renderTicketCreatedEmail($ticket_id, $recipient_name = '', $recipient_email = '', $is_guest = false) {
+    global $mysqli, $config_base_url;
+
+    $ticket_id = intval($ticket_id);
+    $ticket_sql = mysqli_query($mysqli, "SELECT t.*, c.client_name, s.ticket_status_name 
+        FROM tickets t 
+        LEFT JOIN clients c ON t.ticket_client_id = c.client_id 
+        LEFT JOIN ticket_statuses s ON t.ticket_status = s.ticket_status_id 
+        WHERE t.ticket_id = $ticket_id LIMIT 1");
+    if (!$ticket_sql || mysqli_num_rows($ticket_sql) === 0) {
+        return ['subject' => '', 'body' => ''];
+    }
+    $ticket = mysqli_fetch_assoc($ticket_sql);
+
+    $ticket_prefix = $ticket['ticket_prefix'] ?? '';
+    $ticket_number = $ticket['ticket_number'] ?? '';
+    $ticket_subject = $ticket['ticket_subject'] ?? '';
+    $ticket_details = $ticket['ticket_details'] ?? '';
+    $ticket_priority = $ticket['ticket_priority'] ?? 'Standard';
+    $ticket_status = $ticket['ticket_status_name'] ?? 'Open';
+    $client_name = $ticket['client_name'] ?? 'Guest';
+    $url_key = $ticket['ticket_url_key'] ?? '';
+
+    if (empty($recipient_name)) {
+        $contact_id = intval($ticket['ticket_contact_id'] ?? 0);
+        if ($contact_id > 0) {
+            $contact_sql = mysqli_query($mysqli, "SELECT contact_name FROM contacts WHERE contact_id = $contact_id LIMIT 1");
+            if ($contact_sql && mysqli_num_rows($contact_sql) > 0) {
+                $contact_row = mysqli_fetch_assoc($contact_sql);
+                $recipient_name = $contact_row['contact_name'] ?? '';
+            }
+        }
+        if (empty($recipient_name)) {
+            $recipient_name = 'Customer';
+        }
+    }
+
+    $company_sql = mysqli_query($mysqli, "SELECT company_name, company_phone, company_phone_country_code FROM companies WHERE company_id = 1 LIMIT 1");
+    $company = mysqli_fetch_assoc($company_sql);
+    $company_name = $company['company_name'] ?? 'Support';
+    $company_phone = !empty($company['company_phone']) ? formatPhoneNumber($company['company_phone'], $company['company_phone_country_code'] ?? '') : '';
+
+    if ($is_guest || empty($ticket['ticket_client_id']) || !empty($url_key)) {
+        $portal_url = "https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$ticket_id&url_key=$url_key";
+    } else {
+        $portal_url = "https://$config_base_url/client/ticket.php?id=$ticket_id";
+    }
+
+    $settings_sql = mysqli_query($mysqli, "SELECT config_ticket_client_email_subject, config_ticket_client_email_body FROM settings WHERE company_id = 1 LIMIT 1");
+    $settings = mysqli_fetch_assoc($settings_sql);
+
+    $template_subject = !empty($settings['config_ticket_client_email_subject']) 
+        ? $settings['config_ticket_client_email_subject'] 
+        : '[{{ticket_prefix}}{{ticket_number}}] Ticket Received - {{ticket_subject}}';
+
+    $default_body = '<p><i style="color: #808080;">##- Please type your reply above this line -##</i></p>' . "\n" .
+        '<p>Hello {{contact_name}},</p>' . "\n" .
+        '<p>Thank you for reaching out. We have received your support request regarding "<strong>{{ticket_subject}}</strong>".</p>' . "\n" .
+        '<table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 15px 0;">' . "\n" .
+        '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold; width: 130px;">Ticket Number:</td><td style="padding: 6px 0;">{{ticket_prefix}}{{ticket_number}}</td></tr>' . "\n" .
+        '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Subject:</td><td style="padding: 6px 0;">{{ticket_subject}}</td></tr>' . "\n" .
+        '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Status:</td><td style="padding: 6px 0;">{{ticket_status}}</td></tr>' . "\n" .
+        '  <tr><td style="padding: 6px 12px 6px 0; font-weight: bold;">Priority:</td><td style="padding: 6px 0;">{{ticket_priority}}</td></tr>' . "\n" .
+        '</table>' . "\n" .
+        '<p>You can track the progress and reply to this ticket online at:<br>' . "\n" .
+        '<a href="{{portal_url}}">{{portal_url}}</a></p>' . "\n" .
+        '<p>--<br><strong>{{company_name}}</strong> - Support<br>{{company_phone}}</p>';
+
+    $template_body = !empty($settings['config_ticket_client_email_body']) 
+        ? $settings['config_ticket_client_email_body'] 
+        : $default_body;
+
+    $placeholders = [
+        '{{ticket_prefix}}' => $ticket_prefix,
+        '{{ticket_number}}' => $ticket_number,
+        '{{ticket_prefix_number}}' => $ticket_prefix . $ticket_number,
+        '{{ticket_subject}}' => $ticket_subject,
+        '{{subject}}' => $ticket_subject,
+        '{{ticket_details}}' => $ticket_details,
+        '{{details}}' => $ticket_details,
+        '{{ticket_priority}}' => $ticket_priority,
+        '{{priority}}' => $ticket_priority,
+        '{{ticket_status}}' => $ticket_status,
+        '{{status}}' => $ticket_status,
+        '{{contact_name}}' => $recipient_name,
+        '{{name}}' => $recipient_name,
+        '{{client_name}}' => $client_name,
+        '{{portal_url}}' => $portal_url,
+        '{{ticket_url}}' => $portal_url,
+        '{{company_name}}' => $company_name,
+        '{{company_phone}}' => $company_phone,
+        '{{reply_above_line}}' => '<i style="color: #808080">##- Please type your reply above this line -##</i>'
+    ];
+
+    $subject = str_replace(array_keys($placeholders), array_values($placeholders), $template_subject);
+    $body = str_replace(array_keys($placeholders), array_values($placeholders), $template_body);
+
+    return [
+        'subject' => $subject,
+        'body' => $body
+    ];
+}
+
+function inferAssetTypeFromProductName($product_name) {
+    $name = strtolower((string) $product_name);
+    $map = [
+        'Switch' => ['switch', 'unifi usw', 'catalyst', 'procurve', 'aruba instant on'],
+        'Laptop' => ['laptop', 'notebook', 'macbook', 'thinkpad', 'chromebook', 'elitebook', 'latitude', 'inspiron'],
+        'Desktop' => ['desktop', 'workstation', 'optiplex', 'prodesk', 'elitedesk', 'imac', 'mac mini', 'nuc', 'mini pc'],
+        'Server' => ['server', 'poweredge', 'proliant', 'thinksystem', 'xeon', 'nas', 'synology', 'qnap'],
+        'Firewall/Router' => ['firewall', 'router', 'gateway', 'udm', 'fortigate', 'sonicwall', 'pfsense', 'opnsense', 'watchguard', 'meraki mx', 'mikrotik'],
+        'Access Point' => ['access point', 'wifi', 'wi-fi', 'uap', 'u6-', 'u7-', 'wap'],
+        'Printer' => ['printer', 'scanner', 'mfp', 'laserjet', 'officejet', 'copier'],
+        'Display' => ['monitor', 'display', 'screen', 'tv'],
+        'Camera' => ['camera', 'nvr', 'cctv', 'webcam', 'protect'],
+        'Tablet' => ['tablet', 'ipad', 'surface pro', 'galaxy tab'],
+        'Mobile Phone' => ['mobile', 'iphone', 'android', 'smartphone', 'cell'],
+        'Phone' => ['phone', 'voip', 'yealink', 'polycom', 'grandstream', 'sip'],
+        'Virtual Machine' => ['virtual machine', 'vm ']
+    ];
+
+    foreach ($map as $asset_type => $keywords) {
+        foreach ($keywords as $kw) {
+            if (strpos($name, $kw) !== false) {
+                return $asset_type;
+            }
+        }
+    }
+
+    return 'Other';
+}
+
+function fulfillTicketProductsOnInvoice($mysqli, $ticket_id, $invoice_id, $selected_ticket_product_ids = null) {
+    global $asset_types_array, $session_name;
+
+    $ticket_id = intval($ticket_id);
+    $invoice_id = intval($invoice_id);
+    if ($ticket_id <= 0 || $invoice_id <= 0) {
+        return;
+    }
+
+    $where_ids = '';
+    if (is_array($selected_ticket_product_ids)) {
+        $clean_ids = array_values(array_filter(array_map('intval', $selected_ticket_product_ids), function ($v) {
+            return $v > 0;
+        }));
+        if (empty($clean_ids)) {
+            return;
+        }
+        $where_ids = ' AND ticket_product_id IN (' . implode(',', $clean_ids) . ')';
+    }
+
+    $ticket_sql = mysqli_query($mysqli, "SELECT ticket_client_id, ticket_location_id, ticket_contact_id, ticket_asset_id, ticket_prefix, ticket_number FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
+    $ticket_row = $ticket_sql ? mysqli_fetch_assoc($ticket_sql) : null;
+    if (!$ticket_row) {
+        return;
+    }
+
+    $client_id = intval($ticket_row['ticket_client_id']);
+    $location_id = intval($ticket_row['ticket_location_id']);
+    $contact_id = intval($ticket_row['ticket_contact_id']);
+    $ticket_asset_id = intval($ticket_row['ticket_asset_id']);
+    $ticket_prefix = (string) ($ticket_row['ticket_prefix'] ?? '');
+    $ticket_number = intval($ticket_row['ticket_number']);
+
+    $invoice_sql = mysqli_query($mysqli, "SELECT invoice_prefix, invoice_number, invoice_date FROM invoices WHERE invoice_id = $invoice_id LIMIT 1");
+    $invoice_row = $invoice_sql ? mysqli_fetch_assoc($invoice_sql) : null;
+    $invoice_prefix = (string) ($invoice_row['invoice_prefix'] ?? '');
+    $invoice_number = intval($invoice_row['invoice_number'] ?? 0);
+    $invoice_date = !empty($invoice_row['invoice_date']) ? $invoice_row['invoice_date'] : date('Y-m-d');
+    $invoice_date_esc = escapeSql($invoice_date);
+
+    $tp_sql = mysqli_query($mysqli, "SELECT * FROM ticket_products WHERE ticket_product_ticket_id = $ticket_id AND ticket_product_invoiced = 0 $where_ids ORDER BY ticket_product_id ASC");
+    if (!$tp_sql) {
+        return;
+    }
+
+    while ($tp_row = mysqli_fetch_assoc($tp_sql)) {
+        $tp_id = intval($tp_row['ticket_product_id']);
+        $prod_id = intval($tp_row['ticket_product_product_id']);
+        $inv_item_id = intval($tp_row['ticket_product_inventory_item_id']);
+        $qty = floatval($tp_row['ticket_product_qty']);
+
+        mysqli_query($mysqli, "UPDATE ticket_products SET ticket_product_invoiced = 1 WHERE ticket_product_id = $tp_id");
+
+        if ($inv_item_id > 0) {
+            $inv_sql = mysqli_query($mysqli, "
+                SELECT ii.item_serial, ii.item_mac, ii.item_notes, p.product_name, p.product_code, p.product_description
+                FROM inventory_items ii
+                LEFT JOIN products p ON ii.item_product_id = p.product_id
+                WHERE ii.item_id = $inv_item_id
+                LIMIT 1
+            ");
+            $inv_row = $inv_sql ? mysqli_fetch_assoc($inv_sql) : null;
+
+            mysqli_query($mysqli, "UPDATE inventory_items SET item_status = 'Sold', item_client_id = $client_id, item_invoice_id = $invoice_id WHERE item_id = $inv_item_id");
+
+            if ($client_id > 0 && $inv_row) {
+                $serial = trim((string) ($inv_row['item_serial'] ?? ''));
+                $serial_esc = escapeSql($serial);
+                $new_asset_id = 0;
+
+                if ($serial !== '') {
+                    $existing_sql = mysqli_query($mysqli, "SELECT asset_id FROM assets WHERE asset_client_id = $client_id AND asset_serial = '$serial_esc' AND asset_serial != '' AND asset_archived_at IS NULL LIMIT 1");
+                    if ($existing_sql && mysqli_num_rows($existing_sql) > 0) {
+                        $existing_row = mysqli_fetch_assoc($existing_sql);
+                        $new_asset_id = intval($existing_row['asset_id']);
+                    }
+                }
+
+                if ($new_asset_id === 0) {
+                    $product_name = trim((string) ($inv_row['product_name'] ?: $tp_row['ticket_product_name']));
+                    $product_code = trim((string) ($inv_row['product_code'] ?? ''));
+                    $product_description = trim((string) ($inv_row['product_description'] ?? ''));
+                    $mac = trim((string) ($inv_row['item_mac'] ?? ''));
+                    $item_notes = trim((string) ($inv_row['item_notes'] ?? ''));
+
+                    $tp_asset_type = trim((string) ($tp_row['ticket_product_asset_type'] ?? ''));
+                    if ($tp_asset_type !== '' && isset($asset_types_array) && array_key_exists($tp_asset_type, $asset_types_array)) {
+                        $asset_type = $tp_asset_type;
+                    } else {
+                        $asset_type = inferAssetTypeFromProductName($product_name);
+                    }
+
+                    $asset_name = substr($product_name . ($serial !== '' ? " ($serial)" : ''), 0, 200);
+                    $name_parts = preg_split('/\s+/', $product_name);
+                    $asset_make = substr($name_parts[0] ?? $product_name, 0, 200);
+                    $asset_model = substr($product_code, 0, 200);
+                    $asset_desc = substr($product_description, 0, 255);
+                    $purch_ref = substr("Invoice $invoice_prefix$invoice_number (Ticket $ticket_prefix$ticket_number)", 0, 200);
+
+                    $asset_name_esc = escapeSql($asset_name);
+                    $asset_desc_esc = escapeSql($asset_desc);
+                    $asset_type_esc = escapeSql($asset_type);
+                    $asset_make_esc = escapeSql($asset_make);
+                    $asset_model_esc = escapeSql($asset_model);
+                    $purch_ref_esc = escapeSql($purch_ref);
+                    $notes_esc = escapeSql($item_notes);
+                    $mac_esc = escapeSql($mac);
+
+                    mysqli_query($mysqli, "INSERT INTO assets SET
+                        asset_name = '$asset_name_esc',
+                        asset_description = '$asset_desc_esc',
+                        asset_type = '$asset_type_esc',
+                        asset_make = '$asset_make_esc',
+                        asset_model = '$asset_model_esc',
+                        asset_serial = '$serial_esc',
+                        asset_status = 'Deployed',
+                        asset_purchase_reference = '$purch_ref_esc',
+                        asset_purchase_date = '$invoice_date_esc',
+                        asset_install_date = CURDATE(),
+                        asset_location_id = $location_id,
+                        asset_contact_id = $contact_id,
+                        asset_client_id = $client_id,
+                        asset_notes = '$notes_esc'");
+
+                    $new_asset_id = mysqli_insert_id($mysqli);
+
+                    if ($new_asset_id > 0) {
+                        mysqli_query($mysqli, "INSERT INTO asset_interfaces SET interface_name = '01', interface_mac = '$mac_esc', interface_primary = 1, interface_asset_id = $new_asset_id");
+                        $hist_desc = escapeSql("Created from Ticket $ticket_prefix$ticket_number on Invoice $invoice_prefix$invoice_number");
+                        mysqli_query($mysqli, "INSERT INTO asset_history SET asset_history_status = 'Deployed', asset_history_description = '$hist_desc', asset_history_asset_id = $new_asset_id");
+                        if (function_exists('logAudit')) {
+                            $actor = !empty($session_name) ? $session_name : 'System';
+                            logAudit("Asset", "Create", "$actor created asset $asset_name_esc from Ticket $ticket_prefix$ticket_number on Invoice $invoice_prefix$invoice_number", $client_id, $new_asset_id);
+                        }
+                    }
+                }
+
+                if ($new_asset_id > 0) {
+                    mysqli_query($mysqli, "UPDATE ticket_products SET ticket_product_asset_id = $new_asset_id WHERE ticket_product_id = $tp_id");
+                    if ($ticket_asset_id === 0) {
+                        mysqli_query($mysqli, "UPDATE tickets SET ticket_asset_id = $new_asset_id WHERE ticket_id = $ticket_id");
+                        $ticket_asset_id = $new_asset_id;
+                    } elseif ($ticket_asset_id !== $new_asset_id) {
+                        $check_ta = mysqli_query($mysqli, "SELECT 1 FROM ticket_assets WHERE ticket_id = $ticket_id AND asset_id = $new_asset_id LIMIT 1");
+                        if ($check_ta && mysqli_num_rows($check_ta) === 0) {
+                            mysqli_query($mysqli, "INSERT INTO ticket_assets SET ticket_id = $ticket_id, asset_id = $new_asset_id");
+                        }
+                    }
+                }
+            }
+        } elseif ($prod_id > 0) {
+            $p_sql = mysqli_query($mysqli, "SELECT product_type, product_tracking_type FROM products WHERE product_id = $prod_id LIMIT 1");
+            $p_row = $p_sql ? mysqli_fetch_assoc($p_sql) : null;
+            if ($p_row && ($p_row['product_type'] ?? '') === 'product' && ($p_row['product_tracking_type'] ?? '') === 'bulk' && $qty > 0) {
+                $stock_note = escapeSql("Ticket $ticket_prefix$ticket_number - Invoice $invoice_prefix$invoice_number");
+                $deduct_qty = -$qty;
+                mysqli_query($mysqli, "INSERT INTO product_stock SET stock_qty = $deduct_qty, stock_note = '$stock_note', stock_product_id = $prod_id");
+            }
+        }
+    }
 }

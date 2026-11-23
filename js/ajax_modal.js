@@ -20,7 +20,8 @@ $(document).on('click', '.ajax-modal', function (e) {
     <div id="modal-loading-spinner" class="text-center p-5">
       <i class="fas fa-spinner fa-spin fa-2x text-muted"></i>
     </div>`;
-  $('.content-wrapper').append(loadingSpinner);
+  const $container = $('.content-wrapper').length ? $('.content-wrapper') : $('body');
+  $container.append(loadingSpinner);
 
   // Make AJAX request
   $.ajax({
@@ -44,7 +45,7 @@ $(document).on('click', '.ajax-modal', function (e) {
           </div>
         </div>`;
 
-      $('.content-wrapper').append(modalHtml);
+      $container.append(modalHtml);
       const $modal = $('#' + modalId);
       $modal.modal('show');
 

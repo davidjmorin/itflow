@@ -99,6 +99,23 @@ function cronJobRegistry(): array
             'schedule' => 'Daily',
             'daily_at' => '03:30',
         ],
+        [
+            'name' => 'tech_weekly_summary',
+            'label' => 'Weekly Technician Summary',
+            'script' => 'tech_weekly_summary.php',
+            'description' => 'Dispatches prior week hours and mileage summary via SMS and Email to configured technicians on Mondays.',
+            'schedule' => 'Daily',
+            'daily_at' => '08:00',
+            'interval_safe' => false,
+        ],
+        [
+            'name' => 'tbr_reminders',
+            'label' => 'TBR Reminders & Alerts',
+            'script' => 'tbr_reminders.php',
+            'description' => 'Queues scheduled TBR client/internal reminders, overdue TBR alerts, and action-item due date alerts.',
+            'schedule' => 'Interval',
+            'interval_minutes' => 15,
+        ],
     ];
 }
 

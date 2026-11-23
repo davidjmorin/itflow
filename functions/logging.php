@@ -5,6 +5,10 @@
 
 
 function triggerCustomAction($trigger, $entity) {
+    if ($trigger === 'ticket_create' && function_exists('smsgateTicketNotify')) {
+        smsgateTicketNotify($entity);
+    }
+
     $original_dir = getcwd(); // Save
 
     chdir(dirname(__FILE__));

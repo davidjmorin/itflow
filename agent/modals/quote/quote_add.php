@@ -3,12 +3,31 @@
 require_once '../../../includes/modal_header.php';
 
 $client_id = intval($_GET['client_id'] ?? 0);
+$lead_id = intval($_GET['lead_id'] ?? 0);
+
+$client_name = '';
+$lead_name = '';
+if ($client_id) {
+    $client_res = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT client_name FROM clients WHERE client_id = $client_id LIMIT 1"));
+    $client_name = escapeHtml($client_res['client_name'] ?? '');
+} elseif ($lead_id) {
+    $lead_res = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT lead_name FROM leads WHERE lead_id = $lead_id LIMIT 1"));
+    $lead_name = escapeHtml($lead_res['lead_name'] ?? '');
+}
 
 ob_start();
 
 ?>
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-comment-dollar mr-2"></i>New Quote</h5>
+    <h5 class="modal-title">
+        <i class="fas fa-fw fa-comment-dollar mr-2"></i>New Quote<?php
+        if (!empty($client_name)) {
+            echo " - $client_name";
+        } elseif (!empty($lead_name)) {
+            echo " - $lead_name <span class='badge badge-info ml-1'>Lead</span>";
+        }
+        ?>
+    </h5>
     <button type="button" class="close text-white" data-dismiss="modal">
         <span>&times;</span>
     </button>
@@ -20,27 +39,59 @@ ob_start();
 
         <?php if ($client_id) { ?>
             <input type="hidden" name="client_id" value="<?= $client_id ?>">
+        <?php } elseif ($lead_id) { ?>
+            <input type="hidden" name="lead_id" value="<?= $lead_id ?>">
         <?php } else { ?>
 
             <div class="form-group">
+                <div class="btn-group btn-group-toggle w-100 mb-3" data-toggle="buttons">
+                    <label class="btn btn-outline-primary active" id="toggle_type_client_label">
+                        <input type="radio" name="recipient_type" id="type_client" value="client" checked autocomplete="off">
+                        <i class="fas fa-users mr-1"></i>Client
+                    </label>
+                    <label class="btn btn-outline-info" id="toggle_type_lead_label">
+                        <input type="radio" name="recipient_type" id="type_lead" value="lead" autocomplete="off">
+                        <i class="fas fa-funnel-dollar mr-1"></i>Lead
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group" id="client_select_group">
                 <label>Client <strong class="text-danger">*</strong></label>
                 <div class="input-group">
                     <div class="input-group-prepend">
                         <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
                     </div>
-                    <select class="form-control select2" name="client_id" required>
+                    <select class="form-control select2" id="client_id_select" name="client_id" required>
                         <option value="">- Select a Client -</option>
                         <?php
-
-                        //select unarchived clients
                         $sql = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_archived_at IS NULL " . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
                         while ($row = mysqli_fetch_assoc($sql)) {
                             $client_id_select = intval($row['client_id']);
-                            $client_name = escapeHtml($row['client_name']);
+                            $client_name_option = escapeHtml($row['client_name']);
                             ?>
-                            <option value="<?= $client_id_select ?>"><?= $client_name ?></option>
+                            <option value="<?= $client_id_select ?>"><?= $client_name_option ?></option>
                         <?php } ?>
+                    </select>
+                </div>
+            </div>
 
+            <div class="form-group d-none" id="lead_select_group">
+                <label>Lead <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text"><i class="fa fa-fw fa-funnel-dollar"></i></span>
+                    </div>
+                    <select class="form-control select2" id="lead_id_select" name="lead_id">
+                        <option value="">- Select a Lead -</option>
+                        <?php
+                        $sql_leads = mysqli_query($mysqli, "SELECT lead_id, lead_name FROM leads WHERE lead_archived_at IS NULL AND lead_status != 'Lost' ORDER BY lead_name ASC");
+                        while ($row = mysqli_fetch_assoc($sql_leads)) {
+                            $lead_id_select = intval($row['lead_id']);
+                            $lead_name_option = escapeHtml($row['lead_name']);
+                            ?>
+                            <option value="<?= $lead_id_select ?>"><?= $lead_name_option ?></option>
+                        <?php } ?>
                     </select>
                 </div>
             </div>
@@ -112,6 +163,26 @@ ob_start();
         <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
     </div>
 </form>
+
+<?php if (!$client_id && !$lead_id) { ?>
+<script>
+$(document).ready(function() {
+    $('input[name="recipient_type"]').on('change', function() {
+        if ($(this).val() === 'lead') {
+            $('#client_select_group').addClass('d-none');
+            $('#client_id_select').prop('required', false).val('').trigger('change');
+            $('#lead_select_group').removeClass('d-none');
+            $('#lead_id_select').prop('required', true);
+        } else {
+            $('#lead_select_group').addClass('d-none');
+            $('#lead_id_select').prop('required', false).val('').trigger('change');
+            $('#client_select_group').removeClass('d-none');
+            $('#client_id_select').prop('required', true);
+        }
+    });
+});
+</script>
+<?php } ?>
 
 <?php
 require_once '../../../includes/modal_footer.php';

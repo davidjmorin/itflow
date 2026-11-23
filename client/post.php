@@ -14,10 +14,10 @@ if (isset($_POST['add_ticket'])) {
 
     validateCSRFToken();
 
-    $subject = escapeSql($_POST['subject']);
-    $details = mysqli_real_escape_string($mysqli, ($_POST['details']));
-    $category = intval($_POST['category']);
-    $asset = intval($_POST['asset']);
+    $subject = escapeSql($_POST['subject'] ?? '');
+    $details = mysqli_real_escape_string($mysqli, ($_POST['details'] ?? ''));
+    $category = intval($_POST['category'] ?? 0);
+    $asset = intval($_POST['asset'] ?? 0);
 
     // Get settings from load_global_settings.php
     $config_ticket_prefix = escapeSql($config_ticket_prefix);
@@ -55,7 +55,9 @@ if (isset($_POST['add_ticket'])) {
     if ($config_ticket_new_ticket_notification_email) {
 
         $client_name = escapeSql($session_client_name);
-        $details = removeEmoji($details);
+        if (function_exists('removeEmoji')) {
+            $details = removeEmoji($details);
+        }
 
         $email_subject = "ITFlow - New Ticket - $client_name: $subject";
         $email_body = "Hello, <br><br>This is a notification that a new ticket has been raised in ITFlow. <br>Client: $client_name<br>Priority: $priority<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$ticket_id&client_id=$session_client_id <br><br><b>$subject</b><br>$details";
@@ -72,7 +74,22 @@ if (isset($_POST['add_ticket'])) {
             ]
         ];
         addToMailQueue($data);
-        }
+    }
+
+    if (filter_var($session_contact_email, FILTER_VALIDATE_EMAIL) && $config_ticket_client_general_notifications == 1) {
+        $rendered_mail = renderTicketCreatedEmail($ticket_id, $session_contact_name, $session_contact_email, false);
+        $client_data = [
+            [
+                'from' => $config_ticket_from_email,
+                'from_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
+                'recipient' => $session_contact_email,
+                'recipient_name' => mysqli_real_escape_string($mysqli, $session_contact_name),
+                'subject' => mysqli_real_escape_string($mysqli, $rendered_mail['subject']),
+                'body' => mysqli_real_escape_string($mysqli, $rendered_mail['body'])
+            ]
+        ];
+        addToMailQueue($client_data);
+    }
 
     // Custom action/notif handler
     triggerCustomAction('ticket_create', $ticket_id);

@@ -70,7 +70,159 @@ $max_inline_embed_bytes = 2097152; // 2 MB - larger inline images are saved as r
 /** ------------------------------------------------------------------
  * Ticket / Reply helpers (unchanged)
  * ------------------------------------------------------------------ */
-function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message, $attachments, $original_message_file, $ccs) {
+function evaluateInboundTicketRules($from_email, $from_domain, $subject, $message_body, $message_body_text = '') {
+    global $mysqli;
+
+    $rules_sql = mysqli_query($mysqli, "SELECT * FROM ticket_rules WHERE ticket_rule_active = 1 ORDER BY ticket_rule_order ASC, ticket_rule_id ASC");
+    if (!$rules_sql || mysqli_num_rows($rules_sql) == 0) {
+        return null;
+    }
+
+    $matched_action = null;
+    $overrides = [];
+
+    while ($rule = mysqli_fetch_assoc($rules_sql)) {
+        $conditions_tested = 0;
+        $conditions_matched = 0;
+        $match_type = $rule['ticket_rule_match_type'];
+        $use_regex = !empty($rule['ticket_rule_use_regex']);
+
+        if (!empty($rule['ticket_rule_sender_email'])) {
+            $conditions_tested++;
+            $emails = array_map('trim', explode(',', strtolower($rule['ticket_rule_sender_email'])));
+            $from_lower = strtolower($from_email);
+            $email_match = false;
+            foreach ($emails as $pattern) {
+                if ($pattern === '') continue;
+                if ($pattern === $from_lower) {
+                    $email_match = true;
+                    break;
+                }
+                if (strpos($pattern, '*') !== false) {
+                    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+                    if (@preg_match($regex, $from_lower)) {
+                        $email_match = true;
+                        break;
+                    }
+                }
+            }
+            if ($email_match) {
+                $conditions_matched++;
+            }
+        }
+
+        if (!empty($rule['ticket_rule_sender_domain'])) {
+            $conditions_tested++;
+            $rule_domains = array_map('trim', explode(',', strtolower($rule['ticket_rule_sender_domain'])));
+            $domain_lower = strtolower($from_domain);
+            $domain_match = false;
+            foreach ($rule_domains as $d) {
+                if ($d === '') continue;
+                $d = ltrim($d, '@');
+                if ($d === $domain_lower || (strlen($domain_lower) > strlen($d) && substr($domain_lower, -strlen('.' . $d)) === '.' . $d)) {
+                    $domain_match = true;
+                    break;
+                }
+            }
+            if ($domain_match) {
+                $conditions_matched++;
+            }
+        }
+
+        if (!empty($rule['ticket_rule_subject'])) {
+            $conditions_tested++;
+            $subject_target = $rule['ticket_rule_subject'];
+            $subject_match = false;
+            if ($use_regex) {
+                if (@preg_match('/' . str_replace('/', '\/', $subject_target) . '/i', $subject)) {
+                    $subject_match = true;
+                }
+            } else {
+                if (stripos($subject, $subject_target) !== false) {
+                    $subject_match = true;
+                }
+            }
+            if ($subject_match) {
+                $conditions_matched++;
+            }
+        }
+
+        if (!empty($rule['ticket_rule_body'])) {
+            $conditions_tested++;
+            $body_target = $rule['ticket_rule_body'];
+            $body_match = false;
+            $haystack = !empty($message_body_text) ? $message_body_text : strip_tags($message_body);
+            if ($use_regex) {
+                if (@preg_match('/' . str_replace('/', '\/', $body_target) . '/i', $haystack)) {
+                    $body_match = true;
+                }
+            } else {
+                if (stripos($haystack, $body_target) !== false) {
+                    $body_match = true;
+                }
+            }
+            if ($body_match) {
+                $conditions_matched++;
+            }
+        }
+
+        $rule_passed = false;
+        if ($conditions_tested > 0) {
+            if ($match_type === 'any') {
+                $rule_passed = ($conditions_matched > 0);
+            } else {
+                $rule_passed = ($conditions_matched === $conditions_tested);
+            }
+        }
+
+        if ($rule_passed) {
+            $rule_name = $rule['ticket_rule_name'];
+            $action = $rule['ticket_rule_action'];
+
+            if ($action === 'ignore') {
+                return [
+                    'action' => 'ignore',
+                    'rule_name' => $rule_name,
+                    'rule_id' => intval($rule['ticket_rule_id'])
+                ];
+            }
+
+            $matched_action = 'route';
+            if (!empty($rule['ticket_rule_client_id'])) {
+                $overrides['client_id'] = intval($rule['ticket_rule_client_id']);
+            }
+            if (!empty($rule['ticket_rule_priority'])) {
+                $overrides['priority'] = $rule['ticket_rule_priority'];
+            }
+            if (!empty($rule['ticket_rule_category'])) {
+                $overrides['category'] = $rule['ticket_rule_category'];
+            }
+            if (!empty($rule['ticket_rule_assigned_to'])) {
+                $overrides['assigned_to'] = intval($rule['ticket_rule_assigned_to']);
+            }
+            if (!empty($rule['ticket_rule_status'])) {
+                $overrides['status'] = intval($rule['ticket_rule_status']);
+            }
+            $overrides['rule_name'] = $rule_name;
+            $overrides['rule_id'] = intval($rule['ticket_rule_id']);
+
+            if (!empty($rule['ticket_rule_stop_processing'])) {
+                break;
+            }
+        }
+    }
+
+    if ($matched_action === 'route') {
+        return [
+            'action' => 'route',
+            'overrides' => $overrides
+        ];
+    }
+
+    return null;
+}
+
+function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message, $attachments, $original_message_file, $ccs, $overrides = []) {
     global $mysqli, $config_app_name, $company_name, $company_phone, $config_ticket_prefix, $config_ticket_client_general_notifications, $config_ticket_new_ticket_notification_email, $config_base_url, $config_ticket_from_name, $config_ticket_from_email, $config_ticket_default_billable, $allowed_extensions;
     $bad_pattern = "/do[\W_]*not[\W_]*reply|no[\W_]*reply/i"; // Email addresses to ignore
 
@@ -104,14 +256,25 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
     $contact_email_esc = mysqli_real_escape_string($mysqli, $contact_email);
     $client_id = intval($client_id);
 
+    $priority = !empty($overrides['priority']) ? mysqli_real_escape_string($mysqli, $overrides['priority']) : 'Low';
+    $status = !empty($overrides['status']) ? intval($overrides['status']) : 1;
+    $assigned_to = !empty($overrides['assigned_to']) ? intval($overrides['assigned_to']) : 0;
+    $category_query = !empty($overrides['category']) ? "ticket_category = '" . mysqli_real_escape_string($mysqli, $overrides['category']) . "'," : "";
+
     $url_key = randomString(32);
 
-    mysqli_query($mysqli, "INSERT INTO tickets SET ticket_prefix = '$ticket_prefix_esc', ticket_number = $ticket_number, ticket_source = 'Email', ticket_subject = '$subject', ticket_details = '$message_esc', ticket_priority = 'Low', ticket_status = 1, ticket_billable = $config_ticket_default_billable, ticket_created_by = 0, ticket_contact_id = $contact_id, ticket_url_key = '$url_key', ticket_client_id = $client_id");
+    mysqli_query($mysqli, "INSERT INTO tickets SET ticket_prefix = '$ticket_prefix_esc', ticket_number = $ticket_number, ticket_source = 'Email', ticket_subject = '$subject', ticket_details = '$message_esc', ticket_priority = '$priority', ticket_status = $status, $category_query ticket_assigned_to = $assigned_to, ticket_billable = $config_ticket_default_billable, ticket_created_by = 0, ticket_contact_id = $contact_id, ticket_url_key = '$url_key', ticket_client_id = $client_id");
     $id = mysqli_insert_id($mysqli);
     applyTicketSla($id);
 
+    if ($assigned_to > 0) {
+        $client_uri = $client_id ? "&client_id=$client_id" : "";
+        mysqli_query($mysqli, "INSERT INTO notifications SET notification_type = 'Ticket', notification = 'Ticket $ticket_prefix_esc$ticket_number - Subject: $subject has been assigned to you', notification_action = '/agent/ticket.php?ticket_id=$id$client_uri', notification_client_id = $client_id, notification_user_id = $assigned_to");
+    }
+
     // Logging
     logAudit("Ticket", "Create", "Email parser: Client contact $contact_email_esc created ticket $ticket_prefix_esc$ticket_number ($subject) ($id)", $client_id, $id);
+
 
     mkdirMissing('../uploads/tickets/');
     $att_dir = "../uploads/tickets/" . $id . "/";
@@ -160,15 +323,14 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
     // External email
     $data = [];
     if ($config_ticket_client_general_notifications == 1 && !preg_match($bad_pattern, $contact_email)) {
-        $subject_email = "Ticket created - [$config_ticket_prefix$ticket_number] - $subject";
-        $body = "<i style='color: #808080'>##- Please type your reply above this line -##</i><br><br>Hello $contact_name,<br><br>Thank you for your email. A ticket regarding \"$subject\" has been automatically created for you.<br><br>Ticket: $config_ticket_prefix$ticket_number<br>Subject: $subject<br>Status: New<br>Portal: <a href='https://$config_base_url/guest/guest_view_ticket.php?ticket_id=$id&url_key=$url_key'>View ticket</a><br><br>--<br>$company_name - Support<br>$config_ticket_from_email<br>$company_phone";
+        $rendered_mail = renderTicketCreatedEmail($id, $contact_name, $contact_email, ($client_id == 0));
         $data[] = [
             'from' => $config_ticket_from_email,
             'from_name' => $config_ticket_from_name,
             'recipient' => $contact_email,
             'recipient_name' => $contact_name,
-            'subject' => $subject_email,
-            'body' => mysqli_real_escape_string($mysqli, $body)
+            'subject' => $rendered_mail['subject'],
+            'body' => mysqli_real_escape_string($mysqli, $rendered_mail['body'])
         ];
     }
 
@@ -183,8 +345,9 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
             $client_name = escapeSql($client_row['client_name']);
             $client_uri = "&client_id=$client_id";
         }
+        $priority_label = !empty($overrides['priority']) ? $overrides['priority'] : "Low (email parsed)";
         $email_subject = "$config_app_name - New Ticket - $client_name: $subject";
-        $email_body = "Hello, <br><br>This is a notification that a new ticket has been raised in ITFlow. <br>Client: $client_name<br>Priority: Low (email parsed)<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$id$client_uri <br><br>--------------------------------<br><br><b>$subject</b><br>$message";
+        $email_body = "Hello, <br><br>This is a notification that a new ticket has been raised in ITFlow. <br>Client: $client_name<br>Priority: $priority_label<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$id$client_uri <br><br>--------------------------------<br><br><b>$subject</b><br>$message";
 
         $data[] = [
             'from' => $config_ticket_from_email,
@@ -745,8 +908,19 @@ foreach ($messages as $message) {
             }
         }
 
+        $rule_result = evaluateInboundTicketRules($from_email, $from_domain, $subject, $message_body, $message_body_text);
+        $rule_overrides = [];
+        if ($rule_result) {
+            if ($rule_result['action'] === 'ignore') {
+                logApp("Cron-Email-Parser", "info", "Email from $from_email ($subject) ignored by inbound rule '" . escapeSql($rule_result['rule_name']) . "'");
+                $email_processed = true;
+            } elseif ($rule_result['action'] === 'route') {
+                $rule_overrides = $rule_result['overrides'];
+            }
+        }
+
         // 1. Reply to existing ticket with the number in subject
-        if (preg_match("/\[" . preg_quote($config_ticket_prefix, '/') . "(\d+)\]/", $subject, $ticket_number_matches)) {
+        if (!$email_processed && preg_match("/\[" . preg_quote($config_ticket_prefix, '/') . "(\d+)\]/", $subject, $ticket_number_matches)) {
             $ticket_number = intval($ticket_number_matches[1]);
             $email_processed = addReply($from_email, $date, $subject, $ticket_number, $message_body, $attachments);
         }
@@ -810,9 +984,9 @@ foreach ($messages as $message) {
                 $contact_name  = escapeSql($rowc['contact_name']);
                 $contact_id    = intval($rowc['contact_id']);
                 $contact_email = escapeSql($rowc['contact_email']);
-                $client_id     = intval($rowc['contact_client_id']);
+                $client_id     = !empty($rule_overrides['client_id']) ? intval($rule_overrides['client_id']) : intval($rowc['contact_client_id']);
 
-                $email_processed = addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message_body, $attachments, $original_message_file, $ccs);
+                $email_processed = addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message_body, $attachments, $original_message_file, $ccs, $rule_overrides);
             }
         }
 
@@ -823,7 +997,7 @@ foreach ($messages as $message) {
             $rowd = mysqli_fetch_assoc($domain_sql);
 
             if ($rowd && $from_domain == $rowd['domain_name']) {
-                $client_id = intval($rowd['domain_client_id']);
+                $client_id = !empty($rule_overrides['client_id']) ? intval($rule_overrides['client_id']) : intval($rowd['domain_client_id']);
 
                 // Create a new contact
                 $contact_name  = $from_name;
@@ -834,16 +1008,17 @@ foreach ($messages as $message) {
                 logAudit("Contact", "Create", "Email parser: created contact " . mysqli_real_escape_string($mysqli, $contact_name), $client_id, $contact_id);
                 triggerCustomAction('contact_create', $contact_id);
 
-                $email_processed = addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message_body, $attachments, $original_message_file, $ccs);
+                $email_processed = addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message_body, $attachments, $original_message_file, $ccs, $rule_overrides);
             }
         }
 
         // 5. Unknown sender allowed?
-        if (!$email_processed && $config_ticket_email_parse_unknown_senders) {
+        if (!$email_processed && ($config_ticket_email_parse_unknown_senders || !empty($rule_overrides['client_id']))) {
 
             $bad_from_pattern = "/daemon|postmaster|bounce|mta/i"; //  Stop NDRs with bad subjects raising new tickets
             if (!preg_match($bad_from_pattern, $from_email)) {
-                $email_processed = addTicket(0, $from_name, $from_email, 0, $date, $subject, $message_body, $attachments, $original_message_file, $ccs);
+                $target_client_id = !empty($rule_overrides['client_id']) ? intval($rule_overrides['client_id']) : 0;
+                $email_processed = addTicket(0, $from_name, $from_email, $target_client_id, $date, $subject, $message_body, $attachments, $original_message_file, $ccs, $rule_overrides);
 
             } else {
 

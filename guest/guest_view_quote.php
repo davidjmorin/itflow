@@ -21,16 +21,18 @@ $sql = mysqli_query(
         contact_phone_country_code, location_address, location_city, location_country,
         location_state, location_zip, quote_amount, quote_currency_code, quote_date,
         quote_discount_amount, quote_expire, quote_id, quote_note, quote_number, quote_prefix,
-        quote_status FROM quotes
+        quote_status, quote_lead_id, leads.lead_name, leads.lead_contact_name, leads.lead_contact_email,
+        leads.lead_contact_phone, leads.lead_contact_mobile, leads.lead_address, leads.lead_city,
+        leads.lead_state, leads.lead_zip, leads.lead_country, leads.lead_website FROM quotes
     LEFT JOIN clients ON quote_client_id = client_id
     LEFT JOIN contacts ON clients.client_id = contacts.contact_client_id AND contact_primary = 1
     LEFT JOIN locations ON clients.client_id = locations.location_client_id AND location_primary = 1
+    LEFT JOIN leads ON quote_lead_id = lead_id
     WHERE quote_id = $quote_id
     AND quote_url_key = '$url_key'"
 );
 
 if (mysqli_num_rows($sql) !== 1) {
-    // Invalid quote/key
     echo "<br><h2>Oops, something went wrong! Please raise a ticket if you believe this is an error.</h2>";
     require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/footer.php';
 
@@ -49,22 +51,42 @@ $quote_discount = floatval($row['quote_discount_amount']);
 $quote_amount = floatval($row['quote_amount']);
 $quote_currency_code = escapeHtml($row['quote_currency_code']);
 $quote_note = escapeHtml($row['quote_note']);
+$quote_lead_id = intval($row['quote_lead_id']);
 $client_id = intval($row['client_id']);
-$client_name = escapeHtml($row['client_name']);
-$client_name_escaped = escapeSql($row['client_name']);
-$location_address = escapeHtml($row['location_address']);
-$location_city = escapeHtml($row['location_city']);
-$location_state = escapeHtml($row['location_state']);
-$location_zip = escapeHtml($row['location_zip']);
-$location_country = escapeHtml($row['location_country']);
-$contact_email = escapeHtml($row['contact_email']);
-$contact_phone_country_code = escapeHtml($row['contact_phone_country_code']);
-$contact_phone = escapeHtml(formatPhoneNumber($row['contact_phone'], $contact_phone_country_code));
-$contact_extension = escapeHtml($row['contact_extension']);
-$contact_mobile_country_code = escapeHtml($row['contact_mobile_country_code']);
-$contact_mobile = escapeHtml(formatPhoneNumber($row['contact_mobile'], $contact_mobile_country_code));
-$client_website = escapeHtml($row['client_website']);
-$client_currency_code = escapeHtml($row['client_currency_code']);
+
+if ($client_id > 0) {
+    $client_name = escapeHtml($row['client_name']);
+    $client_name_escaped = escapeSql($row['client_name']);
+    $location_address = escapeHtml($row['location_address']);
+    $location_city = escapeHtml($row['location_city']);
+    $location_state = escapeHtml($row['location_state']);
+    $location_zip = escapeHtml($row['location_zip']);
+    $location_country = escapeHtml($row['location_country']);
+    $contact_email = escapeHtml($row['contact_email']);
+    $contact_phone_country_code = escapeHtml($row['contact_phone_country_code']);
+    $contact_phone = escapeHtml(formatPhoneNumber($row['contact_phone'], $contact_phone_country_code));
+    $contact_extension = escapeHtml($row['contact_extension']);
+    $contact_mobile_country_code = escapeHtml($row['contact_mobile_country_code']);
+    $contact_mobile = escapeHtml(formatPhoneNumber($row['contact_mobile'], $contact_mobile_country_code));
+    $client_website = escapeHtml($row['client_website']);
+    $client_currency_code = escapeHtml($row['client_currency_code']);
+} else {
+    $client_name = escapeHtml($row['lead_name']);
+    $client_name_escaped = escapeSql($row['lead_name']);
+    $location_address = escapeHtml($row['lead_address']);
+    $location_city = escapeHtml($row['lead_city']);
+    $location_state = escapeHtml($row['lead_state']);
+    $location_zip = escapeHtml($row['lead_zip']);
+    $location_country = escapeHtml($row['lead_country']);
+    $contact_email = escapeHtml($row['lead_contact_email']);
+    $contact_phone_country_code = '';
+    $contact_phone = escapeHtml(formatPhoneNumber($row['lead_contact_phone'], ''));
+    $contact_extension = '';
+    $contact_mobile_country_code = '';
+    $contact_mobile = escapeHtml(formatPhoneNumber($row['lead_contact_mobile'], ''));
+    $client_website = escapeHtml($row['lead_website']);
+    $client_currency_code = $row['quote_currency_code'];
+}
 
 $sql = mysqli_query($mysqli, "SELECT company_address, company_city, company_country, company_email, company_locale,
     company_logo, company_name, company_phone, company_phone_country_code, company_state,
