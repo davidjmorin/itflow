@@ -67,3 +67,8 @@ foreach ($database_update_files as $version => $file) {
     $database_current_version = $version;
     $database_updates_applied[] = $version;
 }
+
+if (!$database_updates_error && file_exists(__DIR__ . '/custom_migrations_runner.php')) {
+    require_once __DIR__ . '/custom_migrations_runner.php';
+    itflowRunCustomMigrations($mysqli, $database_updates_applied, $database_updates_error);
+}

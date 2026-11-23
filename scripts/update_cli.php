@@ -79,28 +79,9 @@ if (count($options) === 0) {
     $options['update'] = true;
 }
 
-// If "update" or "force_update" is requested
 if (isset($options['update']) || isset($options['force_update'])) {
-    if (isset($options['force_update'])) {
-        // Perform a hard reset onto the tracked branch. This named origin/master outright
-        // until 26.08, which moved any install tracking another branch onto master.
-        $remote_ref = escapeshellarg("origin/" . getRepoBranch());
-        exec("git fetch --all 2>&1", $output, $return_var);
-        exec("git reset --hard $remote_ref 2>&1", $output2, $return_var2);
-        echo implode("\n", $output) . "\n" . implode("\n", $output2) . "\n";
-    } else {
-        // Perform a standard update (git pull)
-        exec("git pull 2>&1", $output, $return_var);
-        
-        // Check if the repository is already up to date
-        if (strpos(implode("\n", $output), 'Already up to date.') === false) {
-            echo implode("\n", $output) . "\n";
-            echo "Update successful\n";
-        } else {
-            // If already up-to-date, don't show the update success message
-            echo implode("\n", $output) . "\n";
-        }
-    }
+    fwrite(STDERR, "Error: --update and --force_update are disabled on this custom fork to protect local customizations.\nMerge upstream updates via git CLI (git fetch origin && git merge origin/master), then run php update_cli.php --update_db.\n");
+    exit(1);
 }
 
 // If "update_db" is requested
@@ -130,7 +111,11 @@ if (isset($options['update_db'])) {
     }
 
     if (count($database_updates_applied) > 0) {
-        echo "Database updated from version $old_db_version to $latest_db_version.\n";
+        if ($old_db_version !== $latest_db_version) {
+            echo "Database updated from version $old_db_version to $latest_db_version.\n";
+        } else {
+            echo "Database updates applied (" . count($database_updates_applied) . "); upstream schema remains at $latest_db_version.\n";
+        }
     } else {
         echo "Database is already at the latest version ($latest_db_version). No updates were applied.\n";
     }

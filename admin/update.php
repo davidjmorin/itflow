@@ -2,6 +2,7 @@
 require_once "includes/inc_all_admin.php";
 
 require_once "../includes/database_version.php";
+require_once __DIR__ . "/custom_migrations_runner.php";
 
 $repo_branch = getRepoBranch();
 $remote_ref = escapeshellarg("origin/$repo_branch");
@@ -11,9 +12,6 @@ $updates = checkForUpdates();
 $current_version = $updates->current_version;
 $fetch_ok = $updates->result === 0;
 
-// Commits sitting between this working tree and the remote branch. Fields are separated
-// by \x1f rather than having git build the table markup, because a commit subject comes
-// from outside this install and used to reach the page as unescaped HTML.
 $pending_commits = [];
 
 $git_log = shell_exec("git log HEAD..$remote_ref --pretty=format:'%h%x1f%ar%x1f%s'");
@@ -32,9 +30,12 @@ foreach (explode("\n", trim((string) $git_log)) as $commit_line) {
 
 }
 
-// version_compare, not > - "2.6.10" is less than "2.6.9" as a plain string comparison, so
-// the plain comparison silently stops offering database updates once a minor reaches 10.
-$db_update_available = version_compare(LATEST_DATABASE_VERSION, CURRENT_DATABASE_VERSION, '>');
+$custom_migration_status = itflowGetCustomMigrationStatus($mysqli);
+$pending_custom_migrations = $custom_migration_status['pending'];
+$applied_custom_migrations = $custom_migration_status['applied'];
+
+$upstream_db_update_available = version_compare(LATEST_DATABASE_VERSION, CURRENT_DATABASE_VERSION, '>');
+$db_update_available = $upstream_db_update_available || !empty($pending_custom_migrations);
 $app_update_available = !empty($pending_commits);
 
 ?>
@@ -75,10 +76,17 @@ $app_update_available = !empty($pending_commits);
                 <small class="text-secondary text-uppercase">Database</small>
                 <div class="h5 mb-0">
                     <?= escapeHtml(CURRENT_DATABASE_VERSION) ?>
-                    <?php if ($db_update_available) { ?>
+                    <?php if ($upstream_db_update_available) { ?>
                         <small class="text-danger">&rarr; <?= escapeHtml(LATEST_DATABASE_VERSION) ?></small>
                     <?php } ?>
                 </div>
+                <small class="text-muted">
+                    <?php if (!empty($pending_custom_migrations)) { ?>
+                        <span class="text-warning"><?= count($pending_custom_migrations) ?> custom migration<?= count($pending_custom_migrations) === 1 ? '' : 's' ?> pending</span>
+                    <?php } else { ?>
+                        Custom migrations: <?= count($applied_custom_migrations) ?> applied
+                    <?php } ?>
+                </small>
             </div>
             <div class="col-md-3 col-6 mb-3">
                 <small class="text-secondary text-uppercase">Commit</small>
@@ -126,22 +134,21 @@ $app_update_available = !empty($pending_commits);
                 <div class="mb-4">
                     <h6 class="text-uppercase text-secondary">Application files</h6>
                     <p class="mb-2">
-                        <?= count($pending_commits) ?> commit<?= count($pending_commits) === 1 ? '' : 's' ?>
-                        behind <code><?= escapeHtml("origin/$repo_branch") ?></code>.
+                        <?= count($pending_commits) ?> upstream commit<?= count($pending_commits) === 1 ? '' : 's' ?>
+                        available in <code><?= escapeHtml("origin/$repo_branch") ?></code>.
                     </p>
-                    <a class="btn btn-primary confirm-link" href="post.php?update&csrf_token=<?= $_SESSION['csrf_token'] ?>">
-                        <i class="fas fa-fw fa-download mr-2"></i>Update App
-                    </a>
-                    <a class="btn btn-outline-danger ml-2 confirm-link" href="post.php?update&force_update=1&csrf_token=<?= $_SESSION['csrf_token'] ?>">
-                        <i class="fas fa-fw fa-hammer mr-2"></i>Force Update
-                    </a>
-                    <p class="text-muted mt-2 mb-0">
-                        <small>
-                            Update App runs <code>git pull</code>. Force Update discards every local change and resets
-                            the files to <code><?= escapeHtml("origin/$repo_branch") ?></code> - use it only when a
-                            normal update will not apply.
-                        </small>
-                    </p>
+                    <div class="alert alert-warning mb-0">
+                        <h5><i class="fas fa-fw fa-shield-alt mr-2"></i>Web App Update &amp; Force Update Disabled</h5>
+                        <p class="mb-2">
+                            This installation runs on a custom fork. Web-based <strong>Update App</strong> and
+                            <strong>Force Update</strong> buttons are disabled so your custom features are never overwritten.
+                        </p>
+                        <p class="mb-1">To merge upstream ITFlow updates safely via Git CLI:</p>
+                        <pre class="bg-dark text-white p-2 mb-0">git fetch origin
+git merge origin/master
+su -s /bin/bash www-data -c "php scripts/update_cli.php --update_db"
+git push fork dev</pre>
+                    </div>
                 </div>
             <?php } ?>
 
@@ -149,9 +156,14 @@ $app_update_available = !empty($pending_commits);
                 <div class="mb-4">
                     <h6 class="text-uppercase text-secondary">Database</h6>
                     <p class="mb-2">
-                        Schema is at <strong><?= escapeHtml(CURRENT_DATABASE_VERSION) ?></strong> and this code expects
-                        <strong><?= escapeHtml(LATEST_DATABASE_VERSION) ?></strong>. Parts of the app will error until
-                        this is applied.
+                        <?php if ($upstream_db_update_available) { ?>
+                            Upstream schema is at <strong><?= escapeHtml(CURRENT_DATABASE_VERSION) ?></strong> and code expects
+                            <strong><?= escapeHtml(LATEST_DATABASE_VERSION) ?></strong>.
+                        <?php } ?>
+                        <?php if (!empty($pending_custom_migrations)) { ?>
+                            <strong><?= count($pending_custom_migrations) ?></strong> pending custom migration<?= count($pending_custom_migrations) === 1 ? '' : 's' ?>.
+                        <?php } ?>
+                        Parts of the app will error until this is applied.
                     </p>
                     <a class="btn btn-dark confirm-link" href="post.php?update_db&csrf_token=<?= $_SESSION['csrf_token'] ?>">
                         <i class="fas fa-fw fa-database mr-2"></i>Update Database
