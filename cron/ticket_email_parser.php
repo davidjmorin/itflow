@@ -42,16 +42,20 @@ $row = mysqli_fetch_assoc($sql);
 $company_name = escapeSql($row['company_name']);
 $company_phone = escapeSql(formatPhoneNumber($row['company_phone'], $row['company_phone_country_code']));
 
-// Check cron is enabled
+// Check cron is enabled. Switched off isn't an error - Maintenance > Cron shows why it stopped,
+// where an App Logs entry every minute only buried the real errors
 if ($config_enable_cron == 0) {
-    logApp("Cron-Email-Parser", "error", "Cron Email Parser unable to run - cron not enabled in admin settings.");
     cronJobStop("Cron: is not enabled -- Quitting..");
 }
 
 // Check setting enabled
 if ($config_ticket_email_parse == 0) {
-    logApp("Cron-Email-Parser", "error", "Cron Email Parser unable to run - not enabled in admin settings.");
     cronJobStop("Email Parser: Feature is not enabled - check Settings > Ticketing > Email-to-ticket parsing. See https://docs.itflow.org/ticket_email_parse  -- Quitting..");
+}
+
+// Development mode doesn't read the ticket mailbox - it would take production's email (functions/dev_mode.php)
+if (devModeOn()) {
+    cronJobStop("Development mode - the ticket mailbox isn't read");
 }
 
 // Overlapping runs are prevented by cron/includes/cron_lock.php. This script used to keep a
@@ -70,160 +74,8 @@ $max_inline_embed_bytes = 2097152; // 2 MB - larger inline images are saved as r
 /** ------------------------------------------------------------------
  * Ticket / Reply helpers (unchanged)
  * ------------------------------------------------------------------ */
-function evaluateInboundTicketRules($from_email, $from_domain, $subject, $message_body, $message_body_text = '') {
-    global $mysqli;
-
-    $rules_sql = mysqli_query($mysqli, "SELECT * FROM ticket_rules WHERE ticket_rule_active = 1 ORDER BY ticket_rule_order ASC, ticket_rule_id ASC");
-    if (!$rules_sql || mysqli_num_rows($rules_sql) == 0) {
-        return null;
-    }
-
-    $matched_action = null;
-    $overrides = [];
-
-    while ($rule = mysqli_fetch_assoc($rules_sql)) {
-        $conditions_tested = 0;
-        $conditions_matched = 0;
-        $match_type = $rule['ticket_rule_match_type'];
-        $use_regex = !empty($rule['ticket_rule_use_regex']);
-
-        if (!empty($rule['ticket_rule_sender_email'])) {
-            $conditions_tested++;
-            $emails = array_map('trim', explode(',', strtolower($rule['ticket_rule_sender_email'])));
-            $from_lower = strtolower($from_email);
-            $email_match = false;
-            foreach ($emails as $pattern) {
-                if ($pattern === '') continue;
-                if ($pattern === $from_lower) {
-                    $email_match = true;
-                    break;
-                }
-                if (strpos($pattern, '*') !== false) {
-                    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-                    if (@preg_match($regex, $from_lower)) {
-                        $email_match = true;
-                        break;
-                    }
-                }
-            }
-            if ($email_match) {
-                $conditions_matched++;
-            }
-        }
-
-        if (!empty($rule['ticket_rule_sender_domain'])) {
-            $conditions_tested++;
-            $rule_domains = array_map('trim', explode(',', strtolower($rule['ticket_rule_sender_domain'])));
-            $domain_lower = strtolower($from_domain);
-            $domain_match = false;
-            foreach ($rule_domains as $d) {
-                if ($d === '') continue;
-                $d = ltrim($d, '@');
-                if ($d === $domain_lower || (strlen($domain_lower) > strlen($d) && substr($domain_lower, -strlen('.' . $d)) === '.' . $d)) {
-                    $domain_match = true;
-                    break;
-                }
-            }
-            if ($domain_match) {
-                $conditions_matched++;
-            }
-        }
-
-        if (!empty($rule['ticket_rule_subject'])) {
-            $conditions_tested++;
-            $subject_target = $rule['ticket_rule_subject'];
-            $subject_match = false;
-            if ($use_regex) {
-                if (@preg_match('/' . str_replace('/', '\/', $subject_target) . '/i', $subject)) {
-                    $subject_match = true;
-                }
-            } else {
-                if (stripos($subject, $subject_target) !== false) {
-                    $subject_match = true;
-                }
-            }
-            if ($subject_match) {
-                $conditions_matched++;
-            }
-        }
-
-        if (!empty($rule['ticket_rule_body'])) {
-            $conditions_tested++;
-            $body_target = $rule['ticket_rule_body'];
-            $body_match = false;
-            $haystack = !empty($message_body_text) ? $message_body_text : strip_tags($message_body);
-            if ($use_regex) {
-                if (@preg_match('/' . str_replace('/', '\/', $body_target) . '/i', $haystack)) {
-                    $body_match = true;
-                }
-            } else {
-                if (stripos($haystack, $body_target) !== false) {
-                    $body_match = true;
-                }
-            }
-            if ($body_match) {
-                $conditions_matched++;
-            }
-        }
-
-        $rule_passed = false;
-        if ($conditions_tested > 0) {
-            if ($match_type === 'any') {
-                $rule_passed = ($conditions_matched > 0);
-            } else {
-                $rule_passed = ($conditions_matched === $conditions_tested);
-            }
-        }
-
-        if ($rule_passed) {
-            $rule_name = $rule['ticket_rule_name'];
-            $action = $rule['ticket_rule_action'];
-
-            if ($action === 'ignore') {
-                return [
-                    'action' => 'ignore',
-                    'rule_name' => $rule_name,
-                    'rule_id' => intval($rule['ticket_rule_id'])
-                ];
-            }
-
-            $matched_action = 'route';
-            if (!empty($rule['ticket_rule_client_id'])) {
-                $overrides['client_id'] = intval($rule['ticket_rule_client_id']);
-            }
-            if (!empty($rule['ticket_rule_priority'])) {
-                $overrides['priority'] = $rule['ticket_rule_priority'];
-            }
-            if (!empty($rule['ticket_rule_category'])) {
-                $overrides['category'] = $rule['ticket_rule_category'];
-            }
-            if (!empty($rule['ticket_rule_assigned_to'])) {
-                $overrides['assigned_to'] = intval($rule['ticket_rule_assigned_to']);
-            }
-            if (!empty($rule['ticket_rule_status'])) {
-                $overrides['status'] = intval($rule['ticket_rule_status']);
-            }
-            $overrides['rule_name'] = $rule_name;
-            $overrides['rule_id'] = intval($rule['ticket_rule_id']);
-
-            if (!empty($rule['ticket_rule_stop_processing'])) {
-                break;
-            }
-        }
-    }
-
-    if ($matched_action === 'route') {
-        return [
-            'action' => 'route',
-            'overrides' => $overrides
-        ];
-    }
-
-    return null;
-}
-
-function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message, $attachments, $original_message_file, $ccs, $overrides = []) {
-    global $mysqli, $config_app_name, $company_name, $company_phone, $config_ticket_prefix, $config_ticket_client_general_notifications, $config_ticket_new_ticket_notification_email, $config_base_url, $config_ticket_from_name, $config_ticket_from_email, $config_ticket_default_billable, $allowed_extensions;
+function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date, $subject, $message, $attachments, $original_message_file, $ccs) {
+    global $mysqli, $config_app_name, $company_name, $company_phone, $config_ticket_prefix, $config_ticket_client_general_notifications, $config_base_url, $config_ticket_from_name, $config_ticket_from_email, $config_ticket_default_billable, $allowed_extensions;
     $bad_pattern = "/do[\W_]*not[\W_]*reply|no[\W_]*reply/i"; // Email addresses to ignore
 
     // Atomically increment and get the new ticket number
@@ -263,7 +115,7 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
 
     $url_key = randomString(32);
 
-    mysqli_query($mysqli, "INSERT INTO tickets SET ticket_prefix = '$ticket_prefix_esc', ticket_number = $ticket_number, ticket_source = 'Email', ticket_subject = '$subject', ticket_details = '$message_esc', ticket_priority = '$priority', ticket_status = $status, $category_query ticket_assigned_to = $assigned_to, ticket_billable = $config_ticket_default_billable, ticket_created_by = 0, ticket_contact_id = $contact_id, ticket_url_key = '$url_key', ticket_client_id = $client_id");
+    mysqli_query($mysqli, "INSERT INTO tickets SET ticket_prefix = '$ticket_prefix_esc', ticket_number = $ticket_number, ticket_source = 'Email', ticket_subject = '$subject', ticket_details = '$message_esc', ticket_priority = 'Medium', ticket_status = 1, ticket_billable = $config_ticket_default_billable, ticket_created_by = 0, ticket_contact_id = $contact_id, ticket_url_key = '$url_key', ticket_client_id = $client_id");
     $id = mysqli_insert_id($mysqli);
     applyTicketSla($id);
 
@@ -295,10 +147,11 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
             $att_saved_path = $att_dir . $att_saved_filename;
             file_put_contents($att_saved_path, $attachment['content']);
 
-            $ticket_attachment_name = escapeSql($att_name);
+            // Escaped once, and cut to the 255 characters the column holds
+            $ticket_attachment_name = escapeSql(mb_substr($att_name, 0, 255));
             $ticket_attachment_reference_name = escapeSql($att_saved_filename);
 
-            $ticket_attachment_name_esc = mysqli_real_escape_string($mysqli, $ticket_attachment_name);
+            $ticket_attachment_name_esc = $ticket_attachment_name;
             $ticket_attachment_reference_name_esc = mysqli_real_escape_string($mysqli, $ticket_attachment_reference_name);
             mysqli_query($mysqli, "INSERT INTO ticket_attachments SET ticket_attachment_name = '$ticket_attachment_name_esc', ticket_attachment_reference_name = '$ticket_attachment_reference_name_esc', ticket_attachment_ticket_id = $id");
         } else {
@@ -320,64 +173,32 @@ function addTicket($contact_id, $contact_name, $contact_email, $client_id, $date
         }
     }
 
-    // External email
-    $data = [];
-    if ($config_ticket_client_general_notifications == 1 && !preg_match($bad_pattern, $contact_email)) {
-        $rendered_mail = renderTicketCreatedEmail($id, $contact_name, $contact_email, ($client_id == 0));
-        $data[] = [
-            'from' => $config_ticket_from_email,
-            'from_name' => $config_ticket_from_name,
-            'recipient' => $contact_email,
-            'recipient_name' => $contact_name,
-            'subject' => $rendered_mail['subject'],
-            'body' => mysqli_real_escape_string($mysqli, $rendered_mail['body'])
-        ];
+    // The sender is told it is a ticket now - unless they asked for replies only (Your account in the client portal)
+    $contact_wants = !$contact_id || ticketContactWantsEmail(getFieldById('contacts', intval($contact_id), 'contact_ticket_emails'), 'created');
+    if ($config_ticket_client_general_notifications == 1 && !preg_match($bad_pattern, $contact_email) && $contact_wants && ($new = ticketRow($id))) {
+        ticketMailCreated($id, 'Ticket created -', [], false, 'email', [['email' => stripslashes($contact_email), 'name' => stripslashes($contact_name)]]);
     }
 
-    // Internal email
-    if ($config_ticket_new_ticket_notification_email) {
-        if ($client_id == 0) {
-            $client_name = "Guest";
-            $client_uri = '';
-        } else {
-            $client_sql = mysqli_query($mysqli, "SELECT client_name FROM clients WHERE client_id = $client_id");
-            $client_row = mysqli_fetch_assoc($client_sql);
-            $client_name = escapeSql($client_row['client_name']);
-            $client_uri = "&client_id=$client_id";
-        }
-        $priority_label = !empty($overrides['priority']) ? $overrides['priority'] : "Low (email parsed)";
-        $email_subject = "$config_app_name - New Ticket - $client_name: $subject";
-        $email_body = "Hello, <br><br>This is a notification that a new ticket has been raised in ITFlow. <br>Client: $client_name<br>Priority: $priority_label<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$id$client_uri <br><br>--------------------------------<br><br><b>$subject</b><br>$message";
+    // The new-ticket address (Admin > Ticket), when there is one
+    ticketMailNewTicketAddress($id, 'email');
 
-        $data[] = [
-            'from' => $config_ticket_from_email,
-            'from_name' => $config_ticket_from_name,
-            'recipient' => $config_ticket_new_ticket_notification_email,
-            'recipient_name' => $config_ticket_from_name,
-            'subject' => $email_subject,
-            'body' => mysqli_real_escape_string($mysqli, $email_body)
-        ];
-    }
+    // The client's primary and technical contacts who asked to hear about new tickets
+    ticketMailColleaguesNew($id);
 
-    addToMailQueue($data);
     triggerCustomAction('ticket_create', $id);
 
     return true;
 }
 
-function addReply($from_email, $date, $subject, $ticket_number, $message, $attachments) {
+function addReply($from_email, $date, $subject, $ticket_number, $message, $attachments, $original_message_file = null) {
     global $mysqli, $config_app_name, $company_name, $company_phone, $config_ticket_prefix, $config_base_url, $config_ticket_from_name, $config_ticket_from_email, $allowed_extensions;
 
     $ticket_reply_type = 'Client';
     // $message contains the raw HTML body from IMAP
 
-    // 1) Remove the reply separator and everything below it (HTML-aware)
-    // This matches: <i ...>##- Please type your reply above this line -##</i> and EVERYTHING after it
-    $message = preg_replace(
-        '/<i[^>]*>##-\s*Please\s+type\s+your\s+reply\s+above\s+this\s+line\s*-##<\/i>.*$/is',
-        '',
-        $message
-    );
+    // 1) What they wrote, without the email of ours they quote - above the reply line, or below it when
+    // that's where they wrote (emailReplyText(), functions/email.php)
+    $message = emailReplyText($message);
 
     // 2) Clean up the remaining message
 
@@ -412,7 +233,6 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
 
     if ($row) {
         $ticket_id = intval($row['ticket_id']);
-        $ticket_subject = escapeSql($row['ticket_subject']);
         $ticket_status = escapeSql($row['ticket_status']);
         $ticket_reply_contact = intval($row['ticket_contact_id']);
         $ticket_contact_email = escapeSql($row['contact_email']);
@@ -422,7 +242,6 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
         } else {
             $client_uri = '';
         }
-        $client_name = escapeSql($row['client_name']);
 
         if ($ticket_status == 5) {
             $config_ticket_prefix_esc = mysqli_real_escape_string($mysqli, $config_ticket_prefix);
@@ -430,24 +249,21 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
 
             appNotify("Ticket", "Email parser: $from_email attempted to re-open ticket $config_ticket_prefix_esc$ticket_number_esc2 (ID $ticket_id) - check inbox manually to see email", "/agent/ticket.php?ticket_id=$ticket_id$client_uri", $client_id);
 
-            $email_subject = "Action required: This ticket is already closed";
-            $email_body = "Hi there, <br><br>You've tried to reply to a ticket that is closed - we won't see your response. <br><br>Please raise a new ticket by sending a new e-mail to our support address below. <br><br>--<br>$company_name - Support<br>$config_ticket_from_email<br>$company_phone";
-
-            $data = [
-                [
-                    'from' => $config_ticket_from_email,
-                    'from_name' => $config_ticket_from_name,
-                    'recipient' => $from_email,
-                    'recipient_name' => $from_email,
-                    'subject' => $email_subject,
-                    'body' => mysqli_real_escape_string($mysqli, $email_body)
-                ]
-            ];
-
-            addToMailQueue($data);
+            // They are told it didn't reach anyone, and how to raise a new one - never a mail server's
+            // own bounce (the pattern new tickets use), whose answer would only bounce again
+            if (!preg_match("/daemon|postmaster|bounce|mta/i", $from_email)) {
+                ticketMailClosedReply($ticket_id, stripslashes($from_email));
+            }
             return true;
         }
 
+        // Who wrote it: the ticket's contact or another of the client's contacts - a client reply; a
+        // watcher - an internal note with the mismatch warning, as before; one of your agents (answering
+        // an email about the ticket) - their own internal note, which reopens nothing; or anyone else.
+        // Anyone can put a ticket number in a subject, so a stranger's email is kept as an internal note
+        // that doesn't reopen the ticket, and their attachments are not added.
+        $stranger = false;
+        $agent_reply = false;
         if (empty($ticket_contact_email) || $ticket_contact_email !== $from_email) {
             $from_email_esc2 = mysqli_real_escape_string($mysqli, $from_email);
             $row2 = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT contact_id FROM contacts WHERE contact_email = '$from_email_esc2' AND contact_client_id = $client_id LIMIT 1"));
@@ -455,9 +271,19 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
                 $ticket_reply_contact = intval($row2['contact_id']);
             } else {
                 $ticket_reply_type = 'Internal';
-                $ticket_reply_contact = '0';
-                $message = "<b>WARNING: Contact email mismatch</b><br>$message";
-                $message_esc = mysqli_real_escape_string($mysqli, $message);
+                $agent_row = mysqli_fetch_row(mysqli_query($mysqli, "SELECT user_id FROM users WHERE user_email = '$from_email_esc2' AND user_type = 1 AND user_status = 1 AND user_archived_at IS NULL LIMIT 1"));
+                if ($agent_row) {
+                    $agent_reply = true;
+                    $ticket_reply_contact = intval($agent_row[0]); // an internal note is by an agent, as on the ticket page
+                } else {
+                    $stranger = !mysqli_num_rows(mysqli_query($mysqli, "SELECT 1 FROM ticket_watchers WHERE watcher_ticket_id = $ticket_id AND watcher_email = '$from_email_esc2' LIMIT 1"));
+                    $ticket_reply_contact = '0';
+                    $message = ($stranger
+                        ? "<b>WARNING: From someone who is not a contact, watcher or agent - the ticket was not reopened"
+                            . ($attachments ? ", and the email's " . count($attachments) . " attachment(s) were not added - it is in the mailbox's ITFlow folder" : '') . "</b><br>"
+                        : "<b>WARNING: Contact email mismatch</b><br>") . $message;
+                    $message_esc = mysqli_real_escape_string($mysqli, $message);
+                }
             }
         }
 
@@ -467,7 +293,7 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
         $ticket_dir = "../uploads/tickets/" . $ticket_id . "/";
         mkdirMissing($ticket_dir);
 
-        foreach ($attachments as $attachment) {
+        foreach ($stranger ? [] : $attachments as $attachment) {
             $att_name = $attachment['name'];
             $att_extension = strtolower(pathinfo($att_name, PATHINFO_EXTENSION));
 
@@ -476,10 +302,11 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
                 $att_saved_path = $ticket_dir . $att_saved_filename;
                 file_put_contents($att_saved_path, $attachment['content']);
 
-                $ticket_attachment_name = escapeSql($att_name);
+                // Escaped once, and cut to the 255 characters the column holds
+                $ticket_attachment_name = escapeSql(mb_substr($att_name, 0, 255));
                 $ticket_attachment_reference_name = escapeSql($att_saved_filename);
 
-                $ticket_attachment_name_esc = mysqli_real_escape_string($mysqli, $ticket_attachment_name);
+                $ticket_attachment_name_esc = $ticket_attachment_name;
                 $ticket_attachment_reference_name_esc = mysqli_real_escape_string($mysqli, $ticket_attachment_reference_name);
                 mysqli_query($mysqli, "INSERT INTO ticket_attachments SET ticket_attachment_name = '$ticket_attachment_name_esc', ticket_attachment_reference_name = '$ticket_attachment_reference_name_esc', ticket_attachment_reply_id = $reply_id, ticket_attachment_ticket_id = $ticket_id");
             } else {
@@ -488,39 +315,47 @@ function addReply($from_email, $date, $subject, $ticket_number, $message, $attac
             }
         }
 
-        $ticket_assigned_to_sql = mysqli_query($mysqli, "SELECT ticket_assigned_to FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
-        if ($ticket_assigned_to_sql) {
-            $row3 = mysqli_fetch_assoc($ticket_assigned_to_sql);
-            $ticket_assigned_to = intval($row3['ticket_assigned_to']);
-
-            if ($ticket_assigned_to) {
-                $tech_sql = mysqli_query($mysqli, "SELECT user_email, user_name FROM users WHERE user_id = $ticket_assigned_to LIMIT 1");
-                $tech_row = mysqli_fetch_assoc($tech_sql);
-                $tech_email = escapeSql($tech_row['user_email']);
-                $tech_name = escapeSql($tech_row['user_name']);
-
-                $email_subject = "$config_app_name - Ticket updated - [$config_ticket_prefix$ticket_number] $ticket_subject";
-                $email_body    = "Hello $tech_name,<br><br>A new reply has been added to the below ticket.<br><br>Client: $client_name<br>Ticket: $config_ticket_prefix$ticket_number<br>Subject: $ticket_subject<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$ticket_id$client_uri<br><br>--------------------------------<br>$message_esc";
-
-                $data = [
-                    [
-                        'from' => $config_ticket_from_email,
-                        'from_name' => $config_ticket_from_name,
-                        'recipient' => $tech_email,
-                        'recipient_name' => $tech_name,
-                        'subject' => mysqli_real_escape_string($mysqli, $email_subject),
-                        'body' => mysqli_real_escape_string($mysqli, $email_body)
-                    ]
-                ];
-                addToMailQueue($data);
-            }
+        // The email as it came, kept with the reply as a new ticket keeps it - the reply line trims what
+        // shows on the ticket, and The email as it arrived shows the rest (agent/modals/ticket/ticket_email_source.php).
+        // Not a stranger's, whose attachments aren't taken either.
+        if (!$stranger && $original_message_file && is_file("../uploads/tmp/$original_message_file")) {
+            rename("../uploads/tmp/$original_message_file", $ticket_dir . $original_message_file);
+            $original_message_file_esc = mysqli_real_escape_string($mysqli, $original_message_file);
+            mysqli_query($mysqli, "INSERT INTO ticket_attachments SET ticket_attachment_name = 'Original-parsed-email.eml', ticket_attachment_reference_name = '$original_message_file_esc', ticket_attachment_reply_id = $reply_id, ticket_attachment_ticket_id = $ticket_id");
         }
 
-        mysqli_query($mysqli, "UPDATE tickets SET ticket_status = 2, ticket_resolved_at = NULL WHERE ticket_id = $ticket_id AND ticket_client_id = $client_id LIMIT 1");
-        resetTicketResolutionSla($ticket_id);
+        if ($agent_reply) {
+            logTicketHistory($ticket_id, "$from_email_esc (an agent) emailed - added as their internal note");
+            logAudit("Ticket", "Edit", "Email parser: Agent $from_email_esc added an internal note to ticket $config_ticket_prefix$ticket_number_esc ($subject)", $client_id, $ticket_id);
+            return true;
+        }
+
+        // The agent it is assigned to, with what they wrote - a stranger's as plain text
+        $replied_by = intval($ticket_reply_contact) ? (string) getFieldById('contacts', intval($ticket_reply_contact), 'contact_name') : '';
+        $mail_reply = (string) getFieldById('ticket_replies', $reply_id, 'ticket_reply');
+        if ($stranger) {
+            $mail_reply = nl2br(escapeHtml(trim(html_entity_decode(strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $mail_reply)), ENT_QUOTES, 'UTF-8'))));
+        }
+        ticketMailAssigneeReplied($ticket_id, 'email', $mail_reply, $replied_by !== '' ? $replied_by : stripslashes($from_email));
+
+        if ($stranger) {
+            logTicketHistory($ticket_id, "$from_email_esc (not a contact, watcher or agent) emailed - kept as an internal note, the ticket was not reopened");
+            logAudit("Ticket", "Edit", "Email parser: $from_email_esc (not a contact, watcher or agent) emailed ticket $config_ticket_prefix$ticket_number_esc ($subject) - kept as an internal note", $client_id, $ticket_id);
+            return true;
+        }
+
+        // Back to Open - unless it is in a status of your own set to stay put when the client replies (Scheduled, say)
+        $new_ticket_status = ticketStatusAfterClientReply($ticket_status);
+        mysqli_query($mysqli, "UPDATE tickets SET ticket_status = $new_ticket_status, ticket_resolved_at = NULL WHERE ticket_id = $ticket_id AND ticket_client_id = $client_id LIMIT 1");
+        // A resolved ticket's resolution clock runs again - an open one keeps its alerts, so a warning isn't sent twice
+        if (intval($ticket_status) === TICKET_STATUS_RESOLVED) {
+            resetTicketResolutionSla($ticket_id);
+        } else {
+            syncTicketSlaClock($ticket_id);
+        }
 
         // Only record the reopen when the ticket was not already open
-        if (intval($ticket_status) !== 2) {
+        if (intval($ticket_status) !== $new_ticket_status) {
             logTicketHistory($ticket_id, "$from_email_esc replied by email, reopening the ticket");
         }
 
@@ -632,7 +467,8 @@ function getMicrosoftAccessToken(string $username): ?string {
         'client_secret' => $config_mail_oauth_client_secret,
         'refresh_token' => $config_mail_oauth_refresh_token,
         'grant_type'    => 'refresh_token',
-        // IMAP/SMTP scopes typically included at initial consent; not needed for refresh
+        // Named, as the refresh token may last have been renewed for Graph (functions/mail_graph.php)
+        'scope'         => MAIL_MICROSOFT_EXCHANGE_SCOPE,
     ]);
 
     if (!$resp['ok']) return null;
@@ -661,9 +497,9 @@ $imap_provider = $config_imap_provider ?? '';
 if ($imap_provider === null) $imap_provider = '';
 
 if ($imap_provider === '') {
-    // IMAP disabled by admin: exit cleanly
-    logApp("Cron-Email-Parser", "info", "IMAP polling skipped: provider not configured.");
-    cronJobStop();
+    // No mailbox to read isn't an error - Maintenance > Cron shows why it stopped, where an
+    // App Logs entry every minute only buried the real ones
+    cronJobStop("No mailbox is set up to read - see Admin > Settings > Mail");
 }
 
 /** ------------------------------------------------------------------
@@ -680,6 +516,7 @@ $encr = !empty($config_imap_encryption) ? $config_imap_encryption : 'notls'; // 
 $user = $config_imap_username;
 $pass = $config_imap_password;
 $auth = 'plain'; // 'oauth' for OAuth providers
+$graph_token = null; // Microsoft 365 read through Microsoft Graph (functions/mail_graph.php)
 
 if ($imap_provider === 'google_oauth') {
     $host = 'imap.gmail.com';
@@ -692,14 +529,23 @@ if ($imap_provider === 'google_oauth') {
         cronJobStop('', 1);
     }
 } elseif ($imap_provider === 'microsoft_oauth') {
-    $host = 'outlook.office365.com';
-    $port = 993;
-    $encr = 'ssl';
-    $auth = 'oauth';
-    $pass = getMicrosoftAccessToken($user);
-    if (empty($pass)) {
-        logApp("Cron-Email-Parser", "error", "Microsoft OAuth: no usable access token (check refresh token/client credentials/tenant).");
+    // Read through Microsoft Graph when the app has Mail.ReadWrite - no IMAP sign-in then
+    try {
+        $graph_token = mailGraphToken('Mail.ReadWrite');
+    } catch (\Throwable $e) {
+        logApp("Cron-Email-Parser", "error", "Microsoft Graph: " . $e->getMessage());
         cronJobStop('', 1);
+    }
+    if ($graph_token === null) {
+        $host = 'outlook.office365.com';
+        $port = 993;
+        $encr = 'ssl';
+        $auth = 'oauth';
+        $pass = getMicrosoftAccessToken($user);
+        if (empty($pass)) {
+            logApp("Cron-Email-Parser", "error", "Microsoft OAuth: no usable access token (check refresh token/client credentials/tenant).");
+            cronJobStop('', 1);
+        }
     }
 } else {
     // standard_imap (username/password)
@@ -718,7 +564,7 @@ $encryption = match (strtolower($encr)) {
     default    => '',         // 'notls' / plain tcp
 };
 
-$mailbox = new Mailbox([
+$mailbox = $graph_token !== null ? mailGraphMailbox($graph_token, (string) $user) : new Mailbox([
     'host'           => $host,
     'port'           => $port,
     'encryption'     => $encryption,
@@ -731,8 +577,7 @@ $mailbox = new Mailbox([
 try {
     $mailbox->connect();
 } catch (\Throwable $e) {
-    echo "Error connecting to IMAP server: " . $e->getMessage();
-    cronJobStop('', 1);
+    cronJobStop("Error connecting to the mail server: " . $e->getMessage() . "\n", 1);
 }
 
 $inbox = $mailbox->inbox();
@@ -831,15 +676,26 @@ foreach ($messages as $message) {
         $from_domain = explode("@", $from_email);
         $from_domain = escapeSql(end($from_domain));
 
+        // Mail from an address that bounced before - it works again (functions/contact_bounce.php)
+        contactBounceClearEmail(stripslashes($from_email));
+
         // Subject
-        $subject = escapeSql((string)$message->subject() ?: 'No Subject');
+        // ticket_subject holds 500 characters - a longer one failed the insert and the email was tried again every run
+        $subject = escapeSql(mb_substr((string)$message->subject() ?: 'No Subject', 0, 500));
 
         // Skip vacation/out-of-office auto-responders to prevent mail loops (RFC 3834)
-        // NDRs use "auto-generated" and are still handled by the NDR logic below
+        // Some* NDRs use "auto-generated" and are still handled by the NDR logic below
+        // Todo: Combine with the NDR logic so we can update the ticket too
         $auto_submitted = strtolower((string)($message->header('Auto-Submitted')?->getValue() ?? ''));
         $precedence     = strtolower((string)($message->header('Precedence')?->getValue() ?? ''));
         if (str_starts_with($auto_submitted, 'auto-replied') || $precedence === 'auto_reply') {
             logApp("Cron-Email-Parser", "info", "Email parser skipped auto-responder from $from_email ($subject)");
+                appNotify(
+                    "Mail",
+                    "Email parser: Skipped auto-responder message from $from_email. Subject: $subject",
+                    "",
+                    0
+                );
             $processed_count++;
             $message->markSeen();
             $message->move($targetFolderPath);
@@ -922,7 +778,7 @@ foreach ($messages as $message) {
         // 1. Reply to existing ticket with the number in subject
         if (!$email_processed && preg_match("/\[" . preg_quote($config_ticket_prefix, '/') . "(\d+)\]/", $subject, $ticket_number_matches)) {
             $ticket_number = intval($ticket_number_matches[1]);
-            $email_processed = addReply($from_email, $date, $subject, $ticket_number, $message_body, $attachments);
+            $email_processed = addReply($from_email, $date, $subject, $ticket_number, $message_body, $attachments, $original_message_file);
         }
 
         // 2. Fuzzy duplicate check using a known contact/domain and similar_text subject
@@ -967,7 +823,7 @@ foreach ($messages as $message) {
 
                     if ($percent >= 95) {
                         // Treat as a reply/duplicate
-                        $email_processed = addReply($from_email, $date, $subject, $ticket_number, $message_body, $attachments);
+                        $email_processed = addReply($from_email, $date, $subject, $ticket_number, $message_body, $attachments, $original_message_file);
                         break;
                     }
                 }
@@ -1083,10 +939,15 @@ foreach ($messages as $message) {
 
                 appNotify(
                     "Ticket",
-                    "Email parser NDR: Message to $failed_recipient bounced. Subject: $original_subject Diagnostics: $status_code / $diagnostic_code - check ITFlow folder manually to see email",
+                    "Email parser: NDR - Message to $failed_recipient bounced. Subject: $original_subject Diagnostics: $status_code / $diagnostic_code - check ITFlow folder manually to see email",
                     "",
                     0
                 );
+
+                // The contacts with that address show "Email bounced" until mail comes from it again (functions/contact_bounce.php)
+                foreach (contactBounceMark(stripslashes($failed_recipient), stripslashes("$status_code - $diagnostic_code")) as $bounced_contact_id => [$bounced_name, $bounced_client_id]) {
+                    logAudit("Contact", "Edit", "Email parser: mail to " . escapeSql($bounced_name) . " bounced - marked on the contact", $bounced_client_id, $bounced_contact_id);
+                }
 
                 // If the original subject has a ticket, add the NDR there too
                 if (preg_match("/\[" . preg_quote($config_ticket_prefix, '/') . "(\d+)\]/", $original_subject, $ticket_number_matches)) {
@@ -1177,11 +1038,9 @@ $script_end_time = microtime(true);
 $execution_time = $script_end_time - $script_start_time;
 $execution_time_formatted = number_format($execution_time, 2);
 
-$processed_info = "Processed: $processed_count email(s), Unprocessed: $unprocessed_count email(s)";
-if ($processed_count || $unprocessed_count) {
-    logApp("Cron-Email-Parser", "info", "Cron Email Parser executed in $execution_time_formatted seconds. $processed_info");
-}
-
-// DEBUG
+// What the run did, for whoever runs it by hand - not App Logs, where it was an entry a minute
+// while mail came in. Each email processed is a ticket or a reply; one that isn't is left
+// flagged and unread in the inbox, and one that failed outright was logged above
 echo "Processed Emails: $processed_count\n";
 echo "Unprocessed Emails: $unprocessed_count\n";
+echo "Took $execution_time_formatted seconds\n";

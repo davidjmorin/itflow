@@ -20,6 +20,9 @@ $client_filter = intval($_GET['client'] ?? 0);
 // Expiring In Filter
 $expire_filter = $_GET['expire_days'] ?? '';
 
+// Problems Filter
+$problems_filter = !empty($_GET['problems']) ? 1 : 0;
+
 // Archived Filter
 $archived_filter = (isset($_GET['archived']) && $_GET['archived'] == 1) ? 1 : 0;
 
@@ -28,10 +31,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-download mr-2"></i>Export Certificates</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-download me-2"></i>Export Certificates</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <?php exportTabsNav(); ?>
@@ -44,32 +45,28 @@ ob_start();
 
         <?php exportTabsFiltersOpen(); ?>
 
-        <div class="form-group">
-            <label>Search</label>
+        <div class="mb-3">
+            <label class="form-label">Search</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-search"></i></span>
-                </div>
-                <input type="text" class="form-control" name="q" value="<?= stripslashes(escapeHtml($q_filter)) ?>" placeholder="Name, domain, issuer">
+                    <span class="input-group-text"><i class="fas fa-fw fa-search"></i></span>
+                <input type="text" class="form-control" name="q" value="<?= stripslashes(escapeHtml($q_filter)) ?>" placeholder="Name, host, names covered, issuer, fingerprint">
             </div>
         </div>
 
         <?php if (!$client_id) { ?>
-        <div class="form-group">
-            <label>Client</label>
+        <div class="mb-3">
+            <label class="form-label">Client</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                </div>
-                <select class="form-control select2" name="client">
-                    <option value="">- All Clients -</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                <select class="form-select select2" name="client">
+                    <option value="">- Any client -</option>
                     <?php
-                    $sql_clients_filter = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE EXISTS (SELECT 1 FROM certificates WHERE certificate_client_id = client_id) ORDER BY client_name ASC");
+                    $sql_clients_filter = mysqli_query($mysqli, "SELECT client_id, client_name, client_abbreviation FROM clients WHERE EXISTS (SELECT 1 FROM certificates WHERE certificate_client_id = client_id)" . clientScopeSql('client_id') . " ORDER BY client_name ASC");
                     while ($row = mysqli_fetch_assoc($sql_clients_filter)) {
                         $filter_client_id = intval($row['client_id']);
                         $filter_client_name = escapeHtml($row['client_name']);
                     ?>
-                        <option <?php if ($client_filter == $filter_client_id) { echo "selected"; } ?> value="<?= $filter_client_id ?>"><?= $filter_client_name ?></option>
+                        <option <?php if ($client_filter == $filter_client_id) { echo "selected"; } ?> value="<?= $filter_client_id ?>"<?= selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '') ?>><?= $filter_client_name ?></option>
                     <?php
                     }
                     ?>
@@ -78,13 +75,11 @@ ob_start();
         </div>
         <?php } ?>
 
-        <div class="form-group">
-            <label>Expiring In</label>
+        <div class="mb-3">
+            <label class="form-label">Expiring in</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-hourglass-half"></i></span>
-                </div>
-                <select class="form-control select2" name="expire_days">
+                    <span class="input-group-text"><i class="fas fa-fw fa-hourglass-half"></i></span>
+                <select class="form-select select2" name="expire_days">
                     <option value="">- Any -</option>
                     <option <?php if ($expire_filter === 'expired') { echo "selected"; } ?> value="expired">Expired</option>
                     <?php foreach ([7, 30, 45, 60, 90] as $expire_option) { ?>
@@ -94,13 +89,22 @@ ob_start();
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Archived</label>
+        <div class="mb-3">
+            <label class="form-label">Last check</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-archive"></i></span>
-                </div>
-                <select class="form-control select2" name="archived">
+                    <span class="input-group-text"><i class="fas fa-fw fa-shield-alt"></i></span>
+                <select class="form-select select2" name="problems">
+                    <option <?php if (!$problems_filter) { echo "selected"; } ?> value="0">- Any -</option>
+                    <option <?php if ($problems_filter) { echo "selected"; } ?> value="1">Problems found - mismatch, untrusted, expired or unreachable</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Archived</label>
+            <div class="input-group">
+                    <span class="input-group-text"><i class="fas fa-fw fa-archive"></i></span>
+                <select class="form-select select2" name="archived">
                     <option <?php if (!$archived_filter) { echo "selected"; } ?> value="0">Active only</option>
                     <option <?php if ($archived_filter) { echo "selected"; } ?> value="1">Archived only</option>
                 </select>

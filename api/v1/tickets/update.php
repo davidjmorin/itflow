@@ -1,0 +1,52 @@
+<?php
+
+require_once '../validate_api_key.php';
+
+require_once '../require_post_method.php';
+
+// Parse ID
+$ticket_id = intval($_POST['ticket_id']);
+
+// Default
+$update_count = false;
+
+if (!empty($ticket_id)) {
+
+    // A closed ticket stays as it was
+    $ticket_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT * FROM tickets WHERE ticket_id = '$ticket_id' AND ticket_client_id = $client_id AND ticket_closed_at IS NULL LIMIT 1"));
+
+    if ($ticket_row) {
+        // Assign model values from POST, falling back to the current ticket values.
+        require_once 'ticket_model.php';
+
+        $ticket_id = intval($ticket_row['ticket_id']);
+        $ticket_prefix = escapeSql($ticket_row['ticket_prefix']);
+        $ticket_number = intval($ticket_row['ticket_number']);
+
+        $update_sql = mysqli_query($mysqli, "UPDATE tickets SET ticket_subject = '$subject', ticket_details = '$details', ticket_priority = '$priority', ticket_billable = $billable, ticket_vendor_ticket_number = '$vendor_ticket_number', ticket_vendor_id = $vendor_id, ticket_assigned_to = $assigned_to, ticket_contact_id = $contact, ticket_asset_id = $asset, ticket_project_id = $ticket_project_id WHERE ticket_id = $ticket_id AND ticket_client_id = $client_id LIMIT 1");
+
+        if ($update_sql) {
+            $update_count = mysqli_affected_rows($mysqli);
+
+            logTicketHistory($ticket_id, "Edited via the API ($api_key_name)");
+
+            // A new priority can mean another SLA - as the priority picker on the ticket page
+            if (stripslashes($priority) !== (string) $ticket_row['ticket_priority']) {
+                applyTicketSla($ticket_id);
+            }
+
+            // On or off a project
+            if ($ticket_project_id !== intval($ticket_row['ticket_project_id'])) {
+                // Its SLA goes, or comes back counted from now, while project tickets are kept apart (functions/project_tickets.php)
+                projectTicketMoved($ticket_id, $ticket_row['ticket_project_id']);
+                $project = $ticket_project_id ? projectRow($ticket_project_id) : null;
+                logTicketHistory($ticket_id, $project ? "Added to project " . escapeSql(projectReference($project) . ' - ' . $project['project_name']) . " via the API ($api_key_name)" : "Taken out of its project via the API ($api_key_name)");
+            }
+            logAudit("Ticket", "Edit", "$ticket_prefix$ticket_number ticket via API ($api_key_name)", $client_id, $ticket_id);
+            logAudit("API", "Success", "Edited ticket $ticket_prefix$ticket_number via API ($api_key_name)", $client_id, $ticket_id);
+        }
+    }
+}
+
+// Output
+require_once '../update_output.php';

@@ -10,7 +10,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/session_init.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/inc_set_timezone.php';
 
 $ip = escapeSql(getIP());
-$user_agent = escapeSql($_SERVER['HTTP_USER_AGENT']);
+$user_agent = escapeSql(mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250));  // log_user_agent is varchar(250)
 $os = escapeSql(getOS($user_agent));
 $browser = escapeSql(getWebBrowser($user_agent));
 
@@ -34,3 +34,12 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/guest/includes/guest_header.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/guest/includes/inc_wrapper.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/inc_alert_feedback.php';
 //require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/filter_header.php';
+
+/*
+ * A guest page that can't go on - a link that isn't right, or something that
+ * can't be done here - said the same way on every guest page. The page then
+ * includes the footer and ends.
+ */
+function guestDeadEndHtml($icon, $title, $text) {
+    return '<div class="itflow-asset-empty mt-5"><i class="fas ' . $icon . ' fa-3x mb-3 opacity-50"></i><h1 class="h4">' . escapeHtml($title) . '</h1><p>' . escapeHtml($text) . '</p></div>';
+}

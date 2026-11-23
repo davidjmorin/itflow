@@ -1,55 +1,74 @@
-$(document).ready(function() {
+itflowReady(function () {
 
     // Function to load contacts for a given client
     function loadContacts(clientId) {
-        if (!clientId) return;
+        if (!clientId) {
+            return;
+        }
 
-        var $contactSelect = $('#contact_select');
-        $contactSelect.html('<option value="">Loading...</option>');
+        const contactSelect = document.getElementById('contact_select');
+        if (!contactSelect) {
+            return;
+        }
+        contactSelect.innerHTML = '<option value="">Loading...</option>';
 
-        $.ajax({
-            url: 'ajax.php',
-            type: 'GET',
-            dataType: 'json',
-            data: {
-                get_client_contacts: 1,
-                client_id: clientId
-            },
-            success: function(response) {
-                $contactSelect.empty();
+        const query = new URLSearchParams({
+            get_client_contacts: 1,
+            client_id: clientId
+        });
+
+        fetch('ajax.php?' + query.toString(), {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        })
+            .then(function (res) {
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
+                return res.json();
+            })
+            .then(function (response) {
+                contactSelect.innerHTML = '';
                 if (response.contacts && response.contacts.length > 0) {
-                    $contactSelect.append('<option value="">Select a contact</option>');
-                    $.each(response.contacts, function(i, contact) {
-                        $contactSelect.append(
-                            $('<option>', { 
-                                value: contact.contact_id,
-                                text: contact.contact_name
-                            })
-                        );
+                    contactSelect.appendChild(new Option('- Select a contact -', ''));
+                    response.contacts.forEach(function (contact) {
+                        // new Option() sets text content, so contact names are
+                        // never parsed as markup. The picker draws their avatar
+                        // from the data-* extras, as on every other contact field.
+                        const option = new Option(contact.contact_name, contact.contact_id);
+                        // Title, then Primary or Technical - contactOptionDescription() server side
+                        const role = contact.contact_primary == '1' ? 'Primary' : (contact.contact_technical == '1' ? 'Technical' : '');
+                        option.dataset.description = [contact.contact_title, role].filter(Boolean).join(' · ');
+                        option.dataset.initials = contact.contact_initials || '';
+                        option.dataset.shape = 'circle';
+                        option.dataset.tone = contact.contact_tone || 'secondary';
+                        option.dataset.soft = '1';
+                        if (contact.contact_photo_url) {
+                            option.dataset.image = contact.contact_photo_url;
+                        }
+                        contactSelect.appendChild(option);
                     });
                 } else {
-                    $contactSelect.append('<option value="">No contacts found</option>');
+                    contactSelect.appendChild(new Option('- No contacts -', ''));
                 }
-
-                // Refresh Select2
-                if ($.fn.select2) {
-                    $contactSelect.trigger('change.select2');
-                }
-            },
-            error: function(xhr, status, error) {
+            })
+            .catch(function (error) {
                 console.error('AJAX Error:', error);
-                $contactSelect.html('<option value="">Failed to load contacts</option>');
-            }
-        });
+                contactSelect.innerHTML = '<option value="">- Could not load contacts -</option>';
+            });
+    }
+
+    const clientSelect = document.getElementById('client_select');
+    if (!clientSelect) {
+        return;
     }
 
     // Load contacts for the currently selected client when modal opens
-    var initialClientId = $('#client_select').val();
-    loadContacts(initialClientId);
+    loadContacts(clientSelect.value);
 
     // Load contacts when client changes
-    $('#client_select').on('change', function() {
-        var clientId = $(this).val();
-        loadContacts(clientId);
+    clientSelect.addEventListener('change', function () {
+        loadContacts(this.value);
     });
 });

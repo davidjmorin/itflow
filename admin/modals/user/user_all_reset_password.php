@@ -1,35 +1,46 @@
 <?php
 
+/*
+ * Incident response - when an agent's account may be in someone else's
+ * hands: every other agent gets a new password, shown once on the next page,
+ * and their remembered browsers are forgotten so MFA is asked for again.
+ */
+
 require_once '../../includes/modal_header.php';
+
+$agent_count = intval(mysqli_fetch_row(mysqli_query($mysqli, "SELECT COUNT(*) FROM users WHERE user_type = 1" . serviceAccountsOutSql() . " AND user_archived_at IS NULL AND user_id <> " . intval($session_user_id)))[0]);
 
 ob_start();
 
 ?>
-<div class="modal-body">
-    <div class="mb-4" style="text-align: center;">
-        <i class="far fas fa-10x fa-skull-crossbones text-danger mb-3 mt-3"></i>
-        <h2>Incident Response: Agent Password Reset</h2>
-        <br>
-        <div class="alert alert-danger" role="alert">
-            <b>This is a potentially destructive function.<br>It is intended to be used as part of a potential security incident.</b>
-        </div>
-        <h6 class="mb-4 text-secondary"><b>All ITFlow agent passwords will be reset and shown to you </b><i>(except yours - change yours first!)</i>.<br/><br/>You should communicate temporary passwords to agents out of band (e.g. via a phone call) and require they are changed ASAP.</h6>
-        <form action="post.php" method="POST">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-            <div class="row col-7 offset-4">
-                <div class="input-group">
-                    <div class="input-group-prepend">
-                        <input type="password" class="form-control" placeholder="Enter your account password to continue" name="admin_password" required>
-                    </div>
-                </div>
-            </div>
-            <br>
-            <button class="btn btn-danger" type="submit" name="ir_reset_user_password"><i class="fas fa-fw fa-key mr-2"></i>Reset passwords</button>
-        </form>
-    </div>
-    <button type="button" class="btn btn-outline-secondary btn-lg px-5 mr-4" data-dismiss="modal">Cancel</button>
-
+<div class="modal-header bg-dark">
+    <h5 class="modal-title"><i class="fas fa-fw fa-skull-crossbones me-2"></i>Incident Response</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
+<form action="post.php" method="post" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="modal-body">
+        <div class="alert alert-danger fw-semibold">Reset the password of every other agent - <?= $agent_count ?> of them.</div>
+        <ul class="small mb-3 ps-3">
+            <li>Each gets a new password, shown to you once on the next page - give them out by phone, not email, and have them changed.</li>
+            <li>Their remembered browsers are forgotten, so anyone with MFA is asked for a code again.</li>
+            <li>Not yours - change your own first, from your account.</li>
+            <li>Client portal logins are left alone.</li>
+        </ul>
+
+        <label class="form-label">Your password <strong class="text-danger">*</strong></label>
+        <div class="input-group">
+            <span class="input-group-text"><i class="fas fa-fw fa-lock"></i></span>
+            <input type="password" class="form-control" data-toggle="password" name="admin_password" placeholder="To confirm it's you" autocomplete="current-password" required autofocus>
+            <span class="input-group-text"><i class="fas fa-fw fa-eye"></i></span>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button type="submit" name="ir_reset_user_password" class="btn btn-danger fw-bold" <?= $agent_count ? '' : 'disabled' ?>><i class="fas fa-key me-2"></i>Reset <?= $agent_count ?> password<?= $agent_count === 1 ? '' : 's' ?></button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
+    </div>
+</form>
 
 <?php
 require_once "../../../includes/modal_footer.php";

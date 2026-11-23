@@ -2,6 +2,8 @@
 
 require_once '../../../includes/modal_header.php';
 
+enforceUserPermission('module_support', 2);
+
 $ticket_ids = array_map('intval', $_GET['ticket_ids'] ?? []);
 
 $count = count($ticket_ids);
@@ -11,10 +13,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-thermometer-half mr-2"></i>Set Priority for <strong><?= $count ?></strong> Tickets</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-thermometer-half me-2"></i>Set Priority for <strong><?= $count ?></strong> ticket<?= $count === 1 ? '' : 's' ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -23,17 +23,15 @@ ob_start();
 
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Priority</label>
+        <div class="mb-3">
+            <label class="form-label">Priority</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-thermometer-half"></i></span>
-                </div>
-                <select class="form-control select2" name="bulk_priority">
-                    <option>Low</option>
-                    <option>Medium</option>
-                    <option>High</option>
-                    <option>Urgent</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-thermometer-half"></i></span>
+                <select class="form-select select2" name="bulk_priority">
+                    <option data-color="var(--bs-info)">Low</option>
+                    <option data-color="var(--bs-warning)">Medium</option>
+                    <option data-color="var(--bs-danger)">High</option>
+                    <option data-color="var(--bs-emphasis-color)">Urgent</option>
                 </select>
             </div>
         </div>
@@ -41,8 +39,8 @@ ob_start();
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="bulk_edit_ticket_priority" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Set Priority</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_edit_ticket_priority" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Set Priority</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

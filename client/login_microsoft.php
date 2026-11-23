@@ -12,11 +12,19 @@ require_once __DIR__ . "/../includes/session_init.php";
 // Set Timezone after session starts
 require_once "../includes/inc_set_timezone.php";
 
-$session_ip = escapeSql(getIP());
-$session_user_agent = escapeSql($_SERVER['HTTP_USER_AGENT']);
+// A managed instance its manager has suspended (functions/managed.php)
+managedRequestGuard('login');
 
-$sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azure_client_secret FROM settings WHERE company_id = 1");
+$session_ip = escapeSql(getIP());
+$session_user_agent = escapeSql($_SERVER['HTTP_USER_AGENT'] ?? '');
+
+$sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azure_client_secret, config_client_portal_enable FROM settings WHERE company_id = 1");
 $settings = mysqli_fetch_assoc($sql_settings);
+
+// No portal, no portal sign-in - as with a password
+if (intval($settings['config_client_portal_enable'] ?? 0) !== 1) {
+    redirect("../login.php");
+}
 
 $client_id = $settings['config_azure_client_id'];
 $client_secret = $settings['config_azure_client_secret'];
@@ -52,8 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == "GET" && !isset($_GET['code']) && !isset($_GET
         'scope' => 'https://graph.microsoft.com/User.Read',
         'state' => $state);
 
-    header('Location: '.$auth_code_url.'?'.http_build_query($params));
-    exit();
+    redirect($auth_code_url . '?' . http_build_query($params));
 
 }
 
@@ -70,14 +77,12 @@ if (isset($_GET['code']) || isset($_GET['error'])) {
 
     if (!empty($_GET['error'])) {
         $_SESSION['login_message'] = 'Something went wrong with logging you in: Microsoft returned an error. Please try again.';
-        header("Location: ../login.php");
-        exit();
+        redirect("../login.php");
     }
 
     if (empty($state) || empty($session_state) || !hash_equals($session_state, $state) || time() > $session_state_expires) {
         $_SESSION['login_message'] = 'Something went wrong with logging you in: the sign-in request could not be verified. Please try again.';
-        header("Location: ../login.php");
-        exit();
+        redirect("../login.php");
     }
 
     $params = array (
@@ -98,6 +103,8 @@ if (isset($_GET['code']) || isset($_GET['error'])) {
         http_build_query($params)
     );
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     #curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0); // DEBUG ONLY - WAMP
 
     $access_token_response = json_decode(curl_exec($ch), 1);
@@ -111,6 +118,8 @@ if (isset($_GET['code']) || isset($_GET['error'])) {
             'Content-type: application/json'));
         curl_setopt($ch, CURLOPT_URL, "https://graph.microsoft.com/v1.0/me/");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         #curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0); // DEBUG ONLY - WAMP
 
         $msgraph_response = json_decode(curl_exec($ch), 1);
@@ -119,18 +128,18 @@ if (isset($_GET['code']) || isset($_GET['error'])) {
             // Something went wrong verifying the token/using the Graph API - quit
             error_log("ITFlow: MS Graph API error during client portal Entra login: " . json_encode($msgraph_response['error']));
             $_SESSION['login_message'] = 'Something went wrong with logging you in: could not read your profile from Microsoft. Please try again.';
-            header("Location: ../login.php");
-            exit();
+            redirect("../login.php");
 
         } elseif (isset($msgraph_response['id'])) {
 
             $upn = mysqli_real_escape_string($mysqli, $msgraph_response["userPrincipalName"]);
 
-            $sql = mysqli_query($mysqli, "SELECT contact_client_id, contact_id, user_auth_method, user_email, user_id FROM users
+            $sql = mysqli_query($mysqli, "SELECT contact_client_id, contact_id, user_auth_method, user_email, user_id, user_password FROM users
                 LEFT JOIN contacts ON user_id = contact_user_id
                 LEFT JOIN clients ON contact_client_id = client_id
                 WHERE user_email = '$upn'
                 AND user_archived_at IS NULL
+                AND contact_archived_at IS NULL
                 AND client_archived_at IS NULL
                 AND user_type = 2
                 AND user_status = 1
@@ -156,37 +165,39 @@ if (isset($_GET['code']) || isset($_GET['error'])) {
                 $_SESSION['contact_id'] = $contact_id;
                 $_SESSION['csrf_token'] = randomString(32);
                 $_SESSION['login_method'] = "azure";
+                // A later password change ends this session (userSessionStamp())
+                $_SESSION['user_session_stamp'] = userSessionStamp($row['user_password'] ?? '');
+                unset($_SESSION['portal_view_as']); // an agent's View as contact in this browser ends here
 
                 // Logging
                 logAudit("Client Login", "Success", "Client contact $upn successfully logged in via Entra", $client_id, $user_id);
 
-                header("Location: index.php");
+                redirect("index.php");
 
             } else {
 
+                // Logged with why, against the account when there is one (functions/sign_in.php)
+                $entra_why = $row ? ['user_id' => $user_id, 'client_id' => $client_id, 'reason' => 'the account signs in with a password, not Microsoft 365'] : signInFailureReason($msgraph_response['userPrincipalName']);
+                signInLogFailure('Client Login', 'Failed', "Failed client portal sign in via Entra as $upn - " . escapeSql($entra_why['reason']), $entra_why['user_id'], $entra_why['client_id']);
+
                 $_SESSION['login_message'] = 'Something went wrong with logging you in: Your account is not configured for Entra SSO. Please ensure you are setup in ITFlow as a contact and have Entra SSO configured.';
 
-                header("Location: ../login.php");
+                redirect("../login.php");
             }
-
-            exit();
 
         }
 
-        header('Location: index.php');
-        exit();
+        redirect('index.php');
 
     } else {
 
         error_log("ITFlow: no access_token returned during client portal Entra login");
         $_SESSION['login_message'] = 'Something went wrong with logging you in: Microsoft did not return an access token. Please try again.';
-        header("Location: ../login.php");
-        exit();
+        redirect("../login.php");
 
     }
 
 }
 
 // If the user is just sat on the page, send them back to log in to try again
-header("Location: ../login.php");
-exit();
+redirect("../login.php");

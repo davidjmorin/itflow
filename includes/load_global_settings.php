@@ -1,7 +1,7 @@
 <?php
 
 // Query Settings
-$sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azure_client_secret, config_client_portal_enable,
+$sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azure_client_secret, config_client_portal_enable, config_client_portal_require_mfa,
     config_current_database_version, config_default_calendar, config_default_expense_account,
     config_default_expense_payment_method, config_default_hourly_rate,
     config_default_net_terms, config_default_payment_account, config_default_payment_method,
@@ -12,6 +12,8 @@ $sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azu
     config_invoice_from_email, config_invoice_from_name, config_invoice_late_fee_enable,
     config_invoice_late_fee_percent, config_invoice_next_number,
     config_invoice_paid_notification_email, config_invoice_prefix, config_invoice_show_tax_id,
+    config_tax_default_id, config_tax_time, config_tax_trips, config_tax_expenses, config_tax_discount_before,
+    config_internal_client_id,
     config_log_retention, config_login_key_required, config_login_key_secret,
     config_login_message, config_login_remember_me_expire, config_mail_from_email,
     config_mail_from_name, config_mail_oauth_access_token,
@@ -31,7 +33,7 @@ $sql_settings = mysqli_query($mysqli, "SELECT config_azure_client_id, config_azu
     config_ticket_from_name, config_ticket_moving_columns,
     config_ticket_new_ticket_notification_email, config_ticket_next_number,
     config_ticket_ordering, config_ticket_prefix, config_ticket_timer_autostart,
-    config_timezone, config_whitelabel_enabled, config_whitelabel_key, config_google_places_api_key, config_email_header, config_email_footer, config_client_onboarding_email_subject, config_client_onboarding_email_body, config_ticket_client_email_subject, config_ticket_client_email_body, config_smsgate_enable, config_smsgate_url, config_smsgate_username, config_smsgate_password, config_smsgate_emergency_recipients, config_smsgate_ack_message, config_smsgate_urgent_message, config_tech_weekly_summary_enable, config_tech_weekly_summary_time, config_tech_weekly_summary_last_sent_week FROM settings WHERE company_id = 1");
+    config_share_max_hours, config_share_require_protection, config_timezone, config_whitelabel_enabled, config_whitelabel_key FROM settings WHERE company_id = 1");
 $row = mysqli_fetch_assoc($sql_settings);
 
 // Database version
@@ -89,6 +91,11 @@ $config_invoice_late_fee_enable = intval($row['config_invoice_late_fee_enable'])
 $config_invoice_late_fee_percent = floatval($row['config_invoice_late_fee_percent']);
 $config_invoice_paid_notification_email = $row['config_invoice_paid_notification_email'];
 $config_invoice_show_tax_id = intval($row['config_invoice_show_tax_id']);
+$config_tax_default_id = intval($row['config_tax_default_id']);
+$config_tax_time = intval($row['config_tax_time']);
+$config_tax_trips = intval($row['config_tax_trips']);
+$config_tax_expenses = intval($row['config_tax_expenses']);
+$config_tax_discount_before = intval($row['config_tax_discount_before']);
 
 // Recurring Invoices
 $config_recurring_invoice_prefix = $row['config_recurring_invoice_prefix'];
@@ -143,6 +150,24 @@ $config_module_enable_itdoc = intval($row['config_module_enable_itdoc']);
 $config_module_enable_ticketing = intval($row['config_module_enable_ticketing']);
 $config_module_enable_accounting = intval($row['config_module_enable_accounting']);
 $config_client_portal_enable = intval($row['config_client_portal_enable']);
+// Purchasing, Bookkeeping, Dispatch, Trips and Calendar - read once database 3.9.4 adds them; moduleOn() takes one not there yet as on
+if (version_compare((string) ($row['config_current_database_version'] ?? '0'), '3.9.4', '>=')) {
+    foreach (mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT config_module_enable_purchasing, config_module_enable_bookkeeping, config_module_enable_dispatch,
+        config_module_enable_trips, config_module_enable_calendar FROM settings WHERE company_id = 1")) ?: [] as $module_column => $module_on) {
+        $$module_column = intval($module_on);
+    }
+}
+// The Knowledge Base - from database 3.9.5, and its public help center from 3.9.6
+if (version_compare((string) ($row['config_current_database_version'] ?? '0'), '3.9.5', '>=')) {
+    $config_module_enable_kb = intval(mysqli_fetch_row(mysqli_query($mysqli, "SELECT config_module_enable_kb FROM settings WHERE company_id = 1"))[0] ?? 1);
+}
+if (version_compare((string) ($row['config_current_database_version'] ?? '0'), '3.9.6', '>=')) {
+    $config_kb_public_enable = intval(mysqli_fetch_row(mysqli_query($mysqli, "SELECT config_kb_public_enable FROM settings WHERE company_id = 1"))[0] ?? 0);
+}
+$config_client_portal_require_mfa = intval($row['config_client_portal_require_mfa']);
+
+// The client record that represents this MSP's own company, or 0 for none
+$config_internal_client_id = intval($row['config_internal_client_id']);
 
 // Login
 $config_login_message = $row['config_login_message'];
@@ -151,10 +176,15 @@ $config_login_key_secret = $row['config_login_key_secret'];
 $config_login_remember_me_expire = intval($row['config_login_remember_me_expire']);
 $config_log_retention = intval($row['config_log_retention']);
 
+// Shared links - the longest one may last, and whether a password or secure
+// note has to have a passphrase or an emailed code (functions/share.php)
+$config_share_max_hours = intval($row['config_share_max_hours']) ?: 720;
+$config_share_require_protection = intval($row['config_share_require_protection']);
+
 // Locale
 $config_currency_format = "US_en";
 $config_timezone = $row['config_timezone'];
-$config_date_format = "M d, Y";
+$config_date_format = "M j, Y";
 $config_time_format = "g:i A";
 
 // Theme
@@ -213,19 +243,15 @@ $records_per_page_array = array ('5','10','15','20','30','50','100');
 
 include_once "settings_localization_array.php";
 
-$asset_types_array = array (
-    'Laptop'=>'fa-laptop',
-    'Desktop'=>'fa-desktop',
-    'Server'=>'fa-server',
-    'Phone'=>'fa-phone',
-    'Mobile Phone'=>'fa-mobile-alt',
-    'Tablet'=>'fa-tablet-alt',
-    'Firewall/Router'=>'fa-fire-alt',
-    'Switch'=>'fa-network-wired',
-    'Access Point'=>'fa-wifi',
-    'Printer'=>'fa-print',
-    'Display'=>'fa-tv',
-    'Camera'=>'fa-video',
-    'Virtual Machine'=>'fa-cloud',
-    'Other'=>'fa-tag'
-);
+// A managed instance its manager has made read-only or suspended (functions/managed.php). The
+// pages anyone can open - guest links, signing up, joining, password resets - are checked here,
+// as nearly all of them load this file. Client portal pages that load it before functions.php
+// are checked by client/includes/check_login.php instead
+if (PHP_SAPI !== 'cli' && function_exists('managedRequestGuard')) {
+    managedRequestGuard(str_starts_with((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '/api/') ? 'api' : 'public');
+}
+
+// The demo - links that open without signing in open only for someone signed in to it (functions/demo.php)
+if (PHP_SAPI !== 'cli' && function_exists('demoModeGuestGuard')) {
+    demoModeGuestGuard();
+}

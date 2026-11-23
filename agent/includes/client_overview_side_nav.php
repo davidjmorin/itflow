@@ -10,7 +10,7 @@ $num_locations = $row['num'];
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('asset_id') AS num FROM assets LEFT JOIN clients ON asset_client_id = client_id WHERE asset_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('asset_client_id') . ""));
 $num_assets = $row['num'];
 
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('service_id') AS num FROM services LEFT JOIN clients ON service_client_id = client_id WHERE client_archived_at IS NULL " . clientScopeSql('service_client_id') . ""));
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('service_id') AS num FROM services LEFT JOIN clients ON service_client_id = client_id WHERE client_archived_at IS NULL AND service_archived_at IS NULL " . clientScopeSql('service_client_id') . ""));
 $num_services = $row['num'];
 
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('credential_id') AS num FROM credentials LEFT JOIN clients ON credential_client_id = client_id WHERE credential_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('credential_client_id') . ""));
@@ -18,6 +18,9 @@ $num_credentials = $row['num'];
 
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('network_id') AS num FROM networks LEFT JOIN clients ON network_client_id = client_id WHERE network_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('network_client_id') . ""));
 $num_networks = $row['num'];
+
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('rack_id') AS num FROM racks LEFT JOIN clients ON rack_client_id = client_id WHERE rack_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('rack_client_id') . ""));
+$num_racks = $row['num'];
 
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('domain_id') AS num FROM domains LEFT JOIN clients ON domain_client_id = client_id WHERE domain_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('domain_client_id') . ""));
 $num_domains = $row['num'];
@@ -28,24 +31,28 @@ $num_certificates = $row['num'];
 $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('software_id') AS num FROM software LEFT JOIN clients ON software_client_id = client_id WHERE software_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('software_client_id') . ""));
 $num_software = $row['num'];
 
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('vendor_id') AS num FROM vendors JOIN clients ON vendor_client_id = client_id WHERE vendor_archived_at IS NULL AND client_archived_at IS NULL " . clientScopeSql('vendor_client_id') . ""));
+$num_vendors = $row['num'];
+
 ?>
 
 <!-- Main Sidebar Container -->
-<aside class="main-sidebar sidebar-dark-primary d-print-none">
+<aside class="app-sidebar shadow d-print-none" data-bs-theme="dark">
 
-    <a class="pb-1 mt-1 brand-link" href="clients.php">
-        <p class="h6"><i class="nav-icon fas fa-arrow-left ml-3 mr-2"></i>
-            <span class="brand-text ">Back | <strong>All Client Docs</strong>
-        </p>
-    </a>
+    <div class="sidebar-brand">
+        <a class="brand-link" href="clients.php">
+            <i class="fas fa-arrow-left me-2"></i>
+            <span class="brand-text h6 mb-0">Back | <strong>Across Clients</strong></span>
+        </a>
+    </div>
 
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar-wrapper">
 
         <!-- Sidebar Menu -->
         <nav>
 
-            <ul class="nav nav-pills nav-sidebar flex-column mt-2" data-widget="treeview" data-accordion="false">
+            <ul class="nav nav-pills sidebar-menu flex-column mt-2" data-lte-toggle="treeview" data-accordion="false">
 
                 <?php  if (lookupUserPermission("module_support") >= 1) { ?>
                     <li class="nav-item">
@@ -55,7 +62,7 @@ $num_software = $row['num'];
                                 Contacts
                                 <?php
                                 if ($num_contacts > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_contacts ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_contacts)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
@@ -67,12 +74,13 @@ $num_software = $row['num'];
                                 Locations
                                 <?php
                                 if ($num_locations > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_locations ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_locations)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
                     </li>
 
+                    <?php if ($config_module_enable_itdoc == 1) { // IT documentation, as each client's menu shows it ?>
                     <li class="nav-header mt-3">INFRASTRUCTURE</li>
 
                     <li class="nav-item">
@@ -82,7 +90,7 @@ $num_software = $row['num'];
                                 Assets
                                 <?php
                                 if ($num_assets > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_assets ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_assets)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
@@ -95,7 +103,20 @@ $num_software = $row['num'];
                                 Networks
                                 <?php
                                 if ($num_networks > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_networks ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_networks)) ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+
+                    <li class="nav-item">
+                        <a href="racks.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "racks.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-server"></i>
+                            <p>
+                                Racks
+                                <?php
+                                if ($num_racks > 0) { ?>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_racks)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
@@ -103,6 +124,7 @@ $num_software = $row['num'];
 
                     <li class="nav-header mt-3">WEB & SECURITY</li>
 
+                    <?php if (lookupUserPermission("module_credential") >= 1) { ?>
                     <li class="nav-item">
                         <a href="credentials.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "credentials.php") { echo "active"; } ?>">
                             <i class="nav-icon fas fa-key"></i>
@@ -110,11 +132,12 @@ $num_software = $row['num'];
                                 Credentials
                                 <?php
                                 if ($num_credentials > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_credentials ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_credentials)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
                     </li>
+                    <?php } ?>
                     
                     <li class="nav-item">
                         <a href="certificates.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "certificates.php") { echo "active"; } ?>">
@@ -123,7 +146,7 @@ $num_software = $row['num'];
                                 Certificates
                                 <?php
                                 if ($num_certificates > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_certificates ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_certificates)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
@@ -135,14 +158,23 @@ $num_software = $row['num'];
                                 Domains
                                 <?php
                                 if ($num_domains > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_domains ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_domains)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
                     </li>
 
+                    <li class="nav-item">
+                        <a href="shares.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "shares.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-share-alt"></i>
+                            <p>Shared Links</p>
+                        </a>
+                    </li>
+                    <?php } ?>
+
                     <li class="nav-header mt-3">DOCUMENTATION</li>
 
+                    <?php if ($config_module_enable_itdoc == 1) { ?>
                     <li class="nav-item">
                         <a href="software.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "software.php") { echo "active"; } ?>">
                             <i class="nav-icon fas fa-cube"></i>
@@ -150,12 +182,27 @@ $num_software = $row['num'];
                                 Licenses
                                 <?php
                                 if ($num_software > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_software ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_software)) ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                    <?php } ?>
+
+                    <li class="nav-item">
+                        <a href="vendors.php?view=clients" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "vendors.php" || basename($_SERVER["PHP_SELF"]) == "vendor.php") { echo "active"; } ?>">
+                            <i class="nav-icon fas fa-building"></i>
+                            <p>
+                                Vendors
+                                <?php
+                                if ($num_vendors > 0) { ?>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_vendors)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
                     </li>
 
+                    <?php if ($config_module_enable_itdoc == 1) { ?>
                     <li class="nav-item">
                         <a href="services.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "services.php") { echo "active"; } ?>">
                             <i class="nav-icon fas fa-stream"></i>
@@ -163,11 +210,12 @@ $num_software = $row['num'];
                                 Services
                                 <?php
                                 if ($num_services > 0) { ?>
-                                    <span class="right badge text-light"><?= $num_services ?></span>
+                                    <span class="right badge rounded-pill text-light"><?= number_format(intval($num_services)) ?></span>
                                 <?php } ?>
                             </p>
                         </a>
                     </li>
+                    <?php } ?>
 
                 <?php } ?>
 

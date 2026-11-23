@@ -22,6 +22,8 @@
  *     and every job after it in the list.
  *   - Jobs share one global scope. A job must set the variables it reads rather than
  *     assuming the state a fresh process would have given it.
+ *   - A job that changes the code on disk must set $cron_dispatch_stop_cycle, so the jobs
+ *     behind it are not loaded half from the old release and half from the new one.
  *
  * SCHEDULING
  *
@@ -65,8 +67,11 @@ require_once "../includes/cron_jobs.php";
  *
  * Every comparison is made against PHP's clock, not the database's, so the schedule follows
  * the timezone ITFlow is configured for however the database server is set up.
+ *
+ * With $paused (why), the job is not claimed: if it is due, its status says why it hasn't run,
+ * and it is left due - a Run Now request standing - so it runs as soon as it isn't paused.
  */
-function cronJobClaim($mysqli, array $job): bool
+function cronJobClaim($mysqli, array $job, string $paused = ''): bool
 {
     $name = escapeSql($job['name']);
     $now = date('Y-m-d H:i:s');
@@ -131,6 +136,13 @@ function cronJobClaim($mysqli, array $job): bool
         }
     }
 
+    if ($paused !== '') {
+        mysqli_query($mysqli, "UPDATE cron_jobs SET cron_job_last_status = '" . escapeSql(substr("Stopped: $paused", 0, 200)) . "'
+            WHERE cron_job_name = '$name' AND (cron_job_last_status IS NULL OR cron_job_last_status <> 'Running')
+            AND ($due_clause)");
+        return false;
+    }
+
     mysqli_query($mysqli, "UPDATE cron_jobs SET
         cron_job_last_run_at = '$now',
         cron_job_last_status = 'Running',
@@ -179,6 +191,14 @@ function cronJobFinished($mysqli, string $job_name, string $status, ?float $dura
     }
 }
 
+// A restore is replacing the database (functions/backup_restore.php) - no job may write to tables
+// being replaced. The dispatch that runs the restore carries on; the ones that start meanwhile stop
+// here, and the first after it runs everything that came due.
+if (backupRestoreInProgress()) {
+    echo "Cron: a restore is running - nothing else runs until it's done.\n";
+    exit;
+}
+
 // Proof the crontab is firing, recorded before any job runs. Maintenance > Cron reads it to tell
 // "no job was due" apart from "nothing has run this since the server was rebuilt".
 mysqli_query($mysqli, "UPDATE settings SET config_cron_last_dispatch_at = '" . date('Y-m-d H:i:s') . "' WHERE company_id = 1");
@@ -192,6 +212,15 @@ if (function_exists('backupDbHoldOpen')) {
 // Recording which job was running at the time is the only trace of that left behind.
 $cron_dispatch_running = null;
 $cron_dispatch_started = null;
+
+/*
+ * A job may end the cycle after itself by setting this to true. The application update does:
+ * once it has replaced the files on disk, every job still to come would be loaded into a
+ * process running the release from before. The next minute's dispatch runs them all against
+ * one version of the code.
+ */
+$cron_dispatch_stop_cycle = false;
+
 register_shutdown_function(function () use (&$cron_dispatch_running, &$cron_dispatch_started, $mysqli) {
     if ($cron_dispatch_running === null) {
         return;
@@ -221,7 +250,14 @@ foreach (cronJobRegistry() as $cron_dispatch_job) {
         continue;
     }
 
-    if (!cronJobClaim($mysqli, $cron_dispatch_job)) {
+    // A managed instance its manager has made read-only or suspended runs only the jobs that
+    // keep it looked after (MANAGED_KEEP_JOBS) - the rest wait, due, until it's active again.
+    // Asked for each job, as the Manager Check-in job at the top of the list can change it.
+    $cron_dispatch_mode = managedMode();
+    $cron_dispatch_paused = $cron_dispatch_mode !== 'active' && !in_array($cron_dispatch_job['name'], MANAGED_KEEP_JOBS[$cron_dispatch_mode] ?? [], true)
+        ? 'Paused - this ITFlow is ' . ($cron_dispatch_mode === 'suspended' ? 'suspended' : 'read-only') . ' by its manager' : '';
+
+    if (!cronJobClaim($mysqli, $cron_dispatch_job, $cron_dispatch_paused)) {
         cronLockRelease($cron_dispatch_lock);
         continue;
     }
@@ -242,9 +278,19 @@ foreach (cronJobRegistry() as $cron_dispatch_job) {
         require_once $cron_dispatch_path;
         cronJobFinished($mysqli, $cron_dispatch_job['name'], 'Completed', microtime(true) - $cron_dispatch_started);
     } catch (CronJobStopped $e) {
-        // The job ended itself early - disabled in settings, nothing configured, nothing to do
-        $reason = $e->getMessage();
-        cronJobFinished($mysqli, $cron_dispatch_job['name'], $reason === '' ? 'Stopped' : "Stopped: $reason", microtime(true) - $cron_dispatch_started);
+        // The job ended itself early - disabled in settings, nothing configured, nothing to do. One that
+        // stopped with an error code (the mail server turned it away, say) failed, and shows as Failed
+        $reason = trim($e->getMessage());
+        if ($e->getCode() !== 0) {
+            try {
+                logApp("Cron", "error", "Cron job {$cron_dispatch_job['name']} stopped with an error" . ($reason === '' ? '' : ": $reason"));
+            } catch (Throwable $log_e) {
+                // Logging the failure must never become a second, fatal failure
+            }
+            cronJobFinished($mysqli, $cron_dispatch_job['name'], 'Failed', microtime(true) - $cron_dispatch_started, $reason === '' ? 'Stopped with an error - see App Logs' : $reason);
+        } else {
+            cronJobFinished($mysqli, $cron_dispatch_job['name'], $reason === '' ? 'Stopped' : "Stopped: $reason", microtime(true) - $cron_dispatch_started);
+        }
     } catch (Throwable $e) {
         // One job throwing is not a reason to skip the rest of the cycle
         echo "Cron: job '{$cron_dispatch_job['name']}' failed - " . $e->getMessage() . "\n";
@@ -260,4 +306,9 @@ foreach (cronJobRegistry() as $cron_dispatch_job) {
     $cron_dispatch_started = null;
 
     cronLockRelease($cron_dispatch_lock);
+
+    if ($cron_dispatch_stop_cycle) {
+        echo "Cron: '{$cron_dispatch_job['name']}' ended the cycle - the next dispatch picks up the rest.\n";
+        break;
+    }
 }

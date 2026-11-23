@@ -11,10 +11,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-life-ring mr-2"></i>Create Tickets for <strong><?= $count ?></strong> Assets</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-life-ring me-2"></i>Create Tickets for <strong><?= $count ?></strong> asset<?= $count === 1 ? '' : 's' ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -23,104 +21,99 @@ ob_start();
 
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Subject <strong class="text-danger">*</strong></label>
+        <?php
+        $ticket_template_field = 'bulk_ticket_template_id';
+        $ticket_template_hint = "<span class=\"font-monospace\">[Asset]</span>, <span class=\"font-monospace\">[Contact]</span> and the like in it are filled in for each ticket - with <span class=\"font-monospace\">[Asset]</span> in the subject, the asset's name isn't put in front too.";
+        require_once '../../includes/inc_ticket_template_select.php';
+        ?>
+
+        <div class="mb-3">
+            <label class="form-label">Subject <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-tag"></i></span>
-                </div>
-                <input type="text" class="form-control" name="bulk_subject" placeholder="Asset Name will be prepended to Subject" maxlength="200" required>
+                    <span class="input-group-text"><i class="fas fa-fw fa-tag"></i></span>
+                <input type="text" class="form-control" name="bulk_subject" data-template-field="subject" placeholder="Asset Name will be prepended to Subject" maxlength="500" required>
             </div>
         </div>
 
-        <div class="form-group">
-            <textarea class="form-control tinymceTicket" id="textInput" name="bulk_details"></textarea>
+        <div class="mb-3">
+            <textarea class="form-control tinymceTicket" id="textInput" name="bulk_details" data-template-field="details"></textarea>
         </div>
 
         <div class="row">
 
             <div class="col">
-                <div class="form-group">
-                    <label>Priority <strong class="text-danger">*</strong></label>
+                <div class="mb-3">
+                    <label class="form-label">Priority <strong class="text-danger">*</strong></label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-thermometer-half"></i></span>
-                        </div>
-                        <select class="form-control select2" name="bulk_priority" required>
-                            <option>Low</option>
-                            <option>Medium</option>
-                            <option>High</option>
-                            <option>Urgent</option>
+                            <span class="input-group-text"><i class="fas fa-fw fa-thermometer-half"></i></span>
+                        <select class="form-select select2" name="bulk_priority" data-template-field="priority" required>
+                            <option data-color="var(--bs-info)">Low</option>
+                            <option selected data-color="var(--bs-warning)">Medium</option>
+                            <option data-color="var(--bs-danger)">High</option>
+                            <option data-color="var(--bs-emphasis-color)">Urgent</option>
                         </select>
                     </div>
                 </div>
             </div>
 
             <div class="col">
-                <div class="form-group">
-                    <label>Category</label>
+                <div class="mb-3">
+                    <label class="form-label">Category</label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-layer-group"></i></span>
-                        </div>
-                        <select class="form-control select2" name="bulk_category">
-                            <option value="0">- Not Categorized -</option>
-                            <?php
-                            $sql_categories = mysqli_query($mysqli, "SELECT category_id, category_name FROM categories WHERE category_type = 'Ticket' AND category_archived_at IS NULL ORDER BY category_name ASC");
-                            while ($row = mysqli_fetch_assoc($sql_categories)) {
-                                $category_id = intval($row['category_id']);
-                                $category_name = escapeHtml($row['category_name']);
-
-                                ?>
-                                <option value="<?= $category_id ?>"><?= $category_name ?></option>
-                            <?php } ?>
-
+                            <span class="input-group-text"><i class="fas fa-fw fa-layer-group"></i></span>
+                        <select class="form-select select2" name="bulk_category" data-template-field="category">
+                            <option value="0">- Not categorized -</option>
+                            <?= categoryOptionsHtml('Ticket') ?>
                         </select>
+                        <?= categoryAddButtonHtml('Ticket') ?>
                     </div>
                 </div>
             </div>
 
         </div>
 
-        <div class="form-group">
-            <label>Assign to</label>
+        <div class="mb-3">
+            <label class="form-label">Assign to</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user-check"></i></span>
-                </div>
-                <select class="form-control select2" name="bulk_assigned_to">
-                    <option value="0">Not Assigned</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-user-check"></i></span>
+                <select class="form-select select2" name="bulk_assigned_to" data-template-field="assigned">
+                    <option value="0">- Unassigned -</option>
                     <?php
 
                     $sql = mysqli_query(
                         $mysqli,
-                        "SELECT user_id, user_name FROM users
-                        WHERE user_type = 1 AND user_status = 1 AND user_archived_at IS NULL ORDER BY user_name ASC"
+                        "SELECT user_id, user_name, user_avatar FROM users
+                        WHERE user_type = 1" . serviceAccountsOutSql() . " AND user_status = 1 AND user_archived_at IS NULL ORDER BY user_name ASC"
                     );
                     while ($row = mysqli_fetch_assoc($sql)) {
                         $user_id = intval($row['user_id']);
                         $user_name = escapeHtml($row['user_name']); ?>
-                        <option <?php if ($session_user_id == $user_id) { echo "selected"; } ?> value="<?= $user_id ?>"><?= $user_name ?></option>
+                        <option <?php if ($session_user_id == $user_id) { echo "selected"; } ?> value="<?= $user_id ?>"<?= selectOptionUser($row['user_id'], $row['user_name'], $row['user_avatar'] ?? '') ?>><?= $user_name ?></option>
                     <?php } ?>
                 </select>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Project</label>
+        <div class="mb-3">
+            <label class="form-label">Project</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-project-diagram"></i></span>
-                </div>
-                <select class="form-control select2" name="bulk_project">
+                    <span class="input-group-text"><i class="fas fa-fw fa-project-diagram"></i></span>
+                <select class="form-select select2" name="bulk_project">
                     <option value="0">- None -</option>
                     <?php
 
-                    $sql_projects = mysqli_query($mysqli, "SELECT project_id, project_name FROM projects WHERE project_completed_at IS NULL AND project_archived_at IS NULL ORDER BY project_name ASC");
+                    // Open projects of the ticked assets' clients, and internal ones - the only ones their tickets can go on
+                    $bulk_asset_ids = implode(',', array_merge([0], $asset_ids));
+                    $sql_projects = mysqli_query($mysqli, "SELECT project_id, project_prefix, project_number, project_name, client_name FROM projects
+                        LEFT JOIN clients ON client_id = project_client_id
+                        WHERE project_completed_at IS NULL AND project_archived_at IS NULL
+                        AND (project_client_id = 0 OR project_client_id IN (SELECT asset_client_id FROM assets WHERE asset_id IN ($bulk_asset_ids)))
+                        " . clientScopeSql('project_client_id') . "
+                        ORDER BY project_client_id = 0, project_name ASC");
                     while ($row = mysqli_fetch_assoc($sql_projects)) {
                         $project_id_select = intval($row['project_id']);
                         $project_name_select = escapeHtml($row['project_name']); ?>
-                        <option value="<?= $project_id_select ?>"><?= $project_name_select ?></option>
+                        <option value="<?= $project_id_select ?>" data-icon="fas fa-project-diagram" data-description="<?= escapeHtml(projectReference($row) . ' - ' . ($row['client_name'] ?? 'internal')) ?>"><?= $project_name_select ?></option>
 
                     <?php } ?>
                 </select>
@@ -128,10 +121,10 @@ ob_start();
         </div>
 
         <?php if ($config_module_enable_accounting) { ?>
-        <div class="form-group">
-            <div class="custom-control custom-switch">
-                <input type="checkbox" class="custom-control-input" name="bulk_billable" <?php if ($config_ticket_default_billable == 1) { echo "checked"; } ?> value="1" id="billableSwitch">
-                <label class="custom-control-label" for="billableSwitch">Billable</label>
+        <div class="mb-3">
+            <div class="form-check form-switch">
+                <input type="checkbox" class="form-check-input" name="bulk_billable" data-template-field="billable" <?php if ($config_ticket_default_billable == 1) { echo "checked"; } ?> value="1" id="billableSwitch">
+                <label class="form-check-label" for="billableSwitch">Billable</label>
             </div>
         </div>
         <?php } ?>
@@ -139,10 +132,12 @@ ob_start();
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="bulk_add_asset_ticket" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Create Tickets</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fas fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_add_asset_ticket" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create Tickets</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
+
+<script src="<?= staticFileUrl('/agent/js/ticket_tasks_modal.js') ?>"></script>
 
 <?php
 require_once '../../../includes/modal_footer.php';

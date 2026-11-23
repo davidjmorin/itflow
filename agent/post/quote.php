@@ -47,7 +47,7 @@ if (isset($_POST['add_quote'])) {
 
     $quote_url_key = randomString(32);
 
-    mysqli_query($mysqli,"INSERT INTO quotes SET quote_prefix = '$config_quote_prefix', quote_number = $quote_number, quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_currency_code = '$session_company_currency', quote_category_id = $category, quote_status = 'Draft', quote_url_key = '$quote_url_key', quote_client_id = $client_id, quote_lead_id = $lead_id");
+    mysqli_query($mysqli,"INSERT INTO quotes SET quote_prefix = '$config_quote_prefix', quote_number = $quote_number, quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_discount_amount = $quote_discount, quote_amount = " . (0 - $quote_discount) . ", quote_currency_code = '$session_company_currency', quote_category_id = $category, quote_status = 'Draft', quote_url_key = '$quote_url_key', quote_client_id = $client_id");
 
     $quote_id = mysqli_insert_id($mysqli);
 
@@ -104,6 +104,10 @@ if (isset($_POST['add_quote_copy'])) {
     $sql = mysqli_query($mysqli,"SELECT quote_amount, quote_category_id, quote_currency_code, quote_discount_amount, quote_note,
         quote_number, quote_prefix, quote_scope FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $original_quote_prefix = escapeSql($row['quote_prefix']);
     $original_quote_number = escapeSql($row['quote_number']);
     $quote_discount_amount = floatval($row['quote_discount_amount']);
@@ -123,7 +127,7 @@ if (isset($_POST['add_quote_copy'])) {
     mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Draft', history_description = 'Quote copied!', history_quote_id = $new_quote_id");
 
     $sql_items = mysqli_query($mysqli,"SELECT item_description, item_id, item_name, item_order, item_price, item_quantity, item_subtotal,
-        item_tax, item_tax_id, item_total FROM quote_items WHERE item_quote_id = $quote_id");
+        item_tax, item_tax_id, item_total, item_frequency, item_product_id" . (quotePricingReady() ? ', item_cost, item_price_method, item_price_percent' : '') . (quoteImagesReady() ? ', item_image' : '') . " FROM quote_items WHERE item_quote_id = $quote_id");
     while($row = mysqli_fetch_assoc($sql_items)) {
         $item_id = intval($row['item_id']);
         $item_name = escapeSql($row['item_name']);
@@ -135,9 +139,18 @@ if (isset($_POST['add_quote_copy'])) {
         $item_total = floatval($row['item_total']);
         $item_order = intval($row['item_order']);
         $tax_id = intval($row['item_tax_id']);
+        $item_frequency = quoteFrequency($row['item_frequency']);
+        $item_frequency = $item_frequency === '' ? 'NULL' : "'$item_frequency'";
+        // The product it came from, while there is one, and its cost and how it is priced (functions/quote_pricing.php)
+        $item_product_id = intval($row['item_product_id']);
+        if ($item_product_id && !getFieldById('products', $item_product_id, 'product_id')) {
+            $item_product_id = 0;
+        }
+        $item_pricing = quotePricingCopySql($row) . quoteImageCopySql($row);
 
-        mysqli_query($mysqli,"INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $item_quantity, item_price = $item_price, item_subtotal = $item_subtotal, item_tax = $item_tax, item_total = $item_total, item_order = $item_order, item_tax_id = $tax_id, item_quote_id = $new_quote_id");
+        mysqli_query($mysqli,"INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $item_quantity, item_price = $item_price, item_subtotal = $item_subtotal, item_tax = $item_tax, item_total = $item_total, item_order = $item_order, item_tax_id = $tax_id, item_frequency = $item_frequency, item_product_id = $item_product_id$item_pricing, item_quote_id = $new_quote_id");
     }
+    billingRecalc('quote', $new_quote_id);
 
     logAudit("Quote", "Create", "$session_name created quote $config_quote_prefix$quote_number from quote $original_quote_prefix$original_quote_number", $client_id, $new_quote_id);
 
@@ -149,248 +162,52 @@ if (isset($_POST['add_quote_copy'])) {
 
 }
 
+/*
+ * Make Invoice / Start Billing - an accepted quote's one-time lines on a
+ * draft invoice, and its monthly, quarterly and yearly lines on recurring
+ * invoices (new, or added to the client's). quoteConvert() does it.
+ */
 if (isset($_POST['add_quote_to_invoice'])) {
 
     validateCSRFToken();
 
     enforceUserPermission('module_sales', 2);
 
-    $quote_id = intval($_POST['quote_id']);
-    $date = escapeSql($_POST['date']);
-
-    $sql = mysqli_query($mysqli,"SELECT client_net_terms, quote_amount, quote_category_id, quote_client_id, quote_currency_code,
-        quote_discount_amount, quote_note, quote_number, quote_prefix, quote_scope FROM clients, quotes WHERE client_id = quote_client_id AND quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql);
-    $client_net_terms = intval($row['client_net_terms']);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = escapeSql($row['quote_number']);
-    $quote_discount_amount = floatval($row['quote_discount_amount']);
-    $quote_amount = floatval($row['quote_amount']);
-    $quote_currency_code = escapeSql($row['quote_currency_code']);
-    $quote_scope = escapeSql($row['quote_scope']);
-    $quote_note = escapeSql($row['quote_note']);
-
-    $client_id = intval($row['quote_client_id']);
-    $category_id = intval($row['quote_category_id']);
+    $quote = billingRow('quote', intval($_POST['quote_id'] ?? 0));
+    if (!$quote) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
+    $client_id = intval($quote['client_id']);
 
     enforceClientAccess();
 
-    $config_invoice_prefix = escapeSql($config_invoice_prefix);
-
-    // Atomically increment and get the new invoice number
-    mysqli_query($mysqli, "
-        UPDATE settings
-        SET
-            config_invoice_next_number = LAST_INSERT_ID(config_invoice_next_number),
-            config_invoice_next_number = config_invoice_next_number + 1
-        WHERE company_id = 1
-    ");
-
-    $invoice_number = mysqli_insert_id($mysqli);
-
-    //Generate a unique URL key for clients to access
-    $url_key = randomString(32);
-
-    mysqli_query($mysqli,"INSERT INTO invoices SET invoice_prefix = '$config_invoice_prefix', invoice_number = $invoice_number, invoice_scope = '$quote_scope', invoice_date = '$date', invoice_due = DATE_ADD(CURDATE(), INTERVAL $client_net_terms day), invoice_category_id = $category_id, invoice_status = 'Draft', invoice_discount_amount = $quote_discount_amount, invoice_amount = $quote_amount, invoice_currency_code = '$quote_currency_code', invoice_note = '$quote_note', invoice_url_key = '$url_key', invoice_client_id = $client_id");
-
-    $new_invoice_id = mysqli_insert_id($mysqli);
-
-    mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Draft', history_description = 'Invoice created from quote $quote_prefix$quote_number', history_invoice_id = $new_invoice_id");
-
-    $sql_items = mysqli_query($mysqli,"SELECT item_description, item_id, item_name, item_order, item_price, item_quantity, item_subtotal,
-        item_tax, item_tax_id, item_total, item_product_id FROM quote_items WHERE item_quote_id = $quote_id");
-    while($row = mysqli_fetch_assoc($sql_items)) {
-        $item_id = intval($row['item_id']);
-        $item_name = escapeSql($row['item_name']);
-        $item_description = escapeSql($row['item_description']);
-        $item_quantity = floatval($row['item_quantity']);
-        $item_price = floatval($row['item_price']);
-        $item_subtotal = floatval($row['item_subtotal']);
-        $item_tax = floatval($row['item_tax']);
-        $item_total = floatval($row['item_total']);
-        $item_order = intval($row['item_order']);
-        $tax_id = intval($row['item_tax_id']);
-        $item_product_id = intval($row['item_product_id']);
-
-        mysqli_query($mysqli,"INSERT INTO invoice_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $item_quantity, item_price = $item_price, item_subtotal = $item_subtotal, item_tax = $item_tax, item_total = $item_total, item_order = $item_order, item_tax_id = $tax_id, item_invoice_id = $new_invoice_id, item_product_id = $item_product_id");
+    $recurring = [];
+    foreach ((array) ($_POST['recurring'] ?? []) as $frequency => $choice) {
+        $choice = (array) $choice;
+        $recurring[(string) $frequency] = [
+            'to' => intval($choice['to'] ?? 0),
+            'start' => (string) ($choice['start'] ?? ''),
+            'auto_send' => intval($choice['auto_send'] ?? 1),
+        ];
+    }
+    $result = quoteConvert($quote['quote_id'], [
+        'date' => (string) ($_POST['date'] ?? ''),
+        'first_period' => !empty($_POST['first_period']),
+        'recurring' => $recurring,
+        'by' => stripslashes($session_name),
+    ], $error);
+    if (!$result) {
+        flashAlert(escapeHtml($error), 'error');
+        redirect();
     }
 
-    mysqli_query($mysqli,"UPDATE quotes SET quote_status = 'Invoiced' WHERE quote_id = $quote_id");
+    flashAlert('<strong>' . escapeHtml(billingNumber('quote', $quote)) . '</strong> invoiced as ' . escapeHtml(implode(', ', $result['numbers'])));
 
-    mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Invoiced', history_description = 'Quote invoiced as $config_invoice_prefix$invoice_number', history_quote_id = $quote_id");
-
-    logAudit("Invoice", "Create", "$session_name created invoice $config_invoice_prefix$invoice_number from quote $config_quote_prefix$quote_number", $client_id, $new_invoice_id);
-
-    // Check & update any quote-ticket association
-    $ticket_id = 0;
-    $sql_ticket = "SELECT ticket_id, ticket_prefix, ticket_number
-        FROM tickets
-        WHERE ticket_quote_id = $quote_id
-        LIMIT 1";
-    $result_ticket = mysqli_query($mysqli, $sql_ticket);
-
-    if ($result_ticket && $row = mysqli_fetch_assoc($result_ticket)) {
-        $ticket_id = intval($row['ticket_id']);
-        $ticket_prefix = escapeSql($row['ticket_prefix']);
-        $ticket_number = intval($row['ticket_number']);
-
-        mysqli_query($mysqli, "UPDATE tickets SET ticket_invoice_id = $new_invoice_id WHERE ticket_id = $ticket_id AND ticket_invoice_id = '0'");
-        fulfillTicketProductsOnInvoice($mysqli, $ticket_id, $new_invoice_id);
+    if ($result['invoice_id']) {
+        redirect("invoice.php?invoice_id={$result['invoice_id']}");
     }
-
-    triggerCustomAction('invoice_create', $new_invoice_id);
-
-    flashAlert("Invoice created from quote <strong>$quote_prefix$quote_number</strong>");
-
-    redirect("invoice.php?invoice_id=$new_invoice_id");
-
-}
-
-if (isset($_POST['add_quote_item'])) {
-
-    validateCSRFToken();
-
-    enforceUserPermission('module_sales', 2);
-
-    $quote_id = intval($_POST['quote_id']);
-    $name = escapeSql($_POST['name']);
-    $description = escapeSql($_POST['description']);
-    $qty = floatval($_POST['qty']);
-    $price = floatval($_POST['price']);
-    $tax_id = intval($_POST['tax_id']);
-    $item_order = intval($_POST['item_order']);
-    $product_id = intval($_POST['product_id'] ?? 0);
-
-    $client_id = intval(getFieldById('quotes', $quote_id, 'quote_client_id'));
-
-    enforceClientAccess();
-
-    $subtotal = $price * $qty;
-
-    if ($tax_id > 0) {
-        $sql = mysqli_query($mysqli,"SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
-        $row = mysqli_fetch_assoc($sql);
-        $tax_percent = floatval($row['tax_percent']);
-        $tax_amount = $subtotal * $tax_percent / 100;
-    }else{
-        $tax_amount = 0;
-    }
-
-    $total = $subtotal + $tax_amount;
-
-    mysqli_query($mysqli,"INSERT INTO quote_items SET item_name = '$name', item_description = '$description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_tax_id = $tax_id, item_order = $item_order, item_quote_id = $quote_id, item_product_id = $product_id");
-
-    // Get Quote Details
-    $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_discount_amount, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = escapeSql($row['quote_number']);
-    $quote_discount_amount = floatval($row['quote_discount_amount']);
-    $client_id = intval($row['quote_client_id']);
-
-    //add up the total of all items
-    $sql = mysqli_query($mysqli,"SELECT item_total FROM quote_items WHERE item_quote_id = $quote_id");
-    $quote_amount = 0;
-    while($row = mysqli_fetch_assoc($sql)) {
-        $item_total = floatval($row['item_total']);
-        $quote_amount = $quote_amount + $item_total;
-    }
-    $new_quote_amount = $quote_amount - $quote_discount_amount;
-
-    mysqli_query($mysqli,"UPDATE quotes SET quote_amount = $new_quote_amount WHERE quote_id = $quote_id");
-
-    logAudit("Quote", "Edit", "$session_name added item $name to quote $quote_prefix$quote_number", $client_id, $quote_id);
-
-    flashAlert("Item <strong>$name</strong> added");
-
-    redirect();
-
-}
-
-if (isset($_POST['edit_quote_item'])) {
-
-    validateCSRFToken();
-
-    enforceUserPermission('module_sales', 2);
-
-    $item_id = intval($_POST['item_id']);
-    $name = escapeSql($_POST['name']);
-    $description = escapeSql($_POST['description']);
-    $qty = floatval($_POST['qty']);
-    $price = floatval($_POST['price']);
-    $tax_id = intval($_POST['tax_id']);
-    $product_id = intval($_POST['product_id']);
-
-    $subtotal = $price * $qty;
-
-    if ($tax_id > 0) {
-        $sql = mysqli_query($mysqli,"SELECT tax_percent FROM taxes WHERE tax_id = $tax_id");
-        $row = mysqli_fetch_assoc($sql);
-        $tax_percent = floatval($row['tax_percent']);
-        $tax_amount = $subtotal * $tax_percent / 100;
-    } else {
-        $tax_amount = 0;
-    }
-
-    $total = $subtotal + $tax_amount;
-
-    // Get Quote ID from Item ID
-    $sql = mysqli_query($mysqli,"SELECT item_quote_id FROM quote_items WHERE item_id = $item_id");
-    $row = mysqli_fetch_assoc($sql);
-    $quote_id = intval($row['item_quote_id']);
-
-    //Get Discount Amount
-    $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_discount_amount, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = intval($row['quote_number']);
-    $client_id = intval($row['quote_client_id']);
-    $quote_discount = floatval($row['quote_discount_amount']);
-
-    enforceClientAccess();
-
-    mysqli_query($mysqli,"UPDATE quote_items SET item_name = '$name', item_description = '$description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_tax_id = $tax_id, item_product_id = $product_id WHERE item_id = $item_id");
-
-    //Update Quote Balances by tallying up items
-    $sql_quote_total = mysqli_query($mysqli,"SELECT SUM(item_total) AS quote_total FROM quote_items WHERE item_quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql_quote_total);
-    $new_quote_amount = floatval($row['quote_total']) - $quote_discount;
-
-    mysqli_query($mysqli,"UPDATE quotes SET quote_amount = $new_quote_amount WHERE quote_id = $quote_id");
-
-    logAudit("Quote", "Edit", "$session_name edited item $name on quote $quote_prefix$quote_number", $client_id, $quote_id);
-
-    flashAlert("Item <strong>$name</strong> updated");
-
-    redirect();
-
-}
-
-if (isset($_POST['quote_note'])) {
-
-    validateCSRFToken();
-
-    enforceUserPermission('module_sales', 2);
-
-    $quote_id = intval($_POST['quote_id']);
-    $note = escapeSql($_POST['note']);
-
-    // Get Quote Details
-    $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = escapeSql($row['quote_number']);
-    $client_id = intval($row['quote_client_id']);
-
-    enforceClientAccess();
-
-    mysqli_query($mysqli,"UPDATE quotes SET quote_note = '$note' WHERE quote_id = $quote_id");
-
-    logAudit("Quote", "Edit", "$session_name added notes to quote $quote_prefix$quote_number", $client_id, $quote_id);
-
-    flashAlert("Notes added");
-
-    redirect();
+    redirect('recurring_invoice.php?recurring_invoice_id=' . array_key_first($result['recurring']));
 
 }
 
@@ -407,26 +224,23 @@ if (isset($_POST['edit_quote'])) {
     // Get Quote Details for logging
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
 
     enforceClientAccess();
 
-    //Calculate the new quote amount
-    $sql = mysqli_query($mysqli,"SELECT item_total FROM quote_items WHERE item_quote_id = $quote_id");
-    $quote_amount = 0;
-    while($row = mysqli_fetch_assoc($sql)) {
-        $item_total = floatval($row['item_total']);
-        $quote_amount = $quote_amount + $item_total;
-    }
-    $quote_amount = $quote_amount - $quote_discount;
+    mysqli_query($mysqli,"UPDATE quotes SET quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_discount_amount = $quote_discount, quote_category_id = $category WHERE quote_id = $quote_id");
 
-    mysqli_query($mysqli,"UPDATE quotes SET quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_discount_amount = '$quote_discount', quote_amount = '$quote_amount', quote_category_id = $category WHERE quote_id = $quote_id");
+    billingRecalc('quote', $quote_id);
 
     logAudit("Quote", "Edit", "$session_name edited quote $quote_prefix$quote_number", $client_id, $quote_id);
 
-    flashAlert("Quote edited");
+    flashAlert("Quote <strong>$quote_prefix$quote_number</strong> saved");
 
     redirect();
 
@@ -442,6 +256,10 @@ if (isset($_GET['delete_quote'])) {
 
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_lead_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
@@ -455,17 +273,21 @@ if (isset($_GET['delete_quote'])) {
 
     mysqli_query($mysqli,"DELETE FROM quotes WHERE quote_id = $quote_id");
 
+    //Delete Items Associated with the Quote - and their pictures (functions/quote_images.php)
+    quoteImagesDeleteFor("item_quote_id = $quote_id");
     $sql = mysqli_query($mysqli,"SELECT item_id FROM quote_items WHERE item_quote_id = $quote_id");
     while($row = mysqli_fetch_assoc($sql)) {;
         $item_id = intval($row['item_id']);
         mysqli_query($mysqli,"DELETE FROM quote_items WHERE item_id = $item_id");
     }
 
-    $sql = mysqli_query($mysqli,"SELECT history_id FROM history WHERE history_quote_id = $quote_id");
-    while($row = mysqli_fetch_assoc($sql)) {;
-        $history_id = intval($row['history_id']);
-        mysqli_query($mysqli,"DELETE FROM history WHERE history_id = $history_id");
-    }
+    //Delete History Associated with the Quote - a recurring invoice's entry for the lines it added stays theirs
+    mysqli_query($mysqli,"DELETE FROM history WHERE history_quote_id = $quote_id AND history_recurring_invoice_id = 0");
+    mysqli_query($mysqli,"UPDATE history SET history_quote_id = 0 WHERE history_quote_id = $quote_id");
+
+    // What was made from it no longer points at it
+    mysqli_query($mysqli,"UPDATE invoices SET invoice_quote_id = 0 WHERE invoice_quote_id = $quote_id");
+    mysqli_query($mysqli,"UPDATE recurring_invoices SET recurring_invoice_quote_id = 0 WHERE recurring_invoice_quote_id = $quote_id");
 
     logAudit("Quote", "Delete", "$session_name deleted quote $quote_prefix$quote_number", $client_id);
 
@@ -482,65 +304,46 @@ if (isset($_GET['delete_quote'])) {
 
 }
 
-if (isset($_GET['delete_quote_item'])) {
+if (isset($_POST['mark_quote_sent'])) {
 
     validateCSRFToken();
 
     enforceUserPermission('module_sales', 2);
 
-    $item_id = intval($_GET['delete_quote_item']);
-
-    $sql = mysqli_query($mysqli,"SELECT item_name, item_quote_id, item_subtotal, item_tax, item_total FROM quote_items WHERE item_id = $item_id");
-    $row = mysqli_fetch_assoc($sql);
-    $item_name = escapeSql($row['item_name']);
-    $quote_id = intval($row['item_quote_id']);
-    $item_subtotal = floatval($row['item_subtotal']);
-    $item_tax = floatval($row['item_tax']);
-    $item_total = floatval($row['item_total']);
-
-    $sql = mysqli_query($mysqli,"SELECT quote_amount, quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
-    $row = mysqli_fetch_assoc($sql);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = escapeSql($row['quote_number']);
-    $client_id = intval($row['quote_client_id']);
-
-    enforceClientAccess();
-
-    $new_quote_amount = floatval($row['quote_amount']) - $item_total;
-
-    mysqli_query($mysqli,"UPDATE quotes SET quote_amount = $new_quote_amount WHERE quote_id = $quote_id");
-
-    mysqli_query($mysqli,"DELETE FROM quote_items WHERE item_id = $item_id");
-
-    logAudit("Quote", "Edit", "$session_name removed item $item_name from $quote_prefix$quote_number", $client_id, $quote_id);
-
-    flashAlert("Item <strong>$item_name</strong> removed", 'error');
-
-    redirect();
-
-}
-
-if (isset($_GET['mark_quote_sent'])) {
-
-    validateCSRFToken();
-
-    enforceUserPermission('module_sales', 2);
-
-    $quote_id = intval($_GET['mark_quote_sent']);
+    $quote_id = intval($_POST['quote_id']);
 
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
 
     enforceClientAccess();
 
+    // The modal offers a fixed list, so anything else is a tampered form
+    $sent_method = $_POST['sent_method'] ?? '';
+    if (!in_array($sent_method, getSentMethods(), true)) {
+        flashAlert("Invalid delivery method", 'error');
+        redirect();
+    }
+    $sent_method = escapeSql($sent_method);
+
+    $note = escapeSql(substr(trim($_POST['note'] ?? ''), 0, 500));
+
     mysqli_query($mysqli,"UPDATE quotes SET quote_status = 'Sent' WHERE quote_id = $quote_id");
 
-    mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Sent', history_description = 'Quote marked sent', history_quote_id = $quote_id");
+    $history_description = "Quote marked sent by $session_name - $sent_method";
+    if (!empty($note)) {
+        $history_description .= "\nNote: $note";
+    }
 
-    logAudit("Quote", "Sent", "$session_name marked quote $quote_prefix$quote_number as sent", $client_id, $quote_id);
+    logHistory('Sent', $history_description, 0, $quote_id);
+
+    logAudit("Quote", "Send", "$session_name marked quote $quote_prefix$quote_number as sent - $sent_method", $client_id, $quote_id);
 
     flashAlert("Quote marked sent");
 
@@ -558,6 +361,10 @@ if (isset($_GET['accept_quote'])) {
 
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
@@ -588,6 +395,10 @@ if (isset($_GET['decline_quote'])) {
 
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
@@ -608,38 +419,20 @@ if (isset($_GET['decline_quote'])) {
 
 }
 
-if (isset($_GET['email_quote'])) {
+if (isset($_POST['email_quote'])) {
 
     validateCSRFToken();
 
     enforceUserPermission('module_sales', 2);
 
-    $quote_id = intval($_GET['email_quote']);
-
-    $sql = mysqli_query($mysqli,"SELECT client_id, client_name, contact_email, contact_name, quote_amount, quote_currency_code,
-        quote_date, quote_expire, quote_number, quote_prefix, quote_scope, quote_status,
-        quote_url_key, quote_lead_id, leads.lead_name, leads.lead_contact_name, leads.lead_contact_email FROM quotes
-    LEFT JOIN clients ON quote_client_id = client_id
-    LEFT JOIN contacts ON clients.client_id = contacts.contact_client_id AND contact_primary = 1
-    LEFT JOIN leads ON quote_lead_id = lead_id
-    WHERE quote_id = $quote_id"
-    );
-
-    $row = mysqli_fetch_assoc($sql);
-    $quote_prefix = escapeSql($row['quote_prefix']);
-    $quote_number = intval($row['quote_number']);
-    $quote_scope = escapeSql($row['quote_scope']);
-    $quote_status = escapeSql($row['quote_status']);
-    $quote_date = escapeSql($row['quote_date']);
-    $quote_expire = escapeSql($row['quote_expire']);
-    $quote_amount = floatval($row['quote_amount']);
-    $quote_url_key = escapeSql($row['quote_url_key']);
-    $quote_currency_code = escapeSql($row['quote_currency_code']);
-    $quote_lead_id = intval($row['quote_lead_id']);
-    $client_id = intval($row['client_id']);
-    $client_name = escapeSql($row['client_name']);
-    $contact_name = escapeSql($row['contact_name']);
-    $contact_email = escapeSql($row['contact_email']);
+    $quote = billingRow('quote', intval($_POST['quote_id'] ?? 0));
+    if (!$quote) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect('quotes.php');
+    }
+    $quote_id = intval($quote['quote_id']);
+    $client_id = intval($quote['client_id']);
+    $number = billingNumber('quote', $quote);
 
     if ($client_id > 0) {
         enforceClientAccess($client_id);
@@ -652,53 +445,49 @@ if (isset($_GET['email_quote'])) {
         }
     }
 
-    $sql = mysqli_query($mysqli,"SELECT company_address, company_city, company_country, company_email, company_logo, company_name,
-        company_phone, company_phone_country_code, company_state, company_website, company_zip FROM companies WHERE company_id = 1");
-    $row = mysqli_fetch_assoc($sql);
-
-    $company_name = escapeSql($row['company_name']);
-    $company_country = escapeSql($row['company_country']);
-    $company_address = escapeSql($row['company_address']);
-    $company_city = escapeSql($row['company_city']);
-    $company_state = escapeSql($row['company_state']);
-    $company_zip = escapeSql($row['company_zip']);
-    $company_phone = escapeSql(formatPhoneNumber($row['company_phone'], $row['company_phone_country_code']));
-    $company_email = escapeSql($row['company_email']);
-    $company_website = escapeSql($row['company_website']);
-    $company_logo = escapeSql($row['company_logo']);
-
-    // Sanitize Config vars from get_settings.php
-    $config_quote_from_name = escapeSql($config_quote_from_name);
-    $config_quote_from_email = escapeSql($config_quote_from_email);
-    $config_base_url = escapeSql($config_base_url);
-
-    $subject = "Quote [$quote_scope]";
-    $body = "Hello $contact_name,<br><br>Thank you for your inquiry, we are pleased to provide you with the following estimate.<br><br><br>$quote_scope<br>Total Cost: " . numfmt_format_currency($currency_format, $quote_amount, $quote_currency_code) . "<br><br><br>View and accept your estimate online <a href=\'https://$config_base_url/guest/guest_view_quote.php?quote_id=$quote_id&url_key=$quote_url_key\'>here</a><br><br><br>--<br>$company_name - Sales<br>$config_quote_from_email<br>$company_phone";
-
-    // Queue Mail
-    $data = [
-        [
-            'from' => $config_quote_from_email,
-            'from_name' => $config_quote_from_name,
-            'recipient' => $contact_email,
-            'recipient_name' => $contact_name,
-            'subject' => $subject,
-            'body' => $body,
-        ]
-    ];
-    addToMailQueue($data);
-
-    // Update History
-    mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Sent', history_description = 'Emailed Quote', history_quote_id = $quote_id");
-
-    logAudit("Quote", "Email", "$session_name emailed quote $quote_prefix$quote_number to $contact_email", $client_id, $quote_id);
-
-    flashAlert("Quote sent!");
-
-    //Don't change the status to sent if the status is anything but draft
-    if ($quote_status == 'Draft') {
-        mysqli_query($mysqli,"UPDATE quotes SET quote_status = 'Sent' WHERE quote_id = $quote_id");
+    // Two ways in. Quick Send skips the window and goes to the primary
+    // contact; the window posts the contacts picked. Either way only this
+    // client's contacts can match, so a tampered id finds nobody.
+    if (!empty($_POST['quick_send'])) {
+        $recipients = billingEmailRecipients($client_id, null, 'quote');
+        if (!$recipients) {
+            flashAlert("No default contacts to quick send to - use Send to choose recipients", 'error');
+            redirect();
+        }
+    } else {
+        // The contacts ticked, and any address typed in Also send to - for this once
+        $extra = billingEmailExtraRecipients($_POST['extra_emails'] ?? '', $extra_bad);
+        if ($extra_bad) {
+            flashAlert('Not an email address: ' . escapeHtml(implode(', ', $extra_bad)), 'error');
+            redirect();
+        }
+        $recipients = billingEmailMergeRecipients(empty($_POST['contacts']) ? [] : billingEmailRecipients($client_id, (array) $_POST['contacts']), $extra);
+        if (!$recipients) {
+            flashAlert(empty($_POST['contacts']) ? "Tick a contact or type an address to send it to" : "None of the selected contacts have a usable email address", 'error');
+            redirect();
+        }
     }
+
+    // functions/billing_email.php - the quote, with the agent's note and the PDF
+    [$subject, $email] = billingQuoteEmail($quote, ['note' => trim(mb_substr((string) ($_POST['note'] ?? ''), 0, 2000))]);
+    $attach_pdf = !empty($_POST['quick_send']) ? billingReminderRules()['attach_pdf'] : !empty($_POST['attach_pdf']);
+    $attach = [];
+    if ($attach_pdf && ($file = billingEmailPdf(billingPdf('quote', $quote)))) {
+        $attach[] = $file;
+    }
+    $sent = billingEmailQueue($recipients, $subject, $email, ['from' => 'quote', 'attach' => $attach]);
+
+    billingLog('quote', $quote_id, $quote['quote_status'] === 'Draft' ? 'Sent' : $quote['quote_status'], 'Quote emailed by ' . stripslashes($session_name) . ' to ' . implode(', ', $sent) . ($attach ? ' with the PDF' : ''));
+    foreach ($recipients as $recipient) {
+        logAudit("Quote", "Email", "$session_name emailed quote " . escapeSql($number) . " to " . escapeSql($recipient['email']), $client_id, $quote_id);
+    }
+
+    // Sending a draft sends it - anything further along keeps its status
+    if ($quote['quote_status'] === 'Draft') {
+        mysqli_query($mysqli, "UPDATE quotes SET quote_status = 'Sent' WHERE quote_id = $quote_id");
+    }
+
+    flashAlert("Quote queued to " . count($sent) . " " . (count($sent) === 1 ? "recipient" : "recipients"));
 
     redirect();
 
@@ -714,6 +503,10 @@ if (isset($_GET['mark_quote_invoiced'])) {
 
     $sql = mysqli_query($mysqli,"SELECT quote_client_id, quote_number, quote_prefix FROM quotes WHERE quote_id = $quote_id");
     $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect();
+    }
     $quote_prefix = escapeSql($row['quote_prefix']);
     $quote_number = escapeSql($row['quote_number']);
     $client_id = intval($row['quote_client_id']);
@@ -724,7 +517,7 @@ if (isset($_GET['mark_quote_invoiced'])) {
 
     mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Invoiced', history_description = 'Quote marked as invoiced', history_quote_id = $quote_id");
 
-    logAudit("Quote", "Sent", "$session_name marked quote $quote_prefix$quote_number as invoiced", $client_id, $quote_id);
+    logAudit("Quote", "Send", "$session_name marked quote $quote_prefix$quote_number as invoiced", $client_id, $quote_id);
 
     flashAlert("Quote marked invoiced");
 
@@ -772,10 +565,18 @@ if (isExportRequest('export_quotes')) {
         $filter_summary['Search'] = $_POST['q'];
     }
 
+    // Category Filter
+    $category_query = '';
+    if (!empty($_POST['category'])) {
+        $filter_category_id = intval($_POST['category']);
+        $category_query = "AND quote_category_id = $filter_category_id";
+        $filter_summary['Category'] = getFieldById('categories', $filter_category_id, 'category_name');
+    }
+
     $sql = mysqli_query(
         $mysqli,
-        "SELECT client_name, quote_amount, quote_date, quote_number, quote_prefix, quote_scope,
-        quote_status, lead_name FROM quotes
+        "SELECT client_name, quote_id, quote_amount, quote_discount_amount, quote_monthly_amount, quote_date, quote_number, quote_prefix, quote_scope,
+        quote_status, category_name FROM quotes
         LEFT JOIN clients ON quote_client_id = client_id
         LEFT JOIN leads ON quote_lead_id = lead_id
         LEFT JOIN categories ON quote_category_id = category_id
@@ -783,10 +584,13 @@ if (isExportRequest('export_quotes')) {
         AND DATE(quote_date) BETWEEN '$dtf' AND '$dtt'
         " . clientScopeSql('quote_client_id') . "
         $client_query
+        $category_query
         ORDER BY quote_number ASC"
     );
 
     $num_rows = mysqli_num_rows($sql);
+
+    guardExportHasRows($num_rows, 'quotes');
 
     if ($num_rows > 0) {
 
@@ -796,8 +600,10 @@ if (isExportRequest('export_quotes')) {
 
         while ($row = mysqli_fetch_assoc($sql)) {
             $row['quote_number_display'] = $row['quote_prefix'] . $row['quote_number'];
-            if (empty($row['client_name']) && !empty($row['lead_name'])) {
-                $row['client_name'] = $row['lead_name'] . ' (Lead)';
+            if (isset($export['columns']['quote_tax'])) {
+                // The tax on what it bills up front, beside its amount
+                $quote_groups = quoteLineGroups(billingItems('quote', $row['quote_id']), floatval($row['quote_discount_amount']));
+                $row['quote_tax'] = round(floatval($quote_groups['']['tax'] ?? 0), 2);
             }
             addExportRow($export, $row);
         }
@@ -817,244 +623,15 @@ if (isset($_GET['export_quote_pdf'])) {
 
     enforceUserPermission('module_sales');
 
-    $quote_id = intval($_GET['export_quote_pdf']);
-
-    $sql = mysqli_query(
-        $mysqli,
-        "SELECT client_currency_code, client_id, client_name, client_net_terms, client_website,
-            contact_email, contact_extension, contact_mobile, contact_mobile_country_code,
-            contact_phone, contact_phone_country_code, location_address, location_city,
-            location_country, location_state, location_zip, quote_amount, quote_category_id,
-            quote_created_at, quote_currency_code, quote_date, quote_discount_amount, quote_expire,
-            quote_id, quote_note, quote_number, quote_prefix, quote_scope, quote_status, quote_url_key,
-            quote_lead_id, leads.lead_name, leads.lead_contact_name, leads.lead_contact_email,
-            leads.lead_contact_phone, leads.lead_contact_mobile, leads.lead_address, leads.lead_city,
-            leads.lead_state, leads.lead_zip, leads.lead_country, leads.lead_website FROM quotes
-        LEFT JOIN clients ON quote_client_id = client_id
-        LEFT JOIN contacts ON clients.client_id = contacts.contact_client_id AND contact_primary = 1
-        LEFT JOIN locations ON clients.client_id = locations.location_client_id AND location_primary = 1
-        LEFT JOIN leads ON quote_lead_id = lead_id
-        WHERE quote_id = $quote_id
-        " . clientScopeSql('quote_client_id') . "
-        LIMIT 1"
-    );
-
-    $row = mysqli_fetch_assoc($sql);
-    $quote_id = intval($row['quote_id']);
-    $quote_prefix = escapeHtml($row['quote_prefix']);
-    $quote_number = intval($row['quote_number']);
-    $quote_scope = escapeHtml($row['quote_scope']);
-    $quote_status = escapeHtml($row['quote_status']);
-    $quote_date = escapeHtml($row['quote_date']);
-    $quote_expire = escapeHtml($row['quote_expire']);
-    $quote_amount = floatval($row['quote_amount']);
-    $quote_discount = floatval($row['quote_discount_amount']);
-    $quote_currency_code = escapeHtml($row['quote_currency_code']);
-    $quote_note = escapeHtml($row['quote_note']);
-    $quote_url_key = escapeHtml($row['quote_url_key']);
-    $quote_created_at = escapeHtml($row['quote_created_at']);
-    $category_id = intval($row['quote_category_id']);
-    $quote_lead_id = intval($row['quote_lead_id']);
-    $client_id = intval($row['client_id']);
-
-    if ($client_id > 0) {
-        $client_name = escapeHtml($row['client_name']);
-        $location_address = escapeHtml($row['location_address']);
-        $location_city = escapeHtml($row['location_city']);
-        $location_state = escapeHtml($row['location_state']);
-        $location_zip = escapeHtml($row['location_zip']);
-        $location_country = escapeHtml($row['location_country']);
-        $contact_email = escapeHtml($row['contact_email']);
-        $contact_phone_country_code = escapeHtml($row['contact_phone_country_code']);
-        $contact_phone = escapeHtml(formatPhoneNumber($row['contact_phone'], $contact_phone_country_code));
-        $contact_extension = escapeHtml($row['contact_extension']);
-        $contact_mobile_country_code = escapeHtml($row['contact_mobile_country_code']);
-        $contact_mobile = escapeHtml(formatPhoneNumber($row['contact_mobile'], $contact_mobile_country_code));
-        $client_website = escapeHtml($row['client_website']);
-        $client_currency_code = escapeHtml($row['client_currency_code']);
-        $client_net_terms = intval($row['client_net_terms']);
-        if ($client_net_terms == 0) {
-            $client_net_terms = $config_default_net_terms;
-        }
-        enforceClientAccess($client_id);
-    } else {
-        enforceUserPermission('module_client', 1);
-        $client_name = escapeHtml($row['lead_name']);
-        $location_address = escapeHtml($row['lead_address']);
-        $location_city = escapeHtml($row['lead_city']);
-        $location_state = escapeHtml($row['lead_state']);
-        $location_zip = escapeHtml($row['lead_zip']);
-        $location_country = escapeHtml($row['lead_country']);
-        $contact_email = escapeHtml($row['lead_contact_email']);
-        $contact_phone_country_code = '';
-        $contact_phone = escapeHtml(formatPhoneNumber($row['lead_contact_phone'], ''));
-        $contact_extension = '';
-        $contact_mobile_country_code = '';
-        $contact_mobile = escapeHtml(formatPhoneNumber($row['lead_contact_mobile'], ''));
-        $client_website = escapeHtml($row['lead_website']);
-        $client_currency_code = $session_company_currency;
-        $client_net_terms = $config_default_net_terms;
+    $quote = billingRow('quote', intval($_GET['export_quote_pdf']));
+    if (!$quote) {
+        flashAlert('That quote no longer exists.', 'error');
+        redirect('quotes.php');
     }
+    $client_id = intval($quote['client_id']);
 
-    $sql = mysqli_query($mysqli, "SELECT company_address, company_city, company_country, company_email, settings.company_id,
-        company_logo, company_name, company_phone, company_phone_country_code, company_state,
-        company_website, company_zip FROM companies, settings WHERE companies.company_id = settings.company_id AND companies.company_id = 1");
-    $row = mysqli_fetch_assoc($sql);
+    enforceClientAccess();
 
-    $company_id = intval($row['company_id']);
-    $company_name = escapeHtml($row['company_name']);
-    $company_country = escapeHtml($row['company_country']);
-    $company_address = escapeHtml($row['company_address']);
-    $company_city = escapeHtml($row['company_city']);
-    $company_state = escapeHtml($row['company_state']);
-    $company_zip = escapeHtml($row['company_zip']);
-    $company_phone_country_code = escapeHtml($row['company_phone_country_code']);
-    $company_phone = escapeHtml(formatPhoneNumber($row['company_phone'], $company_phone_country_code));
-    $company_email = escapeHtml($row['company_email']);
-    $company_website = escapeHtml($row['company_website']);
-    $company_logo = escapeHtml($row['company_logo']);
-
-    //Set Badge color based off of quote status
-    if ($quote_status == "Sent") {
-        $quote_badge_color = "warning text-white";
-    } elseif ($quote_status == "Viewed") {
-        $quote_badge_color = "primary";
-    } elseif ($quote_status == "Accepted") {
-        $quote_badge_color = "success";
-    } elseif ($quote_status == "Declined") {
-        $quote_badge_color = "danger";
-    } elseif ($quote_status == "Invoiced") {
-        $quote_badge_color = "info";
-    } else {
-        $quote_badge_color = "secondary";
-    }
-
-    require_once("../libs/TCPDF/tcpdf.php");
-
-    // Start TCPDF
-    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
-    $pdf->SetMargins(10, 10, 10);
-    $pdf->setPrintHeader(false);
-    $pdf->setPrintFooter(false);
-    $pdf->AddPage();
-    $pdf->SetFont('helvetica', '', 10);
-
-    // Logo + Right Columns
-    $html = '<table width="100%" cellspacing="0" cellpadding="3">
-    <tr>
-        <td width="40%">';
-    if (!empty($company_logo) && file_exists("../uploads/settings/$company_logo")) {
-        $html .= '<img src="/uploads/settings/' . $company_logo . '" width="120">';
-    }
-    $html .= '</td>
-        <td width="60%" align="right">
-            <span style="font-size:18pt; font-weight:bold;">QUOTE</span><br>
-            <span style="font-size:14pt;">' . $quote_prefix . $quote_number . '</span><br>';
-    if (strtolower($quote_status) === 'accepted') {
-        $html .= '<span style="color:green; font-weight:bold;">ACCEPTED</span><br>';
-    }
-    if (strtolower($quote_status) === 'declined') {
-        $html .= '<span style="color:red; font-weight:bold;">DECLINED</span><br>';
-    }
-    $html .= '</td>
-    </tr>
-    </table><br>';
-
-    // Billing titles
-    $html .= '<table width="100%" cellspacing="0" cellpadding="2">
-    <tr>
-        <td width="50%" style="font-size:14pt; font-weight:bold;">' . $company_name . '</td>
-        <td width="50%" align="right" style="font-size:14pt; font-weight:bold;">' . $client_name . '</td>
-    </tr>
-    <tr>
-        <td style="font-size:10pt; line-height:1.4;">' . nl2br(formatAddress($company_address, $company_city, $company_state, $company_zip, $company_country) . "\n$company_phone\n$company_website") . '</td>
-        <td style="font-size:10pt; line-height:1.4;" align="right">' . nl2br(formatAddress($location_address, $location_city, $location_state, $location_zip, $location_country) . "\n$contact_email\n$contact_phone") . '</td>
-    </tr>
-    </table><br>';
-
-    // Date table
-    $html .= '<table border="0" cellpadding="2" cellspacing="0" width="100%">
-    <tr>
-        <td width="60%"></td>
-        <td width="20%" style="font-size:10pt;"><strong>Date:</strong></td>
-        <td width="20%" style="font-size:10pt;" align="right">' . $quote_date . '</td>
-    </tr>
-    <tr>
-        <td></td>
-        <td style="font-size:10pt;"><strong>Expires:</strong></td>
-        <td style="font-size:10pt;" align="right">' . $quote_expire . '</td>
-    </tr>
-    </table><br><br>';
-
-    // Items header
-    $html .= '
-    <table border="0" cellpadding="5" cellspacing="0" width="100%">
-    <tr style="background-color:#f0f0f0;">
-        <th align="left" width="40%"><strong>Item</strong></th>
-        <th align="center" width="10%"><strong>Qty</strong></th>
-        <th align="right" width="15%"><strong>Price</strong></th>
-        <th align="right" width="15%"><strong>Tax</strong></th>
-        <th align="right" width="20%"><strong>Amount</strong></th>
-    </tr>';
-
-    // Load items
-    $sub_total = 0;
-    $total_tax = 0;
-
-    $sql_items = mysqli_query($mysqli, "SELECT item_description, item_name, item_price, item_quantity, item_tax, item_total FROM quote_items WHERE item_quote_id = $quote_id ORDER BY item_order ASC");
-    while ($item = mysqli_fetch_assoc($sql_items)) {
-        $name = $item['item_name'];
-        $desc = $item['item_description'];
-        $qty = $item['item_quantity'];
-        $price = $item['item_price'];
-        $tax = $item['item_tax'];
-        $total = $item['item_total'];
-
-        $sub_total += $price * $qty;
-        $total_tax += $tax;
-
-        $html .= '
-        <tr>
-            <td><strong>' . $name . '</strong>
-                <br><span style="font-style:italic; font-size:9pt;">' . nl2br($desc) . '</span>
-            </td>
-            <td align="center">' . number_format($qty, 2) . '</td>
-            <td align="right">' . numfmt_format_currency($currency_format, $price, $quote_currency_code) . '</td>
-            <td align="right">' . numfmt_format_currency($currency_format, $tax, $quote_currency_code) . '</td>
-            <td align="right">' . numfmt_format_currency($currency_format, $total, $quote_currency_code) . '</td>
-        </tr>';
-    }
-
-    $html .= '</table><br><hr><br><br>';
-
-    // Totals
-    $html .= '<table width="100%" cellspacing="0" cellpadding="4">
-    <tr>
-        <td width="60%"><i style="font-size:9pt;">' . nl2br($quote_note) . '</i></td>
-        <td width="40%">
-            <table width="100%" cellpadding="3" cellspacing="0">
-                <tr><td>Subtotal:</td><td align="right">' . numfmt_format_currency($currency_format, $sub_total, $quote_currency_code) . '</td></tr>';
-    if ($quote_discount > 0) {
-        $html .= '<tr><td>Discount:</td><td align="right">-' . numfmt_format_currency($currency_format, $quote_discount, $quote_currency_code) . '</td></tr>';
-    }
-    if ($total_tax > 0) {
-        $html .= '<tr><td>Tax:</td><td align="right">' . numfmt_format_currency($currency_format, $total_tax, $quote_currency_code) . '</td></tr>';
-    }
-    $html .= '
-    <tr><td><h3><strong>Total:</strong></h3></td><td align="right"><h3><strong>' . numfmt_format_currency($currency_format, $quote_amount, $quote_currency_code) . '</strong></h3></td></tr>
-    </table>
-        </td>
-    </tr>
-    </table><br><br>';
-
-    // Footer
-    $html .= '<div style="text-align:center; font-size:9pt; color:gray;">' . nl2br($config_quote_footer) . '</div>';
-
-    $pdf->writeHTML($html, true, false, true, false, '');
-
-    $filename = preg_replace('/[^A-Za-z0-9_\-]/', '_', "{$quote_date}_{$company_name}_{$client_name}_Quote_{$quote_prefix}{$quote_number}");
-    $pdf->Output("$filename.pdf", 'I');
-
-    exit;
+    billingPdfSend(billingPdf('quote', $quote));
 
 }

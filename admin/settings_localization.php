@@ -1,115 +1,56 @@
 <?php
+
+/*
+ * Admin > Settings > Localization - the language dates and numbers are
+ * written in and the currency you bill in (the company's), and the timezone
+ * ITFlow keeps time in - with money and the time now as they will look
+ * (js/settings.js). Saved by edit_localization (admin/post/settings_localization.php).
+ */
+
 require_once "includes/inc_all_admin.php";
 
+$company = settingsCurrent(['company_locale', 'company_currency'], 'companies');
+$localization = settingsLocalizationArrays();
 
-$sql = mysqli_query($mysqli,"SELECT company_currency, company_locale FROM companies, settings WHERE companies.company_id = settings.company_id AND companies.company_id = 1");
+$locales = ['' => '- Language -'] + $localization['locales'];
+$currencies = ['' => '- Currency -'];
+foreach ($localization['currencies'] as $code => $name) {
+    $currencies[$code] = "$code - $name";
+}
+$timezones = ['' => '- Timezone -'];
+foreach (DateTimeZone::listIdentifiers() as $timezone) {
+    $timezones[$timezone] = $timezone;
+}
 
-$row = mysqli_fetch_assoc($sql);
-$company_locale = escapeHtml($row['company_locale']);
-$company_currency = escapeHtml($row['company_currency']);
-
-// Get a list of all available timezones
-$timezones = DateTimeZone::listIdentifiers();
+echo settingsPageStart('localization');
 
 ?>
 
-    <div class="card card-dark">
-        <div class="card-header py-3">
-            <h3 class="card-title"><i class="fas fa-fw fa-globe mr-2"></i>Localization</h3>
-        </div>
+<form action="post.php" method="post" autocomplete="off" data-settings-form data-settings-sample-form>
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="card itflow-settings-card">
         <div class="card-body">
-            <form action="post.php" method="post" autocomplete="off">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
-                <div class="form-group">
-                    <label>Language <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-language"></i></span>
-                        </div>
-                        <select class="form-control select2" name="locale" required>
-                            <option value="">- Select a Locale -</option>
-                            <?php foreach($locales_array as $locale_code => $locale_name) { ?>
-                                <option <?php if ($company_locale == $locale_code) { echo "selected"; } ?> value="<?= $locale_code ?>"><?= $locale_name ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
+            <?= settingsSectionStart('language', 'Language and currency', 'How numbers, money and dates are written - on screen, on invoices and in emails - and the currency new clients, invoices and quotes start in.') ?>
+                <?= settingsSelect('company_locale', (string) $company['company_locale'], $locales, ['icon' => 'fa-language', 'required' => true, 'search' => true]) ?>
+                <?= settingsSelect('company_currency', (string) $company['company_currency'], $currencies, ['icon' => 'fa-money-bill', 'required' => true, 'search' => true,
+                    'help' => 'What is already entered keeps the currency it was entered in - nothing is converted.']) ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSectionStart('timezone', 'Timezone', 'The clock ITFlow keeps - when tickets are due, when cron runs the nightly jobs, and the times on everything.') ?>
+                <?= settingsSelect('config_timezone', (string) $config_timezone, $timezones, ['icon' => 'fa-business-time', 'required' => true, 'search' => true]) ?>
+                <div class="itflow-settings-sample mt-3" data-settings-sample>
+                    <span class="text-body-secondary">Looks like</span>
+                    <span data-settings-sample-money><?= escapeHtml(numfmt_format_currency(numfmt_create((string) $company['company_locale'] ?: 'en_US', NumberFormatter::CURRENCY), 1234.56, (string) $company['company_currency'] ?: 'USD')) ?></span>
+                    <span data-settings-sample-date><?= escapeHtml(date('l, F j, Y g:i A')) ?></span>
                 </div>
+            <?= settingsSectionEnd() ?>
 
-                <div class="form-group">
-                    <label>Currency <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-money-bill"></i></span>
-                        </div>
-                        <select class="form-control select2" name="currency_code" required>
-                            <option value="">- Currency -</option>
-                            <?php foreach($currencies_array as $currency_code => $currency_name) { ?>
-                                <option <?php if ($company_currency == $currency_code) { echo "selected"; } ?> value="<?= $currency_code ?>"><?= "$currency_code - $currency_name" ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>Timezone <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-business-time"></i></span>
-                        </div>
-                        <select class="form-control select2" name="timezone" required>
-                            <option value="">- Select a Timezone -</option>
-                            <?php foreach ($timezones as $tz) { ?>
-                                <option <?php if ($config_timezone == $tz) { echo "selected"; } ?> value="<?= $tz ?>"><?= $tz ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
-                </div>
-
-                <hr>
-
-                <div class="card card-outline card-primary mt-4">
-                    <div class="card-header">
-                        <h3 class="card-title"><i class="fas fa-fw fa-map-marked-alt mr-2"></i>Address Autocomplete (Google Places API)</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label>Google Maps / Places API Key</label>
-                            <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fab fa-fw fa-google"></i></span>
-                                </div>
-                                <input type="password" class="form-control" data-toggle="password" name="google_places_api_key" id="google_places_api_key" placeholder="AIzaSy..." maxlength="255" value="<?= escapeHtml($config_google_places_api_key ?? '') ?>" autocomplete="new-password">
-                                <div class="input-group-append">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-eye"></i></span>
-                                    <button type="button" class="btn btn-outline-info" id="btn_test_google_key">
-                                        <i class="fas fa-vial mr-1"></i>Test Key
-                                    </button>
-                                </div>
-                            </div>
-                            <small class="form-text text-muted">
-                                Used to automatically suggest and auto-populate street addresses, city, state, postal code, and country when adding clients, leads, locations, and company settings.
-                            </small>
-                            <div id="google_api_test_result" class="mt-2" style="display:none;"></div>
-                        </div>
-
-                        <div class="callout callout-info mt-3">
-                            <h5><i class="fas fa-info-circle mr-2"></i>Google Cloud Setup Instructions</h5>
-                            <p class="mb-1 text-sm">To enable address autocomplete, obtain an API key from the <a href="https://console.cloud.google.com/google/maps-apis" target="_blank" rel="noopener noreferrer">Google Cloud Console <i class="fas fa-external-link-alt fa-xs"></i></a>:</p>
-                            <ol class="mb-1 pl-3 text-sm">
-                                <li>Enable both the <strong>Maps JavaScript API</strong> and <strong>Places API</strong> for your Google Cloud project.</li>
-                                <li>Create an API key under <strong>Credentials</strong>.</li>
-                                <li><em>(Recommended for security)</em> Restrict the API key to <strong>Websites (HTTP referrers)</strong> with your ITFlow domain (e.g., <code>https://<?= $_SERVER['HTTP_HOST'] ?>/*</code>).</li>
-                            </ol>
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit" name="edit_localization" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save Settings</button>
-
-            </form>
+            <?= settingsSaveBar('edit_localization') ?>
         </div>
     </div>
+</form>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

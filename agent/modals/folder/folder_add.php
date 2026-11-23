@@ -1,43 +1,53 @@
 <?php
 
+/*
+ * New folder - inside the folder it was opened from, or anywhere else picked.
+ */
+
 require_once '../../../includes/modal_header.php';
 
-$client_id = intval($_GET['client_id'] ?? 0);
-$current_folder_id = intval($_GET['current_folder_id'] ?? 0);
-$folder_name = escapeHtml(getFieldByID('folders', $current_folder_id, 'folder_name') ?? '/');
+enforceUserPermission('module_support', 2);
 
+$client_id = intval($_GET['client_id'] ?? 0);
 enforceClientAccess();
+
+$parent_folder = folderOwnedId($_GET['current_folder_id'] ?? 0, $client_id);
 
 ob_start();
 
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-folder-plus mr-2"></i>Creating folder in <strong><?= $folder_name ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-folder-plus me-2"></i>New Folder</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="client_id" value="<?= $client_id ?>">
-    <input type="hidden" name="parent_folder" value="<?= $current_folder_id ?>">
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Folder Name <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Name <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-folder"></i></span>
-                </div>
-                <input type="text" class="form-control" name="folder_name" placeholder="Folder Name" maxlength="200" required>
+                <span class="input-group-text"><i class="fas fa-fw fa-folder"></i></span>
+                <input type="text" class="form-control" name="folder_name" placeholder="Contracts" maxlength="200" required autofocus>
+            </div>
+        </div>
+
+        <div class="mb-2">
+            <label class="form-label">Inside</label>
+            <div class="input-group">
+                <span class="input-group-text"><i class="fas fa-fw fa-sitemap"></i></span>
+                <select class="form-select select2" name="parent_folder">
+                    <?= folderOptionsHtml($client_id, $parent_folder) ?>
+                </select>
             </div>
         </div>
 
     </div>
     <div class="modal-footer">
-        <button type="submit" name="create_folder" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Create</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="create_folder" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

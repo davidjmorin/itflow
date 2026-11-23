@@ -16,44 +16,30 @@ ob_start();
     <?php foreach ($interface_ids as $interface_id) { ?><input type="hidden" name="interface_ids[]" value="<?= $interface_id ?>"><?php } ?>
 
     <div class="modal-header bg-dark">
-        <h5 class="modal-title"><i class="fa fa-fw fa-ethernet mr-2"></i>Bulk Set Interface Type</h5>
-        <button type="button" class="close text-white" data-dismiss="modal">
-            <span>&times;</span>
-        </button>
+        <h5 class="modal-title"><i class="fas fa-fw fa-plug me-2"></i>Type of <strong><?= $count ?></strong> interface<?= $count === 1 ? '' : 's' ?></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
     </div>
 
     <div class="modal-body">
 
         <!-- Type -->
-        <div class="form-group">
-            <label for="network">Interface Type</label>
+        <div class="mb-3">
+            <label class="form-label" for="interface_type">Interface type</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-plug"></i></span>
-                </div>
-                <select class="form-control select2" name="bulk_type">
-                    <option value="">- Select Type -</option>
-                    <?php
-                    $sql_interface_types_select = mysqli_query($mysqli, "
-                        SELECT category_name FROM categories
-                        WHERE category_type = 'network_interface'
-                        AND category_archived_at IS NULL
-                        ORDER BY category_order ASC, category_name ASC
-                    ");
-                    while ($row = mysqli_fetch_assoc($sql_interface_types_select)) {
-                        $interface_type_select = escapeHtml($row['category_name']);
-                        ?>
-                        <option><?= $interface_type_select ?></option>
-                    <?php } ?>
+                    <span class="input-group-text"><i class="fas fa-fw fa-plug"></i></span>
+                <select class="form-select select2" id="interface_type" name="bulk_type">
+                    <option value="">- No type -</option>
+                    <?= categoryOptionsHtml('network_interface') ?>
                 </select>
+                <?= categoryAddButtonHtml('network_interface') ?>
             </div>
         </div>
 
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="bulk_edit_asset_interface_type" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Set</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_edit_asset_interface_type" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Set</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

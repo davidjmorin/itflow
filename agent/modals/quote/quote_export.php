@@ -14,6 +14,9 @@ if ($client_id) {
 // Search Filter
 $q_filter = $_GET['q'] ?? '';
 
+// Category Filter
+$category_filter = intval($_GET['category'] ?? 0);
+
 // Date Filter - the all-time sentinels from filter_header.php leave the fields blank
 $date_from_filter = (!empty($_GET['dtf']) && $_GET['dtf'] !== '1970-01-01') ? escapeHtml($_GET['dtf']) : '';
 $date_to_filter = (!empty($_GET['dtt']) && $_GET['dtt'] !== '2099-12-31') ? escapeHtml($_GET['dtt']) : '';
@@ -23,10 +26,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-download mr-2"></i>Export Quotes</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-download me-2"></i>Export Quotes</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <?php exportTabsNav(); ?>
@@ -39,32 +40,37 @@ ob_start();
 
         <?php exportTabsFiltersOpen(); ?>
 
-        <div class="form-group">
-            <label>Search</label>
+        <div class="mb-3">
+            <label class="form-label">Search</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-search"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-search"></i></span>
                 <input type="text" class="form-control" name="q" value="<?= stripslashes(escapeHtml($q_filter)) ?>" placeholder="Number, scope, client, amount">
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Dated From</label>
+        <div class="mb-3">
+            <label class="form-label">Category</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
+                <span class="input-group-text"><i class="fas fa-fw fa-list"></i></span>
+                <select class="form-select select2" name="category">
+                    <option value="">- Any category -</option>
+                    <?= categoryFilterOptionsHtml('Income', $category_filter, "SELECT DISTINCT quote_category_id FROM quotes") ?>
+                </select>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Dated from</label>
+            <div class="input-group">
+                    <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
                 <input type="date" class="form-control" name="dtf" value="<?= $date_from_filter ?>" max="2999-12-31">
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Dated To</label>
+        <div class="mb-3">
+            <label class="form-label">Dated to</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
                 <input type="date" class="form-control" name="dtt" value="<?= $date_to_filter ?>" max="2999-12-31">
             </div>
         </div>

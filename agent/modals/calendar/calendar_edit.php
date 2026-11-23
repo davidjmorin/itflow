@@ -1,54 +1,59 @@
 <?php
 
+/*
+ * Edit Calendar - its name and colour. Admins only.
+ */
+
 require_once '../../../includes/modal_header.php';
 
-$calendar_id = intval($_GET['id']);
+// The calendar switched off (Admin > Settings > Modules)
+if (!moduleOn('calendar')) {
+    exit(json_encode(['error' => moduleOffText('calendar')]));
+}
 
-$sql = mysqli_query($mysqli, "SELECT calendar_color, calendar_name FROM calendars WHERE calendar_id = $calendar_id LIMIT 1");
+if (!calendarCanManage()) {
+    echo json_encode(['error' => 'Only an admin can change a calendar.']);
+    exit;
+}
 
-$row = mysqli_fetch_assoc($sql);
-$calendar_name = escapeHtml($row['calendar_name']);
-$calendar_color = escapeHtml($row['calendar_color']);
+$calendar_id = intval($_GET['id'] ?? 0);
+$calendar = calendarList()[$calendar_id] ?? null;
+if (!$calendar) {
+    echo json_encode(['error' => 'That calendar no longer exists.']);
+    exit;
+}
+// The colour picker takes #rrggbb only - an old named colour shows as its shade
+$color = calendarColor($calendar['calendar_color'], '#3c8dbc');
+if (strlen($color) === 4) {
+    $color = '#' . $color[1] . $color[1] . $color[2] . $color[2] . $color[3] . $color[3];
+}
 
-// Generate the HTML form content using output buffering.
 ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-circle mr-2" style="color:<?= $calendar_color ?>"></i><?= $calendar_name ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-circle me-2 small" style="color:<?= escapeHtml(calendarColor($calendar['calendar_color'])) ?>"></i><?= escapeHtml($calendar['calendar_name']) ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="calendar_id" value="<?= $calendar_id ?>">
     <div class="modal-body">
-
-        <div class="form-group">
-            <label>Name</label>
+        <div class="mb-3">
+            <label class="form-label">Name <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
-                <input type="text" class="form-control" name="name" placeholder="Name your calendar" maxlength="200" value="<?= $calendar_name ?>" required>
+                <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
+                <input type="text" class="form-control" name="name" maxlength="200" value="<?= escapeHtml($calendar['calendar_name']) ?>" required>
             </div>
         </div>
-
-        <div class="form-group">
-            <label>Color <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-paint-brush"></i></span>
-                </div>
-                <input type="color" class="form-control col-3" name="color" value="<?= $calendar_color ?>" required>
-            </div>
+        <div class="mb-0">
+            <label class="form-label">Color</label>
+            <input type="color" class="form-control form-control-color" name="color" value="<?= escapeHtml($color) ?>">
         </div>
-
     </div>
     <div class="modal-footer">
-        <button type="submit" name="edit_calendar" class="btn btn-primary"><i class="fa fa-check mr-2"></i>Save</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="edit_calendar" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Save</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

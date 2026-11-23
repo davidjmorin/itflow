@@ -1,185 +1,115 @@
 <?php
 
+/*
+ * Add a payment to an invoice - what was paid, when, how, and into which
+ * account, starting at what is owed, with what is left after as you type.
+ * A receipt can go to the client's primary contact. Under the invoice, the
+ * client's other unpaid invoices, oldest due first, each a click from its own
+ * Add Payment, with Batch Payment for paying several. ?id= (the invoice)
+ */
+
 require_once '../../../includes/modal_header.php';
 
-$invoice_id = intval($_GET['id']);
+enforceBillingMoney('take');
 
-$sql = mysqli_query(
-    $mysqli,
-    "SELECT client_currency_code, client_id, client_name, contact_email, contact_name, invoice_amount,
-        invoice_id, invoice_number, invoice_prefix FROM invoices
-    LEFT JOIN clients ON invoice_client_id = client_id
-    LEFT JOIN contacts ON client_id = contact_client_id AND contact_primary = 1
-    WHERE invoice_id = $invoice_id
-    LIMIT 1"
-);
-
-$row = mysqli_fetch_assoc($sql);
-$invoice_id = intval($row['invoice_id']);
-$invoice_prefix = escapeHtml($row['invoice_prefix']);
-$invoice_number = intval($row['invoice_number']);
-$invoice_amount = floatval($row['invoice_amount']);
-$client_id = intval($row['client_id']);
-$client_name = escapeHtml($row['client_name']);
-$client_currency_code = escapeHtml($row['client_currency_code']);
-$contact_name = escapeHtml($row['contact_name']);
-$contact_email = escapeHtml($row['contact_email']);
-
-
-//Add up all the payments for the invoice and get the total amount paid to the invoice
-$sql_amount_paid = mysqli_query($mysqli, "SELECT SUM(payment_amount) AS amount_paid FROM payments WHERE payment_invoice_id = $invoice_id");
-$row = mysqli_fetch_assoc($sql_amount_paid);
-$amount_paid = floatval($row['amount_paid']);
-
-$balance = $invoice_amount - $amount_paid;
-
+$invoice_id = intval($_GET['id'] ?? 0);
+$invoice = billingRow('invoice', $invoice_id);
+if (!$invoice) {
+    exit(json_encode(['error' => 'That invoice no longer exists.']));
+}
+$client_id = intval($invoice['client_id']);
 enforceClientAccess();
+
+$state = invoiceState($invoice, invoicePaid($invoice_id));
+if (!invoiceCanPay($invoice, $state)) {
+    exit(json_encode(['error' => billingNumber('invoice', $invoice) . ' has nothing owed on it - it is ' . strtolower($invoice['invoice_status']) . '.']));
+}
+// The client's other unpaid invoices, oldest due first
+$others = [];
+$others_owed = 0;
+$others_older = 0;
+$sql_others = mysqli_query($mysqli, "SELECT invoice_id, invoice_prefix, invoice_number, invoice_scope, invoice_due, invoice_currency_code,
+        invoice_amount - COALESCE((SELECT SUM(payment_amount) FROM payments WHERE payment_invoice_id = invoice_id), 0) AS balance
+    FROM invoices
+    WHERE invoice_client_id = $client_id AND invoice_id != $invoice_id AND invoice_status IN ('Sent', 'Viewed', 'Partial')
+    ORDER BY invoice_due ASC, invoice_id ASC");
+while ($row = mysqli_fetch_assoc($sql_others)) {
+    if (floatval($row['balance']) > 0) {
+        $others[] = $row;
+        $others_owed += floatval($row['balance']);
+        $others_older += $row['invoice_due'] < $invoice['invoice_due'] ? 1 : 0;
+    }
+}
+
+$contact_email = (string) mysqli_fetch_row(mysqli_query($mysqli, "SELECT contact_email FROM contacts WHERE contact_client_id = $client_id AND contact_primary = 1 AND contact_archived_at IS NULL LIMIT 1"))[0];
+
+$pay = [
+    'id' => 'payForm' . $invoice_id,
+    'amount' => $state['balance'],
+    'owed' => $state['balance'],
+    'currency' => $invoice['invoice_currency_code'],
+    'email' => $contact_email,
+];
 
 ob_start();
 
 ?>
-
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-credit-card mr-2"></i><?= "$invoice_prefix$invoice_number" ?>: Make Payment</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-credit-card me-2"></i>Add Payment <span class="fw-normal text-white-50 ms-1"><?= escapeHtml(billingNumber('invoice', $invoice)) ?> &middot; <?= escapeHtml($invoice['client_name']) ?></span></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="invoice_id" value="<?= $invoice_id ?>">
-    <input type="hidden" name="balance" value="<?= $balance ?>">
-    <input type="hidden" name="currency_code" value="<?= $client_currency_code ?>">
+    <input type="hidden" name="currency_code" value="<?= escapeHtml($invoice['invoice_currency_code']) ?>">
+
     <div class="modal-body">
-
-        <div class="form-row">
-            <div class="col-md">
-
-                <div class="form-group">
-                    <label>Date <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                        </div>
-                        <input type="date" class="form-control" name="date" max="2999-12-31" value="<?= date("Y-m-d") ?>" required>
-                    </div>
-                </div>
-
+        <div class="d-flex align-items-center gap-3 p-3 mb-3 rounded bg-body-tertiary">
+            <?= billingTile('invoice') ?>
+            <div class="flex-grow-1 min-w-0">
+                <div class="fw-semibold"><?= escapeHtml(billingNumber('invoice', $invoice)) ?><?= trim((string) $invoice['invoice_scope']) !== '' ? ' - ' . escapeHtml($invoice['invoice_scope']) : '' ?></div>
+                <div class="small"><?= invoiceDuePill($state) ?: '<span class="text-body-secondary">Due ' . formatDate($invoice['invoice_due']) . '</span>' ?></div>
             </div>
-
-            <div class="col-md">
-
-                <div class="form-group">
-                    <label>Amount <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
-                        </div>
-                        <input type="text" class="form-control" inputmode="decimal" pattern="[0-9]*\.?[0-9]{0,2}" name="amount" value="<?= number_format($balance, 2, '.', '') ?>" placeholder="0.00" required>
-                    </div>
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="form-group">
-            <label>Account <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-piggy-bank"></i></span>
-                </div>
-                <select class="form-control select2" name="account" required>
-                    <option value="">- Select an Account -</option>
-                    <?php
-
-                    $sql = mysqli_query($mysqli, "SELECT account_currency_code, account_id, account_name, opening_balance FROM accounts WHERE account_archived_at IS NULL ORDER BY account_name ASC");
-                    while ($row = mysqli_fetch_assoc($sql)) {
-                        $account_id = intval($row['account_id']);
-                        $account_name = escapeHtml($row['account_name']);
-                        $opening_balance = floatval($row['opening_balance']);
-                        $account_currency = escapeHtml($row['account_currency_code']);
-
-                        $sql_payments = mysqli_query($mysqli, "SELECT SUM(payment_amount) AS total_payments FROM payments WHERE payment_account_id = $account_id");
-                        $row = mysqli_fetch_assoc($sql_payments);
-                        $total_payments = floatval($row['total_payments']);
-
-                        $sql_revenues = mysqli_query($mysqli, "SELECT SUM(revenue_amount) AS total_revenues FROM revenues WHERE revenue_account_id = $account_id");
-                        $row = mysqli_fetch_assoc($sql_revenues);
-                        $total_revenues = floatval($row['total_revenues']);
-
-                        $sql_expenses = mysqli_query($mysqli, "SELECT SUM(expense_amount) AS total_expenses FROM expenses WHERE expense_account_id = $account_id");
-                        $row = mysqli_fetch_assoc($sql_expenses);
-                        $total_expenses = floatval($row['total_expenses']);
-
-                        $account_balance = $opening_balance + $total_payments + $total_revenues - $total_expenses;
-
-                    ?>
-                        <option <?php if ($config_default_payment_account == $account_id) { echo "selected"; } ?>
-                            value="<?= $account_id ?>">
-                            <?= $account_name ?> [<?= numfmt_format_currency($currency_format, $account_balance, $account_currency) ?>]
-                        </option>
-
-                    <?php
-                    }
-                    ?>
-                </select>
+            <div class="text-end">
+                <div class="fw-semibold itflow-money"><?= escapeHtml(billingMoney($state['balance'], $invoice['invoice_currency_code'])) ?></div>
+                <div class="small text-body-secondary">owed<?= $state['paid'] > 0 ? ' of ' . escapeHtml(billingMoney($invoice['invoice_amount'], $invoice['invoice_currency_code'])) : '' ?></div>
             </div>
         </div>
-
-        <div class="form-group">
-            <label>Payment Method <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-money-check-alt"></i></span>
+        <?php if ($others) { ?>
+            <div class="mb-3 small" data-pay-others>
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                    <span class="fw-semibold text-uppercase text-body-secondary">Their other unpaid invoices</span>
+                    <span class="text-body-secondary"><?= count($others) ?> &middot; <?= escapeHtml(billingMoney($others_owed, $invoice['invoice_currency_code'])) ?> owed</span>
+                    <a class="ms-auto ajax-modal" href="#" data-bs-dismiss="modal" data-modal-url="modals/payment/payment_bulk_add.php?client_id=<?= $client_id ?>" title="One payment, spread over their unpaid invoices oldest first"><i class="fas fa-layer-group me-1"></i>Batch Payment</a>
                 </div>
-                <select class="form-control select2" name="payment_method" required>
-                    <option value="">- Method of Payment -</option>
-                    <?php
-
-                    $sql = mysqli_query($mysqli, "SELECT payment_method_name FROM payment_methods ORDER BY payment_method_name ASC");
-                    while ($row = mysqli_fetch_assoc($sql)) {
-                        $payment_method_name = escapeHtml($row['payment_method_name']);
-                    ?>
-                        <option <?php if ($config_default_payment_method == $payment_method_name) { echo "selected"; } ?>><?= $payment_method_name ?></option>
-
-                    <?php
-                    }
-                    ?>
-                </select>
+                <?php if ($others_older) { ?>
+                    <div class="mb-1"><i class="fas fa-exclamation-triangle text-warning me-1"></i><?= $others_older === 1 ? 'One was' : "$others_older were" ?> due before this one.</div>
+                <?php } ?>
+                <ul class="list-group">
+                    <?php foreach (array_slice($others, 0, 5) as $other) {
+                        $other_days = intval(floor((strtotime(date('Y-m-d')) - strtotime($other['invoice_due'])) / 86400)); ?>
+                        <li class="list-group-item d-flex align-items-center gap-2 py-1">
+                            <div class="min-w-0 flex-grow-1">
+                                <div class="text-truncate"><span class="fw-semibold"><?= escapeHtml(billingNumber('invoice', $other)) ?></span><?php if (trim((string) $other['invoice_scope']) !== '') { ?><span class="text-body-secondary" title="<?= escapeHtml($other['invoice_scope']) ?>"> - <?= escapeHtml($other['invoice_scope']) ?></span><?php } ?></div>
+                                <div><?= invoiceDuePill(['state' => 'open', 'days' => -$other_days]) ?></div>
+                            </div>
+                            <span class="itflow-money text-nowrap"><?= escapeHtml(billingMoney($other['balance'], $other['invoice_currency_code'])) ?></span>
+                            <a class="btn btn-sm btn-outline-secondary ajax-modal text-nowrap" href="#" data-bs-dismiss="modal" data-modal-url="modals/payment/payment_add.php?id=<?= intval($other['invoice_id']) ?>">Pay This One</a>
+                        </li>
+                    <?php } ?>
+                </ul>
+                <?php if (count($others) > 5) { ?>
+                    <div class="text-body-secondary mt-1">and <?= count($others) - 5 ?> more - <a href="invoices.php?client_id=<?= $client_id ?>&amp;status=Unpaid">see them all</a></div>
+                <?php } ?>
             </div>
-        </div>
-
-        <div class="form-group">
-            <label>Reference</label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-file-alt"></i></span>
-                </div>
-                <input type="text" class="form-control" name="reference" placeholder="Check #, Trans #, etc" maxlength="200">
-            </div>
-        </div>
-
-        <?php if (!empty($config_smtp_provider) && !empty($contact_email)) { ?>
-
-            <div class="form-group">
-                <label>Email Receipt</label>
-                <div class="custom-control custom-checkbox">
-                    <input type="checkbox" class="custom-control-input" id="customControlAutosizing" name="email_receipt" value="1" checked>
-                    <label class="custom-control-label" for="customControlAutosizing"><?= $contact_email ?></label>
-                </div>
-            </div>
-
         <?php } ?>
-
+        <?php require __DIR__ . '/payment_form.php'; ?>
     </div>
-
     <div class="modal-footer">
-        <button type="submit" name="add_payment" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Pay</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fas fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="add_payment" class="btn btn-success fw-bold"><i class="fas fa-check me-2"></i>Add Payment</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 
 <?php
-
 require_once '../../../includes/modal_footer.php';

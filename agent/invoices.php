@@ -1,5 +1,19 @@
 <?php
 
+/*
+ * Invoices - one client's, or every invoice the agent can see.
+ *
+ * Along the top, the money: what is owed, what of that is late, what is
+ * sitting in drafts, and what came in over the last 30 days - each opens
+ * the invoices behind it. The pills filter by where an invoice stands. Each
+ * row has what is still owed on it and, while it is owed, how long until
+ * it is due or how late it is, and whether autopay pays it - and a draft
+ * left more than a week says so. ?status= takes Draft, StaleDraft (drafts
+ * left more than INVOICE_DRAFT_STALE_DAYS), Unpaid, Overdue, Paid and
+ * Cancelled - the dashboard, client pages, reports and the nightly
+ * notification link with it. ?recurring_invoice_id= shows the invoices a recurring invoice made.
+ */
+
 // Default Column Sortby/Order Filter
 $sort = "invoice_number";
 $order = "DESC";
@@ -11,465 +25,485 @@ if (isset($_GET['client_id'])) {
     $client_url = "client_id=$client_id&";
 } else {
     require_once "includes/inc_all.php";
-    $client_query = clientScopeSql('invoice_client_id');
+    $client_query = '';
     $client_url = '';
 }
 
 // Perms
 enforceUserPermission('module_sales');
 
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status = 'Sent' $client_query"));
-$sent_count = $row['num'];
+$can_edit = lookupUserPermission('module_sales') >= 2;
+// Ticking invoices for a bulk action - Mark Paid is accounting's too (functions/invoice_actions.php)
+$can_bulk = $can_edit || invoiceBulkCan('pay');
+$can_delete = lookupUserPermission('module_sales') >= 3;
+// Taking payments and sending statements are accounting's too (billingMoneyCan())
+$can_pay = billingMoneyCan('take');
+$can_statement = billingMoneyCan('statement');
+$mail_ready = !empty($config_smtp_provider);
 
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status = 'Viewed' $client_query"));
-$viewed_count = $row['num'];
-
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status = 'Partial' $client_query"));
-$partial_count = $row['num'];
-
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status = 'Draft' $client_query"));
-$draft_count = $row['num'];
-
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status = 'Cancelled' $client_query"));
-$cancelled_count = $row['num'];
-
-$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT('invoice_id') AS num FROM invoices WHERE invoice_status NOT LIKE 'Draft' AND invoice_status NOT LIKE 'Paid' AND invoice_status NOT LIKE 'Cancelled' AND invoice_status NOT LIKE 'Non-Billable' AND invoice_due < CURDATE() $client_query"));
-$overdue_count = $row['num'];
-
-$sql_total_draft_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_draft_amount FROM invoices WHERE invoice_status = 'Draft' $client_query");
-$row = mysqli_fetch_assoc($sql_total_draft_amount);
-$total_draft_amount = floatval($row['total_draft_amount']);
-
-$sql_total_sent_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_sent_amount FROM invoices WHERE invoice_status = 'Sent' $client_query");
-$row = mysqli_fetch_assoc($sql_total_sent_amount);
-$total_sent_amount = floatval($row['total_sent_amount']);
-
-$sql_total_viewed_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_viewed_amount FROM invoices WHERE invoice_status = 'Viewed' $client_query");
-$row = mysqli_fetch_assoc($sql_total_viewed_amount);
-$total_viewed_amount = floatval($row['total_viewed_amount']);
-
-$sql_total_cancelled_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_cancelled_amount FROM invoices WHERE invoice_status = 'Cancelled' $client_query");
-$row = mysqli_fetch_assoc($sql_total_cancelled_amount);
-$total_cancelled_amount = floatval($row['total_cancelled_amount']);
-
-$sql_total_partial_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_partial_amount FROM payments, invoices WHERE payment_invoice_id = invoice_id AND invoice_status = 'Partial' $client_query");
-$row = mysqli_fetch_assoc($sql_total_partial_amount);
-$total_partial_amount = floatval($row['total_partial_amount']);
-$total_partial_count = mysqli_num_rows($sql_total_partial_amount);
-
-$sql_total_overdue_partial_amount = mysqli_query($mysqli, "SELECT SUM(payment_amount) AS total_overdue_partial_amount FROM payments, invoices WHERE payment_invoice_id = invoice_id AND invoice_status = 'Partial' AND invoice_due < CURDATE() $client_query");
-$row = mysqli_fetch_assoc($sql_total_overdue_partial_amount);
-$total_overdue_partial_amount = floatval($row['total_overdue_partial_amount']);
-
-$sql_total_overdue_amount = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS total_overdue_amount FROM invoices WHERE invoice_status != 'Draft' AND invoice_status != 'Paid' AND invoice_status != 'Cancelled' AND invoice_status != 'Non-Billable' AND invoice_due < CURDATE() $client_query");
-$row = mysqli_fetch_assoc($sql_total_overdue_amount);
-$total_overdue_amount = floatval($row['total_overdue_amount']);
-
-$real_overdue_amount = $total_overdue_amount - $total_overdue_partial_amount;
-$total_unpaid_amount = $total_sent_amount + $total_viewed_amount + $total_partial_amount;
-$unpaid_count = $sent_count + $viewed_count + $partial_count;
-
-$overdue_query = '';
-//Invoice status from GET
-if (isset($_GET['status']) && ($_GET['status']) == 'Draft') {
-    $status_query = "invoice_status = 'Draft'";
-} elseif (isset($_GET['status']) && ($_GET['status']) == 'Unpaid') {
-    $status_query = "invoice_status = 'Sent' OR invoice_status = 'Viewed' OR invoice_status = 'Partial'";
-} elseif (isset($_GET['status']) && ($_GET['status']) == 'Overdue') {
-    $status_query = "invoice_status = 'Sent' OR invoice_status = 'Viewed' OR invoice_status = 'Partial'";
-    $overdue_query = "AND (invoice_due < CURDATE())";
-} else {
-    $status_query = "invoice_status LIKE '%'";
+// Client Filter (all clients)
+$client = '';
+if (!$client_url && !empty($_GET['client'])) {
+    $client = intval($_GET['client']);
+    $client_query = "AND invoice_client_id = $client";
 }
+
+// From a recurring invoice
+$recurring_filter = intval($_GET['recurring_invoice_id'] ?? 0);
+$recurring_query = $recurring_filter ? "AND invoice_recurring_invoice_id = $recurring_filter" : '';
+$recurring_filter_row = $recurring_filter ? billingRow('recurring', $recurring_filter) : null;
+
+// Hardware sold on them that isn't on the client's assets yet (functions/products.php)
+$hardware_filter = !empty($_GET['hardware']);
+$hardware_query = $hardware_filter ? "AND " . productHardwareInvoiceSql() . " AND invoices.invoice_id IN (SELECT invoice_items.item_invoice_id FROM invoice_items
+    JOIN products ON products.product_id = invoice_items.item_product_id " . productHardwareMadeJoinSql() . " WHERE " . productHardwareShortSql() . ")" : '';
 
 // Category Filter
-if (isset($_GET['category']) & !empty($_GET['category'])) {
-    $category_query = 'AND (category_id = ' . intval($_GET['category']) . ')';
-    $category_filter = intval($_GET['category']);
-} else {
-    // Default - any
-    $category_query = '';
-    $category_filter = '';
+$category_filter = intval($_GET['category'] ?? 0);
+$category_query = $category_filter ? "AND invoice_category_id = $category_filter" : '';
+
+$open_sql = "invoice_status IN ('Sent', 'Viewed', 'Partial')";
+$statuses = [
+    '' => ['label' => 'All', 'where' => ''],
+    'Draft' => ['label' => 'Draft', 'icon' => 'fa-pencil-ruler', 'where' => "invoice_status = 'Draft'", 'title' => 'Not sent yet - the client can\'t see them'],
+    'StaleDraft' => ['label' => 'Drafts left a week', 'icon' => 'fa-hourglass-half', 'where' => "invoice_status = 'Draft' AND invoice_created_at < NOW() - INTERVAL " . INVOICE_DRAFT_STALE_DAYS . " DAY",
+        'title' => 'Drafts made more than ' . INVOICE_DRAFT_STALE_DAYS . ' days ago and still not sent'],
+    'Unpaid' => ['label' => 'Unpaid', 'icon' => 'fa-hand-holding-usd', 'where' => $open_sql, 'title' => 'Sent, and not paid in full'],
+    'Overdue' => ['label' => 'Overdue', 'icon' => 'fa-exclamation-circle', 'where' => "$open_sql AND invoice_due < CURDATE()", 'title' => 'Past their due date and not paid in full'],
+    'Paid' => ['label' => 'Paid', 'icon' => 'fa-check-circle', 'where' => "invoice_status = 'Paid'"],
+    'Cancelled' => ['label' => 'Cancelled', 'icon' => 'fa-ban', 'where' => "invoice_status IN ('Cancelled', 'Non-Billable')", 'title' => 'Cancelled, or closed off as non-billable'],
+];
+$status = isset($statuses[$_GET['status'] ?? '']) ? ($_GET['status'] ?? '') : '';
+$status_query = $statuses[$status]['where'] ? 'AND ' . $statuses[$status]['where'] : '';
+
+// Only these sort - filter_header.php hands through any lowercase word
+$sortable_columns = ['invoice_number' => 'invoice_number', 'invoice_scope' => 'invoice_scope', 'client_name' => 'client_name', 'invoice_date' => 'invoice_date',
+    'invoice_due' => 'invoice_due', 'invoice_amount' => 'invoice_amount', 'balance' => 'balance', 'invoice_status' => 'invoice_status', 'category_name' => 'category_name'];
+if (!isset($sortable_columns[$sort])) {
+    $sort = 'invoice_number';
 }
 
-$sql = mysqli_query(
-    $mysqli,
-    "SELECT SQL_CALC_FOUND_ROWS category_id, category_name, client_currency_code, client_id, client_name, client_net_terms,
-        invoice_amount, invoice_created_at, invoice_currency_code, invoice_date,
-        invoice_discount_amount, invoice_due, invoice_id, invoice_number, invoice_prefix,
-        invoice_scope, invoice_status, recurring_invoice_id, recurring_invoice_number,
-        recurring_invoice_prefix FROM invoices
+// What an invoice has been paid - looked up for the invoices that need it (the page's, and the
+// unpaid ones for the money along the top) where a LEFT JOIN to every payment grouped by invoice
+// added up all of them on every load
+$paid_sql = "(SELECT COALESCE(SUM(payment_amount), 0) FROM payments WHERE payment_invoice_id = invoices.invoice_id AND payment_invoice_id > 0)";
+$scope_query = clientScopeSql('invoice_client_id');
+$search_query = "AND (CONCAT(invoice_prefix, invoice_number) LIKE '%$q%' OR invoice_scope LIKE '%$q%' OR client_name LIKE '%$q%' OR invoice_status LIKE '%$q%' OR invoice_amount LIKE '%$q%' OR category_name LIKE '%$q%')";
+$date_query = "AND DATE(invoice_date) BETWEEN '$dtf' AND '$dtt'";
+$filters = "$scope_query $client_query $recurring_query $hardware_query $category_query $date_query $search_query";
+
+// How many of each, for the pills - what the filters above leave, before the pill
+$count_sql = [];
+foreach ($statuses as $key => $s) {
+    $count_sql[] = $key === '' ? 'COUNT(*)' : "COALESCE(SUM({$s['where']}), 0)";
+}
+$row = mysqli_fetch_row(mysqli_query($mysqli, "SELECT " . implode(', ', $count_sql) . " FROM invoices
+    LEFT JOIN clients ON invoice_client_id = client_id LEFT JOIN categories ON invoice_category_id = category_id WHERE 1 $filters"));
+$counts = [];
+foreach (array_keys($statuses) as $i => $key) {
+    $counts[$key] = intval($row[$i]);
+}
+
+// The page - its count is its pill's (SQL_CALC_FOUND_ROWS counted the same rows again)
+$num_rows = [$counts[$status]];
+$sql = mysqli_query($mysqli, "SELECT invoices.*, client_name, category_name, category_color,
+        recurring_invoice_prefix, recurring_invoice_number,
+        $paid_sql AS paid, invoice_amount - $paid_sql AS balance,
+        invoice_recurring_invoice_id > 0 AND EXISTS (SELECT 1 FROM recurring_payments WHERE recurring_payment_recurring_invoice_id = invoice_recurring_invoice_id) AS autopay
+    FROM invoices
     LEFT JOIN clients ON invoice_client_id = client_id
     LEFT JOIN categories ON invoice_category_id = category_id
     LEFT JOIN recurring_invoices ON invoice_recurring_invoice_id = recurring_invoice_id
-    WHERE ($status_query)
-    $overdue_query
-    $category_query
-    AND DATE(invoice_date) BETWEEN '$dtf' AND '$dtt'
-    AND (CONCAT(invoice_prefix,invoice_number) LIKE '%$q%' OR invoice_scope LIKE '%$q%' OR client_name LIKE '%$q%' OR invoice_status LIKE '%$q%' OR invoice_amount LIKE '%$q%' OR category_name LIKE '%$q%')
-    " . clientScopeSql('invoice_client_id') . "
-    $client_query
-    ORDER BY $sort $order LIMIT $record_from, $record_to"
-);
+    WHERE 1 $filters $status_query
+    ORDER BY {$sortable_columns[$sort]} $order, invoice_id DESC LIMIT $record_from, $record_to");
 
-$num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
+$invoices = [];
+while ($row = mysqli_fetch_assoc($sql)) {
+    $invoices[] = $row;
+}
+
+// The money along the top - everything in this scope, not narrowed by search, date or pill
+$money_scope = "$scope_query $client_query $recurring_query";
+$money = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT
+        COALESCE(SUM(CASE WHEN $open_sql AND balance > 0 THEN balance END), 0) AS owed,
+        COALESCE(SUM(CASE WHEN $open_sql AND balance > 0 THEN 1 END), 0) AS owed_count,
+        COALESCE(SUM(CASE WHEN $open_sql AND balance > 0 AND invoice_due < CURDATE() THEN balance END), 0) AS overdue,
+        COALESCE(SUM(CASE WHEN $open_sql AND balance > 0 AND invoice_due < CURDATE() THEN 1 END), 0) AS overdue_count,
+        COALESCE(SUM(CASE WHEN invoice_status = 'Draft' THEN invoice_amount END), 0) AS draft,
+        COALESCE(SUM(CASE WHEN invoice_status = 'Draft' THEN 1 END), 0) AS draft_count,
+        COALESCE(SUM(CASE WHEN invoice_status = 'Draft' AND invoice_created_at < NOW() - INTERVAL " . INVOICE_DRAFT_STALE_DAYS . " DAY THEN 1 END), 0) AS draft_stale
+    FROM (SELECT invoice_status, invoice_due, invoice_amount, invoice_created_at, invoice_amount - $paid_sql AS balance
+        FROM invoices WHERE 1 $money_scope) AS scoped"));
+$collected = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COALESCE(SUM(payment_amount), 0) AS amount, COUNT(*) AS payments FROM payments
+    JOIN invoices ON payment_invoice_id = invoice_id
+    WHERE payment_date >= CURDATE() - INTERVAL 30 DAY $money_scope"));
+
+$filter_url = function ($changes) {
+    $params = array_merge($_GET, $changes);
+    unset($params['page']);
+    return '?' . http_build_query(array_filter($params, function ($v) { return $v !== '' && $v !== null; }));
+};
+
+// Clients with a card on file, for Charge Saved Card - one query, not one a row
+$saved_card_clients = [];
+$sql_saved = mysqli_query($mysqli, "SELECT DISTINCT saved_payment_client_id FROM client_saved_payment_methods
+    JOIN payment_providers ON saved_payment_provider_id = payment_provider_id WHERE payment_provider_active = 1");
+while ($row = mysqli_fetch_row($sql_saved)) {
+    $saved_card_clients[intval($row[0])] = true;
+}
+
+$stat_money = function ($amount) use ($session_company_currency) {
+    return escapeHtml(billingMoney($amount, $session_company_currency));
+};
 
 ?>
 
-<div class="row">
-    <div class="col-lg-4">
-        <!-- small box -->
-        <a href="?<?= $url_query_strings_sort ?>&status=Draft" class="small-box bg-secondary">
-            <div class="inner">
-                <h3><?= numfmt_format_currency($currency_format, $total_draft_amount, $session_company_currency) ?></h3>
-                <p><?= $draft_count ?> Draft</p>
-            </div>
-            <div class="icon">
-                <i class="fa fa-pencil-ruler"></i>
-            </div>
+<!-- The money -->
+<div class="row g-3 mb-3">
+    <div class="col-sm-6 col-xl-3">
+        <a class="itflow-billing-stat <?= $status === 'Unpaid' ? 'active' : '' ?>" href="<?= escapeHtml($filter_url(['status' => 'Unpaid'])) ?>">
+            <div class="itflow-billing-stat-label"><i class="fas fa-hand-holding-usd me-1"></i>Owed to you</div>
+            <div class="itflow-billing-stat-value"><?= $stat_money($money['owed']) ?></div>
+            <div class="itflow-billing-stat-note"><?= intval($money['owed_count']) ?> unpaid invoice<?= intval($money['owed_count']) === 1 ? '' : 's' ?></div>
         </a>
     </div>
-    <!-- ./col -->
-
-    <div class="col-lg-4">
-        <!-- small box -->
-        <a href="?<?= $url_query_strings_sort ?>&status=Unpaid" class="small-box bg-info">
-            <div class="inner text-white">
-                <h3><?= numfmt_format_currency($currency_format, $total_unpaid_amount, $session_company_currency) ?></h3>
-                <p><?= $unpaid_count ?> Unpaid</p>
-            </div>
-            <div class="icon">
-                <i class="fa fa-hand-holding-usd"></i>
-            </div>
+    <div class="col-sm-6 col-xl-3">
+        <a class="itflow-billing-stat <?= $status === 'Overdue' ? 'active' : '' ?>" href="<?= escapeHtml($filter_url(['status' => 'Overdue'])) ?>">
+            <div class="itflow-billing-stat-label"><i class="fas fa-exclamation-circle me-1"></i>Overdue</div>
+            <div class="itflow-billing-stat-value <?= $money['overdue'] > 0 ? 'text-danger-emphasis' : '' ?>"><?= $stat_money($money['overdue']) ?></div>
+            <div class="itflow-billing-stat-note"><?= intval($money['overdue_count']) ?> past due<?= $money['owed'] > 0 ? ' &middot; ' . round($money['overdue'] / $money['owed'] * 100) . '% of what is owed' : '' ?></div>
         </a>
     </div>
-    <!-- ./col -->
-
-    <div class="col-lg-4">
-        <!-- small box -->
-        <a href="?<?= $url_query_strings_sort ?>&status=Overdue" class="small-box bg-danger">
-            <div class="inner">
-                <h3><?= numfmt_format_currency($currency_format, $real_overdue_amount, $session_company_currency) ?></h3>
-                <p><?= $overdue_count ?> Overdue</p>
-            </div>
-            <div class="icon">
-                <i class="fa fa-exclamation-triangle"></i>
-            </div>
+    <div class="col-sm-6 col-xl-3">
+        <a class="itflow-billing-stat <?= $status === 'Draft' ? 'active' : '' ?>" href="<?= escapeHtml($filter_url(['status' => 'Draft'])) ?>">
+            <div class="itflow-billing-stat-label"><i class="fas fa-pencil-ruler me-1"></i>In drafts</div>
+            <div class="itflow-billing-stat-value"><?= $stat_money($money['draft']) ?></div>
+            <div class="itflow-billing-stat-note"><?= intval($money['draft_count']) ?> not sent yet<?php if ($money['draft_stale']) { ?> &middot; <?= intval($money['draft_stale']) ?> left over a week<?php } ?></div>
         </a>
     </div>
-    <!-- ./col -->
-
+    <div class="col-sm-6 col-xl-3">
+        <a class="itflow-billing-stat <?= $status === 'Paid' ? 'active' : '' ?>" href="<?= escapeHtml($filter_url(['status' => 'Paid'])) ?>">
+            <div class="itflow-billing-stat-label"><i class="fas fa-coins me-1"></i>Collected, 30 days</div>
+            <div class="itflow-billing-stat-value text-success-emphasis"><?= $stat_money($collected['amount']) ?></div>
+            <div class="itflow-billing-stat-note"><?= intval($collected['payments']) ?> payment<?= intval($collected['payments']) === 1 ? '' : 's' ?></div>
+        </a>
+    </div>
 </div>
 
-<div class="card card-dark">
-    <div class="card-header py-2">
-        <h3 class="card-title mt-2"><i class="fa fa-fw fa-file-invoice mr-2"></i>Invoices</h3>
+<div class="card">
+    <div class="card-header bg-dark py-2">
+        <h3 class="card-title mt-2"><i class="fas fa-fw fa-file-invoice-dollar me-2"></i>Invoices</h3>
         <div class="card-tools">
             <div class="btn-group">
-                <?php if (lookupUserPermission("module_sales") >= 2) { ?>
-                <button type="button" class="btn btn-primary ajax-modal"
-                    data-modal-url="modals/invoice/invoice_add.php?<?= $client_url ?>">
-                    <i class="fas fa-plus mr-2"></i>New Invoice
-                </button>
+                <?php if ($can_edit) { ?>
+                    <button type="button" class="btn btn-primary ajax-modal" data-modal-url="modals/invoice/invoice_add.php?<?= $client_url ?>">
+                        <i class="fas fa-plus me-2"></i>New Invoice
+                    </button>
                 <?php } ?>
-                <button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
-                <div class="dropdown-menu">
-                    <a class="dropdown-item text-dark ajax-modal" href="#"
-                         data-modal-url="<?= buildExportModalUrl('modals/invoice/invoice_export.php', ['client_id', 'status', 'category', 'q'], ['dtf' => $dtf, 'dtt' => $dtt]) ?>">
-                        <i class="fa fa-fw fa-download mr-2"></i>Export
+                <button type="button" class="btn btn-primary dropdown-toggle <?= $can_edit ? 'dropdown-toggle-split' : '' ?>" data-bs-toggle="dropdown" aria-label="More actions"><?= $can_edit ? '' : '<i class="fas fa-ellipsis-v"></i>' ?></button>
+                <div class="dropdown-menu dropdown-menu-end">
+                    <a class="dropdown-item ajax-modal" href="#"
+                        data-modal-url="<?= buildExportModalUrl('modals/invoice/invoice_export.php', ['client_id', 'status', 'category', 'q'], ['dtf' => $dtf, 'dtt' => $dtt, 'client_id' => $client ?: '']) ?>">
+                        <i class="fas fa-fw fa-download text-secondary me-2"></i>Export
                     </a>
+                    <?php if ($client_url && $can_statement && $mail_ready) { ?>
+                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/client/client_statement.php?client_id=<?= $client_id ?>">
+                            <i class="fas fa-fw fa-file-alt text-secondary me-2"></i>Send Statement
+                        </a>
+                    <?php } ?>
+                    <?php if ($client_url) { ?>
+                        <a class="dropdown-item" href="post.php?export_client_statement_pdf=<?= $client_id ?>&amp;csrf_token=<?= $_SESSION['csrf_token'] ?>" target="_blank" rel="noopener">
+                            <i class="fas fa-fw fa-file-pdf text-secondary me-2"></i>Statement PDF
+                        </a>
+                    <?php } ?>
+                    <?php if ($client_url && $can_pay && $money['owed'] > 0) { ?>
+                        <div class="dropdown-divider"></div>
+                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/payment/payment_bulk_add.php?client_id=<?= $client_id ?>">
+                            <i class="fas fa-fw fa-layer-group text-secondary me-2"></i>Batch Payment
+                        </a>
+                    <?php } ?>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="card-body">
-        <form class="mb-4" autocomplete="off">
-            <input type="hidden" name="status" value="<?php if (isset($_GET['status'])) { echo escapeHtml($_GET['status']); } ?>">
+    <div class="card-header py-3">
+        <form autocomplete="off">
             <?php if ($client_url) { ?>
                 <input type="hidden" name="client_id" value="<?= $client_id ?>">
             <?php } ?>
-            <div class="row">
-                <div class="col-sm-4">
-                    <div class="form-group mb-md-0">
-                        <div class="input-group">
-                            <input type="search" class="form-control" name="q" value="<?php if (isset($q)) {echo stripslashes(escapeHtml($q));} ?>" placeholder="Search Invoices">
-                            <div class="input-group-append">
-                                <button class="btn btn-secondary" type="button" data-toggle="collapse" data-target="#advancedFilter"><i class="fas fa-filter"></i></button>
-                                <button class="btn btn-primary"><i class="fa fa-search"></i></button>
-                            </div>
-                        </div>
+            <input type="hidden" name="status" value="<?= escapeHtml($status) ?>">
+            <?php if ($recurring_filter) { ?>
+                <input type="hidden" name="recurring_invoice_id" value="<?= $recurring_filter ?>">
+            <?php } ?>
+            <?php if ($hardware_filter) { ?>
+                <input type="hidden" name="hardware" value="1">
+            <?php } ?>
+            <div class="row g-2 align-items-center">
+                <div class="<?= $client_url ? 'col-lg-4' : 'col-lg-3' ?> col-md-6">
+                    <div class="input-group">
+                        <input type="search" class="form-control" name="q" value="<?php if (isset($q)) { echo stripslashes(escapeHtml($q)); } ?>" placeholder="Search number, scope, client, amount...">
+                        <button class="btn btn-dark" title="Search"><i class="fas fa-search"></i></button>
                     </div>
                 </div>
-                <div class="col-sm-3">
-                    <div class="form-group mb-md-0">
-                        <select class="form-control select2" name="category" onchange="this.form.submit()">
-                            <option value="">- All Categories -</option>
-
+                <div class="col-lg-2 col-md-6">
+                    <input type="text" id="dateFilter" value="<?= escapeHtml(dateFilterLabel($dtf ?? '', $dtt ?? '')) ?>" class="form-control" autocomplete="off" title="Invoice date" aria-label="Invoice date">
+                    <input type="hidden" name="canned_date" id="canned_date" value="<?= escapeHtml($_GET['canned_date'] ?? '') ?>">
+                    <input type="hidden" name="dtf" id="dtf" value="<?= escapeHtml($dtf ?? '') ?>">
+                    <input type="hidden" name="dtt" id="dtt" value="<?= escapeHtml($dtt ?? '') ?>">
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <select class="form-select select2" name="category" onchange="this.form.submit()">
+                        <option value="">- Any category -</option>
+                        <?= categoryFilterOptionsHtml('Income', $category_filter, "SELECT DISTINCT invoice_category_id FROM invoices") ?>
+                    </select>
+                </div>
+                <?php if (!$client_url) { ?>
+                    <div class="col-lg-2 col-md-6">
+                        <select class="form-select select2" name="client" onchange="this.form.submit()">
+                            <option value="">- Any client -</option>
                             <?php
-                            $sql_categories_filter = mysqli_query($mysqli, "SELECT category_id, category_name FROM categories WHERE category_type = 'Income' AND EXISTS (SELECT 1 FROM invoices WHERE invoice_category_id = category_id) ORDER BY category_name ASC");
-                            while ($row = mysqli_fetch_assoc($sql_categories_filter)) {
-                                $category_id = intval($row['category_id']);
-                                $category_name = escapeHtml($row['category_name']);
-                            ?>
-                                <option <?php if ($category_filter == $category_id) { echo "selected"; } ?> value="<?= $category_id ?>"><?= $category_name ?></option>
-                            <?php
-                            }
-                            ?>
-
+                            $sql_clients_filter = mysqli_query($mysqli, "SELECT DISTINCT client_id, client_name, client_abbreviation FROM clients
+                                JOIN invoices ON invoice_client_id = client_id
+                                WHERE 1 " . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
+                            while ($row = mysqli_fetch_assoc($sql_clients_filter)) {
+                                $client_option_id = intval($row['client_id']); ?>
+                                <option <?= $client === $client_option_id ? 'selected' : '' ?> value="<?= $client_option_id ?>"<?= selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '') ?>><?= escapeHtml($row['client_name']) ?></option>
+                            <?php } ?>
                         </select>
                     </div>
-                </div>
-                <div class="col-md-5">
-                    <div class="btn-group float-right">
-                        <div class="dropdown ml-2" id="bulkActionButton" hidden>
-                            <button class="btn btn-secondary dropdown-toggle" type="button" data-toggle="dropdown">
-                                <i class="fas fa-fw fa-layer-group mr-2"></i>Bulk Action (<span id="selectedCount">0</span>)
-                            </button>
-                            <div class="dropdown-menu">
-                                <?php if ($client_url && $balance > 0) { ?>
-                                    <a class="dropdown-item ajax-modal" href="#"
-                                        data-modal-url="modals/payment/payment_bulk_add.php?<?= $client_url ?>">
-                                        <i class="fa fa-credit-card mr-2"></i>Batch Payment
-                                    </a>
-                                    <div class="dropdown-divider"></div>
-                                <?php } ?>
-                                <a class="dropdown-item ajax-modal" href="#"
-                                    data-modal-url="modals/invoice/invoice_bulk_edit_category.php"
-                                    data-bulk="true">
-                                    <i class="fas fa-fw fa-list-ul mr-2"></i>Set Category
-                                </a>
+                <?php } ?>
+                <div class="<?= $client_url ? 'col-lg-3' : 'col-lg-2' ?> col-md-6">
+                    <div class="d-flex justify-content-end gap-2">
+                        <?php if ($can_bulk) { ?>
+                            <div class="dropdown" id="bulkActionButton" data-csrf="<?= escapeHtml($_SESSION['csrf_token']) ?>" hidden>
+                                <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                    <i class="fas fa-fw fa-layer-group me-2"></i>Bulk Action (<span id="selectedCount">0</span>)
+                                </button>
+                                <div class="dropdown-menu dropdown-menu-end">
+                                    <?php
+                                    // Mark Sent, Send by Email, Mark Paid, then Cancel and Delete - each window says which of those ticked it leaves alone
+                                    $bulk_items = function ($danger) {
+                                        foreach (invoiceBulkActions() as $bulk_key => [$bulk_label, $bulk_icon]) {
+                                            if (in_array($bulk_key, ['cancel', 'delete'], true) === $danger && invoiceBulkCan($bulk_key)) { ?>
+                                                <a class="dropdown-item<?= $danger ? ' text-danger' : '' ?>" href="#" data-invoice-bulk="<?= $bulk_key ?>">
+                                                    <i class="fas fa-fw <?= $bulk_icon ?> me-2"></i><?= escapeHtml($bulk_label) ?><span class="text-body-secondary">...</span>
+                                                </a>
+                                            <?php }
+                                        }
+                                    };
+                                    $bulk_items(false); ?>
+                                    <?php if ($can_edit) { ?>
+                                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/invoice/invoice_bulk_edit_category.php" data-bulk="true">
+                                            <i class="fas fa-fw fa-tag me-2"></i>Set Category
+                                        </a>
+                                    <?php } ?>
+                                    <?php if (invoiceBulkCan('cancel') || invoiceBulkCan('delete')) { ?>
+                                        <div class="dropdown-divider"></div>
+                                        <?php $bulk_items(true); ?>
+                                    <?php } ?>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="collapse mt-3 <?php if (isset($_GET['dtf']) && $_GET['dtf'] !== '1970-01-01') { echo "show"; } ?>" id="advancedFilter">
-                <div class="row">
-                    <div class="col-md-3">
-                        <div class="form-group">
-                            <label>Date range</label>
-                            <input type="text" id="dateFilter" class="form-control" autocomplete="off">
-                            <input type="hidden" name="canned_date" id="canned_date" value="<?= escapeHtml($_GET['canned_date']) ?? '' ?>">
-                            <input type="hidden" name="dtf" id="dtf" value="<?= escapeHtml($dtf ?? '') ?>">
-                            <input type="hidden" name="dtt" id="dtt" value="<?= escapeHtml($dtt ?? '') ?>">
-                        </div>
+                        <?php } ?>
                     </div>
                 </div>
             </div>
         </form>
-        <hr>
-        <form id="bulkActions" action="post.php" method="post">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-            <div class="table-responsive">
-                <table class="table table-striped table-borderless table-hover">
-                    <thead class="text-dark <?php if ($num_rows[0] == 0) { echo "d-none"; } ?> text-nowrap">
-                        <tr>
-                            <td class="bg-light checkbox-column">
-                                <div class="form-check">
-                                    <input class="form-check-input" id="selectAllCheckbox" type="checkbox" onclick="checkAll(this)">
-                                </div>
-                            </td>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_number&order=<?= $disp ?>">
-                                    Number <?php if ($sort == 'invoice_number') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_scope&order=<?= $disp ?>">
-                                    Scope <?php if ($sort == 'invoice_scope') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <?php if (!$client_url) { ?>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=client_name&order=<?= $disp ?>">
-                                    Client <?php if ($sort == 'client_name') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <?php } ?>
-                            <th class="text-right">
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_amount&order=<?= $disp ?>">
-                                    Amount <?php if ($sort == 'invoice_amount') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_date&order=<?= $disp ?>">
-                                    Date <?php if ($sort == 'invoice_date') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_due&order=<?= $disp ?>">
-                                    Due <?php if ($sort == 'invoice_due') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=category_name&order=<?= $disp ?>">
-                                    Category <?php if ($sort == 'category_name') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>
-                                <a class="text-dark" href="?<?= $url_query_strings_sort ?>&sort=invoice_status&order=<?= $disp ?>">
-                                    Status <?php if ($sort == 'invoice_status') { echo $order_icon; } ?>
-                                </a>
-                            </th>
-                            <th>Recurring</th>
-                            <th class="text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php
-
-                    while ($row = mysqli_fetch_assoc($sql)) {
-                        $invoice_id = intval($row['invoice_id']);
-                        $invoice_prefix = escapeHtml($row['invoice_prefix']);
-                        $invoice_number = escapeHtml($row['invoice_number']);
-                        $invoice_scope = escapeHtml($row['invoice_scope']);
-                        if (empty($invoice_scope)) {
-                            $invoice_scope_display = "-";
-                        } else {
-                            $invoice_scope_display = $invoice_scope;
-                        }
-                        $invoice_status = escapeHtml($row['invoice_status']);
-                        $invoice_date = escapeHtml($row['invoice_date']);
-                        $invoice_due = escapeHtml($row['invoice_due']);
-                        $invoice_discount = floatval($row['invoice_discount_amount']);
-                        $invoice_amount = floatval($row['invoice_amount']);
-                        $invoice_currency_code = escapeHtml($row['invoice_currency_code']);
-                        $invoice_created_at = escapeHtml($row['invoice_created_at']);
-                        $client_id = intval($row['client_id']);
-                        $client_name = escapeHtml($row['client_name']);
-                        $category_id = intval($row['category_id']);
-                        $category_name = escapeHtml($row['category_name']);
-                        $client_currency_code = escapeHtml($row['client_currency_code']);
-                        $client_net_terms = intval($row['client_net_terms']);
-                        if ($client_net_terms == 0) {
-                            $client_net_terms = $config_default_net_terms;
-                        }
-                        $recurring_invoice_id = intval($row['recurring_invoice_id']);
-                        $recurring_invoice_prefix = escapeHtml($row['recurring_invoice_prefix']);
-                        $recurring_invoice_number = escapeHtml($row['recurring_invoice_number']);
-                        if($recurring_invoice_id) {
-                            $recurring_invoice_display = "<i class='fas fa-fw fa-redo-alt text-secondary mr-1'></i><a href='recurring_invoice.php?recurring_invoice_id=$recurring_invoice_id'>$recurring_invoice_prefix$recurring_invoice_number</a>";
-                        } else {
-                            $recurring_invoice_display = "-";
-                        }
-
-                        $now = time();
-
-                        if (($invoice_status == "Sent" || $invoice_status == "Partial" || $invoice_status == "Viewed") && strtotime($invoice_due) + 86400 < $now) {
-                            $overdue_color = "text-danger font-weight-bold";
-                        } else {
-                            $overdue_color = "";
-                        }
-
-                        $invoice_badge_color = getInvoiceBadgeColor($invoice_status);
-
-                        // Saved Payment Methods
-                        $sql_saved_payment_methods = mysqli_query($mysqli, "
-                            SELECT 1 FROM client_saved_payment_methods
-                            LEFT JOIN payment_providers
-                                ON client_saved_payment_methods.saved_payment_provider_id = payment_providers.payment_provider_id
-                            WHERE saved_payment_client_id = $client_id
-                            AND payment_provider_active = 1;
-                        ");
-
-                        ?>
-
-                        <tr>
-                            <td class="bg-light checkbox-column">
-                                <div class="form-check">
-                                    <input class="form-check-input bulk-select" type="checkbox" name="invoice_ids[]" value="<?= $invoice_id ?>">
-                                </div>
-                            </td>
-                            <td class="text-bold">
-                                <a href="invoice.php?client_id=<?= $client_id ?>&invoice_id=<?= $invoice_id ?>">
-                                <?= "$invoice_prefix$invoice_number" ?>
-                                </a>
-                            </td>
-                            <td><?= $invoice_scope_display ?></td>
-                            <?php if (!$client_url) { ?>
-                            <td class="text-bold"><a href="invoices.php?client_id=<?= $client_id ?>"><?= $client_name ?></a></td>
-                            <?php } ?>
-                            <td class="text-right text-monospace"><?= numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) ?></td>
-                            <td><?= $invoice_date ?></td>
-                            <td class="<?= $overdue_color ?>"><?= $invoice_due ?></td>
-                            <td><?= $category_name ?></td>
-                            <td>
-                              <?php if ($invoice_status == 'Paid' || $invoice_status == 'Partial') { ?>
-                                <a class="ajax-modal" href="#" title="View payments"
-                                    data-modal-url="modals/invoice/invoice_payments.php?invoice_id=<?= $invoice_id ?>">
-                                  <span class="p-2 badge badge-<?= $invoice_badge_color ?>">
-                                      <?= $invoice_status ?>
-                                  </span>
-                                </a>
-                              <?php } else { ?>
-                                <span class="p-2 badge badge-<?= $invoice_badge_color ?>">
-                                    <?= $invoice_status ?>
-                                </span>
-                              <?php } ?>
-                            </td>
-                            <td><?= $recurring_invoice_display ?></td>
-                            <td>
-                                <div class="dropdown dropleft text-center">
-                                    <button class="btn btn-secondary btn-sm" type="button" data-toggle="dropdown">
-                                        <i class="fas fa-ellipsis-h"></i>
-                                    </button>
-                                    <div class="dropdown-menu">
-                                        <?php if ($invoice_status !== 'Paid' && $invoice_status !== 'Cancelled' && $invoice_status !== 'Draft' && $invoice_status !== 'Non-Billable' && $invoice_amount != 0) { ?>
-                                            <a class="dropdown-item ajax-modal" href="#"
-                                                data-modal-url="modals/payment/payment_add.php?id=<?= $invoice_id ?>">
-                                                <i class="fa fa-fw fa-credit-card mr-2"></i>Add Payment
-                                            </a>
-                                            <div class="dropdown-divider"></div>
-                                            <?php if (mysqli_num_rows($sql_saved_payment_methods) > 0 && ($invoice_status === 'Sent' || $invoice_status === 'Viewed')) { ?>
-                                                <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/payment/payment_saved_method_add.php?id=<?= $invoice_id ?>"><i class="fas fa-fw fa-wallet mr-2"></i>Pay with Saved Card</a>
-                                                <div class="dropdown-divider"></div>
-                                            <?php } ?>
-                                        <?php } ?>
-                                        <a class="dropdown-item ajax-modal" href="#"
-                                            data-modal-url="modals/invoice/invoice_edit.php?id=<?= $invoice_id ?>">
-                                            <i class="fas fa-fw fa-edit mr-2"></i>Edit
-                                        </a>
-                                        <a class="dropdown-item ajax-modal" href="#"
-                                            data-modal-url="modals/invoice/invoice_copy.php?id=<?= $invoice_id ?>">
-                                            <i class="fas fa-fw fa-copy mr-2"></i>Copy
-                                        </a>
-                                        <div class="dropdown-divider"></div>
-                                        <?php if (!empty($config_smtp_provider)) { ?>
-                                            <a class="dropdown-item" href="post.php?email_invoice=<?= $invoice_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>">
-                                                <i class="fas fa-fw fa-paper-plane mr-2"></i>Send Email
-                                            </a>
-                                            <div class="dropdown-divider"></div>
-                                        <?php } ?>
-                                        <?php if ($invoice_status == 'Draft') { ?>
-                                        <a class="dropdown-item" href="post.php?mark_invoice_sent=<?= $invoice_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>">
-                                            <i class="fas fa-fw fa-check mr-2"></i>Mark Sent
-                                        </a>
-                                        <div class="dropdown-divider"></div>
-                                        <?php } ?>
-                                        <a class="dropdown-item text-danger text-bold confirm-link" href="post.php?delete_invoice=<?= $invoice_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>">
-                                            <i class="fas fa-fw fa-trash mr-2"></i>Delete
-                                        </a>
-                                    </div>
-                                </div>
-                            </td>
-                        </tr>
-
-                        <?php
-
-                    }
-
-                    ?>
-
-                    </tbody>
-                </table>
+        <!-- Where they stand - counted over what the filters above leave -->
+        <nav class="nav nav-pills itflow-asset-tabs mt-2 flex-nowrap overflow-auto">
+            <?php foreach ($statuses as $key => $s) {
+                $alarm = $key === 'Overdue' && $counts[$key]; ?>
+                <a class="nav-link text-nowrap <?= $status === $key ? 'active' : '' ?>" href="<?= escapeHtml($filter_url(['status' => $key])) ?>"<?= !empty($s['title']) ? ' title="' . escapeHtml($s['title']) . '"' : '' ?>>
+                    <?php if (!empty($s['icon'])) { ?><i class="fas fa-fw <?= $s['icon'] ?> me-1"></i><?php } ?><?= $s['label'] ?>
+                    <span class="badge rounded-pill ms-1 <?= $alarm ? 'text-bg-danger' : ($key === 'StaleDraft' && $counts[$key] ? 'text-bg-warning' : '') ?>"><?= $counts[$key] ?></span>
+                </a>
+            <?php } ?>
+        </nav>
+        <?php if ($recurring_filter) { ?>
+            <div class="small text-body-secondary mt-2">
+                <i class="fas fa-filter me-1"></i>Made by <?= $recurring_filter_row ? '<a href="recurring_invoice.php?recurring_invoice_id=' . $recurring_filter . '">' . escapeHtml(billingNumber('recurring', $recurring_filter_row)) . '</a>' : 'a recurring invoice' ?>
+                <a class="ms-2" href="<?= escapeHtml($filter_url(['recurring_invoice_id' => ''])) ?>">Clear</a>
             </div>
-        </form>
-        <?php require_once "../includes/filter_footer.php"; ?>
+        <?php } ?>
+        <?php if ($hardware_filter) { ?>
+            <div class="small text-body-secondary mt-2">
+                <i class="fas fa-filter me-1"></i>Hardware sold on them isn't on the client's assets yet - open one and use Add to Assets
+                <a class="ms-2" href="<?= escapeHtml($filter_url(['hardware' => ''])) ?>">Clear</a>
+            </div>
+        <?php } ?>
     </div>
+
+    <form id="bulkActions" action="post.php" method="post">
+        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 itflow-billing-table">
+                <thead class="<?= $num_rows[0] ? '' : 'd-none' ?> text-nowrap table-light">
+                <tr>
+                    <?php if ($can_bulk) { ?>
+                        <th class="checkbox-column border-end">
+                            <div class="form-check">
+                                <input class="form-check-input" id="selectAllCheckbox" type="checkbox" onclick="checkAll(this)" title="Select all on this page">
+                            </div>
+                        </th>
+                    <?php } ?>
+                    <th><?= sortLink('invoice_number', 'Invoice') ?></th>
+                    <?php if (!$client_url) { ?>
+                        <th><?= sortLink('client_name', 'Client') ?></th>
+                    <?php } ?>
+                    <th><?= sortLink('invoice_date', 'Date') ?></th>
+                    <th><?= sortLink('invoice_due', 'Due') ?></th>
+                    <th class="text-end"><?= sortLink('invoice_amount', 'Total') ?></th>
+                    <th class="text-end"><?= sortLink('balance', 'Balance') ?></th>
+                    <th><?= sortLink('invoice_status', 'Status') ?></th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($invoices as $row) {
+                    $invoice_id = intval($row['invoice_id']);
+                    $row_client_id = intval($row['invoice_client_id']);
+                    $row_number = billingNumber('invoice', $row);
+                    $row_status = (string) $row['invoice_status'];
+                    $row_state = invoiceState($row, $row['paid']);
+                    $row_currency = (string) $row['invoice_currency_code'];
+                    $row_url = "invoice.php?{$client_url}invoice_id=$invoice_id";
+                    $row_can_pay = $can_pay && invoiceCanPay($row, $row_state);
+                    ?>
+                    <tr>
+                        <?php if ($can_bulk) { ?>
+                            <td class="checkbox-column bg-light border-end">
+                                <div class="form-check">
+                                    <input class="form-check-input bulk-select" type="checkbox" name="invoice_ids[]" value="<?= $invoice_id ?>" aria-label="Select <?= escapeHtml($row_number) ?>">
+                                </div>
+                            </td>
+                        <?php } ?>
+                        <td class="itflow-billing-number">
+                            <a class="fw-semibold" href="<?= $row_url ?>"><?= escapeHtml($row_number) ?></a>
+                            <?php if (intval($row['invoice_recurring_invoice_id'])) { ?>
+                                <a class="text-body-secondary small ms-1" href="recurring_invoice.php?recurring_invoice_id=<?= intval($row['invoice_recurring_invoice_id']) ?>" title="Made by <?= escapeHtml($row['recurring_invoice_prefix'] . $row['recurring_invoice_number']) ?>"><i class="fas fa-redo-alt"></i></a>
+                            <?php } ?>
+                            <div class="small text-body-secondary text-truncate" style="max-width: 22rem;">
+                                <?= escapeHtml(implode(' · ', array_filter([$row['invoice_scope'], $row['category_name']]))) ?: '&nbsp;' ?>
+                            </div>
+                        </td>
+                        <?php if (!$client_url) { ?>
+                            <td><a data-client-card="<?= $row_client_id ?>" class="text-reset" href="invoices.php?client_id=<?= $row_client_id ?>"><?= escapeHtml($row['client_name']) ?></a></td>
+                        <?php } ?>
+                        <td class="text-nowrap"><?= formatDate($row['invoice_date']) ?></td>
+                        <td class="text-nowrap">
+                            <?= formatDate($row['invoice_due']) ?>
+                            <?php $due_pill = invoiceDuePill($row_state); if ($due_pill) { ?><div><?= $due_pill ?></div><?php } ?>
+                            <?php $row_autopay = intval($row['autopay']) ? invoiceAutopayStatus($row, $row_state, invoiceAutopay($row)) : null;
+                            if ($row_autopay) {
+                                // Paid by its recurring invoice's autopay on the due date (functions/billing_pay.php) ?>
+                                <div><span class="badge rounded-pill bg-<?= $row_autopay['tone'] ?>-subtle text-<?= $row_autopay['tone'] ?>-emphasis fw-normal" title="<?= escapeHtml($row_autopay['text']) ?>"><i class="fas fa-wallet me-1"></i><?= escapeHtml($row_autopay['short']) ?></span></div>
+                            <?php } ?>
+                        </td>
+                        <td class="text-end itflow-money"><?= escapeHtml(billingMoney($row['invoice_amount'], $row_currency)) ?></td>
+                        <td class="text-end itflow-money">
+                            <?php if (in_array($row_state['state'], ['open', 'overdue'], true)) { ?>
+                                <span class="fw-semibold <?= $row_state['state'] === 'overdue' ? 'text-danger-emphasis' : '' ?>"><?= escapeHtml(billingMoney($row_state['balance'], $row_currency)) ?></span>
+                                <?php if ($row_state['paid'] > 0) { ?><div class="small text-body-secondary"><?= escapeHtml(billingMoney($row_state['paid'], $row_currency)) ?> paid</div><?php } ?>
+                            <?php } else { ?>
+                                <span class="text-body-secondary">-</span>
+                            <?php } ?>
+                        </td>
+                        <td class="text-nowrap">
+                            <?php if ($row['paid'] > 0) { ?>
+                                <a href="#" class="ajax-modal text-decoration-none" title="Payments" data-modal-url="modals/invoice/invoice_payments.php?invoice_id=<?= $invoice_id ?>"><?= invoiceStatusBadge($row_status) ?></a>
+                            <?php } else { ?>
+                                <?= invoiceStatusBadge($row_status) ?>
+                            <?php } ?>
+                            <?php $draft_age = invoiceDraftAgeNote($row); if ($draft_age) { ?><div class="mt-1"><?= $draft_age ?></div><?php } ?>
+                        </td>
+                        <td class="text-end">
+                            <div class="dropdown dropstart">
+                                <button class="btn btn-sm btn-light" title="More actions" type="button" data-bs-toggle="dropdown"><i class="fas fa-fw fa-ellipsis-v"></i></button>
+                                <div class="dropdown-menu">
+                                    <a class="dropdown-item" href="<?= $row_url ?>"><i class="fas fa-fw fa-eye text-secondary me-2"></i>Open</a>
+                                    <a class="dropdown-item" href="post.php?export_invoice_pdf=<?= $invoice_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>" target="_blank" rel="noopener"><i class="fas fa-fw fa-file-pdf text-secondary me-2"></i>Download PDF</a>
+                                    <?php if ($row_can_pay) { ?>
+                                        <div class="dropdown-divider"></div>
+                                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/payment/payment_add.php?id=<?= $invoice_id ?>">
+                                            <i class="fas fa-fw fa-credit-card text-secondary me-2"></i>Add Payment
+                                        </a>
+                                        <?php if (isset($saved_card_clients[$row_client_id]) && in_array($row_status, ['Sent', 'Viewed'], true)) { ?>
+                                            <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/payment/payment_saved_method_add.php?id=<?= $invoice_id ?>">
+                                                <i class="fas fa-fw fa-wallet text-secondary me-2"></i>Charge Saved Card
+                                            </a>
+                                        <?php } ?>
+                                    <?php } ?>
+                                    <?php if ($can_edit) { ?>
+                                        <div class="dropdown-divider"></div>
+                                        <?php if ($mail_ready && !in_array($row_status, ['Cancelled', 'Non-Billable'], true)) { ?>
+                                            <button type="submit" class="dropdown-item confirm-link" form="quickSendInvoice" name="invoice_id" value="<?= $invoice_id ?>"
+                                                data-confirm-title="Send <?= escapeHtml($row_number) ?> now?" data-confirm-text="It goes to the client's primary and billing contacts." data-confirm-button="Send">
+                                                <i class="fas fa-fw fa-bolt text-secondary me-2"></i>Quick Send
+                                            </button>
+                                            <a class="dropdown-item ajax-modal" href="#" data-modal-size="lg" data-modal-url="modals/invoice/invoice_email.php?invoice_id=<?= $invoice_id ?>">
+                                                <i class="fas fa-fw fa-paper-plane text-secondary me-2"></i>Send Email<span class="text-body-secondary">...</span>
+                                            </a>
+                                        <?php } ?>
+                                        <?php if ($row_status === 'Draft') { ?>
+                                            <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/invoice/invoice_mark_sent.php?invoice_id=<?= $invoice_id ?>">
+                                                <i class="fas fa-fw fa-check text-secondary me-2"></i>Mark Sent<span class="text-body-secondary">...</span>
+                                            </a>
+                                        <?php } ?>
+                                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/invoice/invoice_edit.php?id=<?= $invoice_id ?>">
+                                            <i class="fas fa-fw fa-edit text-secondary me-2"></i>Edit
+                                        </a>
+                                        <a class="dropdown-item ajax-modal" href="#" data-modal-url="modals/invoice/invoice_copy.php?id=<?= $invoice_id ?>">
+                                            <i class="far fa-fw fa-copy text-secondary me-2"></i>Copy
+                                        </a>
+                                    <?php } ?>
+                                    <?php if ($can_delete) { ?>
+                                        <div class="dropdown-divider"></div>
+                                        <a class="dropdown-item text-danger fw-bold confirm-link" href="post.php?delete_invoice=<?= $invoice_id ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>"
+                                            data-confirm-text="<?= escapeHtml($row_number) ?> goes for good, with its lines, payments and history.">
+                                            <i class="fas fa-fw fa-trash me-2"></i>Delete
+                                        </a>
+                                    <?php } ?>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                <?php } ?>
+                </tbody>
+            </table>
+        </div>
+    </form>
+    <?php
+    $empty_state = [
+        'thing' => 'invoices',
+        'icon' => 'fa-file-invoice-dollar',
+        'filtered' => $q || $category_filter || $recurring_filter || $hardware_filter || $dtf !== '1970-01-01',
+        'views' => ['status'],
+        'view' => emptyStatePill($statuses, $status, '', ['Unpaid', 'Overdue', 'StaleDraft']),
+        'text' => 'Bill a client by hand, or from an accepted quote or their unbilled time.',
+        'actions' => $can_edit ? [['label' => 'New Invoice', 'modal' => "modals/invoice/invoice_add.php?$client_url"]] : [],
+    ];
+    require_once "../includes/filter_footer.php";
+    ?>
 </div>
 
-<script src="../js/bulk_actions.js"></script>
+<?php if ($can_edit && $mail_ready) { ?>
+    <?php
+    /*
+     * One hidden form for the whole page, targeted by the Quick Send buttons via
+     * their form="" attribute. It cannot be a form per button: the table is in
+     * the bulkActions form, and a nested form is invalid HTML - the browser
+     * drops the inner one and the click submits the bulk action instead. The
+     * button carries the id as its own name/value.
+     */
+    ?>
+    <form id="quickSendInvoice" action="post.php" method="post" class="d-none">
+        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+        <input type="hidden" name="email_invoice" value="1">
+        <input type="hidden" name="quick_send" value="1">
+    </form>
+<?php } ?>
 
-<?php
-require_once "../includes/footer.php";
+<script src="<?= staticFileUrl('/js/bulk_actions.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/invoice_bulk.js') ?>"></script>
+
+<?php require_once "../includes/footer.php";

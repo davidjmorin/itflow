@@ -1,65 +1,34 @@
 <?php
 
+/* New Account. ?type= starts it as that kind. */
+
 require_once '../../../includes/modal_header.php';
+
+// Bookkeeping switched off (Admin > Settings > Modules)
+if (!moduleOn('bookkeeping')) {
+    exit(json_encode(['error' => moduleOffText('bookkeeping')]));
+}
+
+enforceUserPermission('module_financial', 2);
+
+$form_row = null;
+$form_type = intval($_GET['type'] ?? 1);
 
 ob_start();
 
 ?>
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-piggy-bank mr-2"></i>New Account</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-piggy-bank me-2"></i>New Account</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-
     <div class="modal-body">
-
-        <div class="form-group">
-            <label>Account Name <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-piggy-bank"></i></span>
-                </div>
-                <input type="text" class="form-control" name="name" placeholder="Account name" maxlength="200" required autofocus>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Opening Balance <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
-                </div>
-                <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="opening_balance" placeholder="0.00" required>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Currency <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-money-bill"></i></span>
-                </div>
-                <select class="form-control select2" name="currency_code" required>
-                    <option value="">- Currency -</option>
-                    <?php foreach ($currencies_array as $currency_code => $currency_name) { ?>
-                        <option <?php if ($session_company_currency == $currency_code) { echo "selected"; } ?> value="<?= $currency_code ?>"><?= "$currency_code - $currency_name" ?></option>
-                    <?php } ?>
-                </select>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Notes</label>
-            <textarea class="form-control" rows="5" placeholder="Enter some notes" name="notes"></textarea>
-        </div>
-
+        <?php require __DIR__ . '/account_form.php'; ?>
     </div>
     <div class="modal-footer">
-        <button type="submit" name="add_account" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Create</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="add_account" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

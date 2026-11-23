@@ -10,14 +10,89 @@ require_once '../functions.php';
 require_once 'includes/check_login.php';
 require_once 'functions.php';
 
+/*
+ * View as contact is read only: leaving it (Exit, or Sign out) is the only
+ * thing done here, besides downloading the statement - everything else is
+ * turned away before any handler runs.
+ */
+if (!empty($_SESSION['portal_view_as']) && (isset($_GET['exit_view_as']) || isset($_GET['logout']))) {
+    $back = $portal_view_as ? "/agent/contact.php?client_id=" . intval($portal_view_as['client_id']) . "&contact_id=" . intval($portal_view_as['contact_id']) : '/agent/';
+    unset($_SESSION['portal_view_as']);
+    redirect($back);
+}
+if (portalViewingAs() && !isset($_GET['export_statement_pdf']) && !isset($_GET['kb_suggest'])) {
+    flashAlert("You're viewing the portal as " . escapeHtml($portal_view_as['contact_name']) . " - nothing can be changed", 'error');
+    redirect();
+}
+
+// Two-step sign-in required and not set up yet: client/includes/check_login.php has
+// already turned away everything but setting it up, or signing out
+
+/*
+ * The Help articles that might answer a new ticket's subject, as it is typed
+ * on New ticket (js/portal.js) - at most three of the ones shared with their
+ * company, as JSON [{title, summary, url}]. It changes nothing, so it answers
+ * when viewing the portal as a contact too.
+ */
+if (isset($_GET['kb_suggest'])) {
+    header('Content-Type: application/json');
+    $kb_rows = kbOn() ? kbFind((string) $_GET['kb_suggest'], kbClientSql($session_client_id), 3) : [];
+    echo json_encode(array_map(function ($row) {
+        return ['title' => $row['kb_article_title'], 'summary' => kbArticleExcerpt($row, 120), 'url' => 'kb_article.php?id=' . intval($row['kb_article_id'])];
+    }, $kb_rows));
+    exit;
+}
+
+/*
+ * "Was this helpful?" under a Help article (kbFeedbackHtml()) - the answer
+ * (kb_feedback, with helpful), then for a no what was missing
+ * (kb_feedback_comment). Only for an article shared with their company. Back
+ * to the article.
+ */
+if (isset($_POST['kb_feedback']) || isset($_POST['kb_feedback_comment'])) {
+
+    validateCSRFToken();
+
+    $kb_article_id = intval($_POST['kb_feedback'] ?? $_POST['kb_feedback_comment']);
+    if (!kbFeedbackReady() || !mysqli_num_rows(mysqli_query($mysqli, "SELECT 1 FROM kb_articles WHERE kb_article_id = $kb_article_id AND " . kbClientSql($session_client_id)))) {
+        redirect('kb.php');
+    }
+    if (isset($_POST['kb_feedback'])) {
+        kbFeedbackSave($kb_article_id, intval($_POST['helpful'] ?? 0) === 1, 'portal', $session_contact_id, $session_client_id);
+    } else {
+        kbFeedbackComment($kb_article_id, $_POST['comment'] ?? '');
+    }
+    redirect("kb_article.php?id=$kb_article_id#kb-feedback");
+}
+
 if (isset($_POST['add_ticket'])) {
 
     validateCSRFToken();
 
-    $subject = escapeSql($_POST['subject'] ?? '');
-    $details = mysqli_real_escape_string($mysqli, ($_POST['details'] ?? ''));
+    // A subject and something in the details - the editor checks this too, but
+    // a page that never loaded it would send them blank
+    $raw_details = (string) ($_POST['details'] ?? '');
+    if (trim((string) ($_POST['subject'] ?? '')) === '' || portalHtmlIsEmpty($raw_details)) {
+        flashAlert("Give the ticket a subject and tell us what is happening", 'error');
+        redirect('ticket_add.php');
+    }
+
+    $subject = escapeSql(mb_substr(trim($_POST['subject']), 0, 500));
+    $details = mysqli_real_escape_string($mysqli, $raw_details);
     $category = intval($_POST['category'] ?? 0);
     $asset = intval($_POST['asset'] ?? 0);
+
+    // Only a ticket category that is in use
+    if ($category && !mysqli_num_rows(mysqli_query($mysqli, "SELECT 1 FROM categories WHERE category_id = $category AND category_type = 'Ticket' AND category_archived_at IS NULL"))) {
+        $category = 0;
+    }
+
+    // Only one of their company's devices - their own, or any of the company's
+    // for a primary or technical contact, as the form offers
+    if ($asset && !mysqli_num_rows(mysqli_query($mysqli, "SELECT 1 FROM assets WHERE asset_id = $asset AND asset_client_id = $session_client_id AND asset_archived_at IS NULL"
+        . (portalSeesAllTickets() ? '' : " AND asset_contact_id = $session_contact_id")))) {
+        $asset = 0;
+    }
 
     // Get settings from load_global_settings.php
     $config_ticket_prefix = escapeSql($config_ticket_prefix);
@@ -29,9 +104,9 @@ if (isset($_POST['add_ticket'])) {
     //Generate a unique URL key for clients to access
     $url_key = randomString(32);
 
-    // Ensure priority is low/med/high (as can be user defined)
+    // Ensure priority is one of the four allowed values (as can be user defined)
     if ($_POST['priority'] !== "Low" && $_POST['priority'] !== "Medium" && $_POST['priority'] !== "High" && $_POST['priority'] !== "Urgent") {
-        $priority = "Low";
+        $priority = "Medium";
     } else {
         $priority = escapeSql($_POST['priority']);
     }
@@ -51,45 +126,14 @@ if (isset($_POST['add_ticket'])) {
     $ticket_id = mysqli_insert_id($mysqli);
     applyTicketSla($ticket_id);
 
-    // Notify agent DL of the new ticket, if populated with a valid email
-    if ($config_ticket_new_ticket_notification_email) {
+    // Screenshots and files sent with it belong to the ticket itself
+    saveTicketAttachments($ticket_id, null, 'file');
 
-        $client_name = escapeSql($session_client_name);
-        if (function_exists('removeEmoji')) {
-            $details = removeEmoji($details);
-        }
+    // The new-ticket address (Admin > Ticket), when there is one
+    ticketMailNewTicketAddress($ticket_id, 'portal');
 
-        $email_subject = "ITFlow - New Ticket - $client_name: $subject";
-        $email_body = "Hello, <br><br>This is a notification that a new ticket has been raised in ITFlow. <br>Client: $client_name<br>Priority: $priority<br>Link: https://$config_base_url/agent/ticket.php?ticket_id=$ticket_id&client_id=$session_client_id <br><br><b>$subject</b><br>$details";
-
-        // Queue Mail
-        $data = [
-            [
-                'from' => $config_ticket_from_email,
-                'from_name' => $config_ticket_from_name,
-                'recipient' => $config_ticket_new_ticket_notification_email,
-                'recipient_name' => $config_ticket_from_name,
-                'subject' => $email_subject,
-                'body' => $email_body,
-            ]
-        ];
-        addToMailQueue($data);
-    }
-
-    if (filter_var($session_contact_email, FILTER_VALIDATE_EMAIL) && $config_ticket_client_general_notifications == 1) {
-        $rendered_mail = renderTicketCreatedEmail($ticket_id, $session_contact_name, $session_contact_email, false);
-        $client_data = [
-            [
-                'from' => $config_ticket_from_email,
-                'from_name' => mysqli_real_escape_string($mysqli, $config_ticket_from_name),
-                'recipient' => $session_contact_email,
-                'recipient_name' => mysqli_real_escape_string($mysqli, $session_contact_name),
-                'subject' => mysqli_real_escape_string($mysqli, $rendered_mail['subject']),
-                'body' => mysqli_real_escape_string($mysqli, $rendered_mail['body'])
-            ]
-        ];
-        addToMailQueue($client_data);
-    }
+    // The primary and technical contacts who asked to hear about new tickets at their company
+    ticketMailColleaguesNew($ticket_id);
 
     // Custom action/notif handler
     triggerCustomAction('ticket_create', $ticket_id);
@@ -100,16 +144,65 @@ if (isset($_POST['add_ticket'])) {
 
 }
 
+if (isset($_POST['add_ticket_from_form'])) {
+
+    // A request form - a ticket template offered in the portal (client/ticket_add.php?form=)
+    validateCSRFToken();
+
+    $sees_all = portalSeesAllTickets();
+    $template = ticketTemplatePortalForm(intval($_POST['form'] ?? 0), $session_client_id, $sees_all);
+    if (!$template) {
+        flashAlert("That request form isn't available any more - tell us what you need here", 'error');
+        redirect('ticket_add.php');
+    }
+    $template_id = intval($template['ticket_template_id']);
+    $form_url = "ticket_add.php?form=$template_id";
+
+    // What it asks the client, answered as it needs
+    $answers = ticketTemplatePortalAnswers(ticketTemplateFillInsFor($template_id), $_POST['fill_ins'] ?? [], $fill_in_error);
+    if ($answers === null) {
+        flashAlert($fill_in_error, 'error');
+        redirect($form_url);
+    }
+
+    // Only one of their company's devices, as on a ticket - and only when the form asks
+    $asset = intval($_POST['asset'] ?? 0);
+    if ($asset && (!ticketTemplateMentionsAsset($template, ticketTemplateTasks($template_id)) || !mysqli_num_rows(mysqli_query($mysqli, "SELECT 1 FROM assets
+        WHERE asset_id = $asset AND asset_client_id = $session_client_id AND asset_archived_at IS NULL" . ($sees_all ? '' : " AND asset_contact_id = $session_contact_id"))))) {
+        $asset = 0;
+    }
+    $notes = mb_substr(trim((string) ($_POST['notes'] ?? '')), 0, 5000);
+
+    $ticket_id = ticketTemplatePortalRaise($template, $session_client_id, $session_contact_id, $session_user_id, (string) $contact['contact_name'], $answers, $notes, $asset);
+
+    // Files sent with it belong to the ticket itself
+    saveTicketAttachments($ticket_id, null, 'file');
+
+    // The new-ticket address (Admin > Ticket), and the colleagues who asked to hear about new tickets
+    ticketMailNewTicketAddress($ticket_id, 'portal');
+    ticketMailColleaguesNew($ticket_id);
+
+    triggerCustomAction('ticket_create', $ticket_id);
+
+    $row = ticketRow($ticket_id);
+    logAudit("Ticket", "Create", "$session_contact_name asked for " . escapeSql(ticketTemplatePortalTitle($template)) . " - ticket " . escapeSql(ticketReference($row)) . " from the client portal", $session_client_id, $ticket_id);
+
+    redirect("ticket.php?id=$ticket_id");
+
+}
+
 if (isset($_POST['add_ticket_comment'])) {
 
     validateCSRFToken();
 
     $ticket_id = intval($_POST['ticket_id']);
-    $comment = mysqli_real_escape_string($mysqli, $_POST['comment']);
+    $raw_comment = (string) ($_POST['comment'] ?? '');
+    $comment = mysqli_real_escape_string($mysqli, $raw_comment);
 
-    // After stripping bad HTML, check the comment isn't just empty
-    if (empty($comment)) {
-        flashAlert("You must enter a comment", 'danger');
+    // Nothing but empty paragraphs from the editor is no reply - a picture on
+    // its own is
+    if (portalHtmlIsEmpty($raw_comment)) {
+        flashAlert("Write a reply first", 'error');
         redirect();
     }
 
@@ -125,47 +218,24 @@ if (isset($_POST['add_ticket_comment'])) {
         $original_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT ticket_status FROM tickets WHERE ticket_id = $ticket_id LIMIT 1"));
         $original_ticket_status = intval($original_row['ticket_status'] ?? 0);
 
-        mysqli_query($mysqli, "UPDATE tickets SET ticket_status = 2 WHERE ticket_id = $ticket_id AND ticket_client_id = $session_client_id LIMIT 1");
+        // Back to Open - unless it is in a status of your own set to stay put when the client replies (Scheduled, say).
+        // A resolved ticket is reopened - its resolved time goes and the resolution clock runs again, as by email.
+        $new_ticket_status = ticketStatusAfterClientReply($original_ticket_status);
+        $reopen = $original_ticket_status === TICKET_STATUS_RESOLVED;
+        mysqli_query($mysqli, "UPDATE tickets SET ticket_status = $new_ticket_status" . ($reopen ? ", ticket_resolved_at = NULL" : "") . " WHERE ticket_id = $ticket_id AND ticket_client_id = $session_client_id LIMIT 1");
         syncTicketSlaClock($ticket_id);
+        if ($reopen) {
+            resetTicketResolutionSla($ticket_id);
+        }
 
         // Only record the reopen when the ticket was not already open
-        if ($original_ticket_status !== 2) {
+        if ($original_ticket_status !== $new_ticket_status) {
             logTicketHistory($ticket_id, "$session_contact_name replied from the client portal, reopening the ticket");
         }
 
 
-        // Get ticket details &  Notify the assigned tech (if any)
-        $ticket_details = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT client_name, ticket_assigned_to, ticket_number, ticket_subject FROM tickets LEFT JOIN clients ON ticket_client_id = client_id WHERE ticket_id = $ticket_id LIMIT 1"));
-
-        $ticket_number = intval($ticket_details['ticket_number']);
-        $ticket_assigned_to = intval($ticket_details['ticket_assigned_to']);
-        $ticket_subject = escapeSql($ticket_details['ticket_subject']);
-        $client_name = escapeSql($ticket_details['client_name']);
-
-        if ($ticket_details && $ticket_assigned_to !== 0) {
-
-            // Get tech details
-            $tech_details = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT user_email, user_name FROM users WHERE user_id = $ticket_assigned_to LIMIT 1"));
-            $tech_email = escapeSql($tech_details['user_email']);
-            $tech_name = escapeSql($tech_details['user_name']);
-
-            $subject = "$config_app_name Ticket updated - [$config_ticket_prefix$ticket_number] $ticket_subject";
-            $body    = "Hello $tech_name,<br><br>A new reply has been added to the below ticket, check ITFlow for full details.<br><br>Client: $client_name<br>Ticket: $config_ticket_prefix$ticket_number<br>Subject: $ticket_subject<br><br>https://$config_base_url/agent/ticket.php?ticket_id=$ticket_id&client_id=$session_client_id";
-
-            $data = [
-                [
-                    'from' => $config_ticket_from_email,
-                    'from_name' => $config_ticket_from_name,
-                    'recipient' => $tech_email,
-                    'recipient_name' => $tech_name,
-                    'subject' => $subject,
-                    'body' => $body
-                ]
-            ];
-
-            addToMailQueue($data);
-
-        }
+        // The agent it is assigned to, with what they wrote
+        ticketMailAssigneeReplied($ticket_id, 'portal', (string) getFieldById('ticket_replies', $ticket_reply_id, 'ticket_reply'), stripslashes($session_contact_name));
 
         // Store any attached files against this reply
         saveTicketAttachments($ticket_id, $ticket_reply_id, 'file');
@@ -182,6 +252,108 @@ if (isset($_POST['add_ticket_comment'])) {
     }
 }
 
+
+
+if (isset($_POST['set_contact_phone'])) {
+
+    validateCSRFToken();
+
+    /*
+     * SCOPING: as with the PIN above, the row updated is the logged-in
+     * contact's own, from the session. No contact_id parameter exists on this
+     * handler, so there is nothing to point at somebody else's record with.
+     *
+     * Sanitising exactly as agent/post/contact_model.php does - digits only for
+     * every phone field - so a number typed in the portal is stored in the same
+     * shape as one typed by an agent and formatPhoneNumber() renders both the
+     * same way. Anything else would make the portal the odd one out.
+     */
+    $phone_country_code = preg_replace("/[^0-9]/", '', $_POST['phone_country_code'] ?? '');
+    $phone = preg_replace("/[^0-9]/", '', $_POST['phone'] ?? '');
+    $extension = preg_replace("/[^0-9]/", '', $_POST['extension'] ?? '');
+    $mobile_country_code = preg_replace("/[^0-9]/", '', $_POST['mobile_country_code'] ?? '');
+    $mobile = preg_replace("/[^0-9]/", '', $_POST['mobile'] ?? '');
+
+    // Columns are varchar(200), country codes varchar(10)
+    $phone_country_code = substr($phone_country_code, 0, 10);
+    $mobile_country_code = substr($mobile_country_code, 0, 10);
+    $phone = substr($phone, 0, 200);
+    $extension = substr($extension, 0, 200);
+    $mobile = substr($mobile, 0, 200);
+
+    // A country code on its own is not a number - drop it rather than store a
+    // dangling code the formatter would try to render
+    if (empty($phone)) {
+        $phone_country_code = '';
+        $extension = '';
+    }
+    if (empty($mobile)) {
+        $mobile_country_code = '';
+    }
+
+    mysqli_query($mysqli, "UPDATE contacts SET
+        contact_phone_country_code = '$phone_country_code',
+        contact_phone = '$phone',
+        contact_extension = '$extension',
+        contact_mobile_country_code = '$mobile_country_code',
+        contact_mobile = '$mobile'
+        WHERE contact_id = $session_contact_id AND contact_client_id = $session_client_id");
+
+    logAudit("Contact", "Edit", "Client contact $session_contact_name updated their phone numbers in the client portal", $session_client_id, $session_contact_id);
+
+    flashAlert("Phone numbers saved");
+
+    redirect('profile.php');
+
+}
+
+if (isset($_POST['set_contact_pin'])) {
+
+    validateCSRFToken();
+
+    /*
+     * SCOPING: the row updated is the logged-in contact's own, taken from the
+     * session. There is no contact_id parameter on this handler by design, so
+     * there is nothing for a contact to point at somebody else's record with.
+     *
+     * No capability gate: the PIN belongs to the contact, not to a portal
+     * section, so every signed-in contact manages their own - same as the
+     * password change above.
+     */
+    // The PIN is what we read back to verify a caller, so changing it is
+    // re-authenticated for password logins. SSO contacts are exempt: they have
+    // no local password to check, and the identity provider already did this.
+    if (!portalReauthenticate($_POST['current_password'] ?? '')) {
+        flashAlert("That password was not right - your PIN has not been changed", 'error');
+        redirect('profile.php');
+    }
+
+    // contact_pin is varchar(255) - trim to fit rather than let an over-long
+    // value error out under strict mode.
+    //
+    // escapeSql() runs strip_tags() before escaping, so the length has to be
+    // re-checked AFTER it: a PIN of "<1234>" passed a check on the raw input,
+    // came out of strip_tags() as an empty string, and the UPDATE below then
+    // silently WIPED the contact's PIN while flashing "Phone PIN updated".
+    $pin = escapeSql(substr(trim($_POST['pin'] ?? ''), 0, 255));
+
+    if (strlen($pin) < 4) {
+        flashAlert("Your PIN needs to be at least 4 characters, and cannot contain < or >", 'error');
+        redirect('profile.php');
+    }
+
+    mysqli_query($mysqli, "UPDATE contacts SET contact_pin = '$pin' WHERE contact_id = $session_contact_id AND contact_client_id = $session_client_id");
+
+    // The PIN itself never goes in the log - it is a verification secret, and
+    // an audit trail an agent can read would defeat the point of having one
+    logAudit("Contact", "Edit", "Client contact $session_contact_name set their phone PIN in the client portal", $session_client_id, $session_contact_id);
+
+    flashAlert("Phone PIN saved");
+
+    redirect('profile.php');
+
+}
+
 if (isset($_GET['approve_ticket_task'])) {
 
     validateCSRFToken();
@@ -193,18 +365,17 @@ if (isset($_GET['approve_ticket_task'])) {
     $approval_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT approval_created_by, approval_required_user_id, approval_scope, approval_type, task_name,
         task_ticket_id FROM task_approvals LEFT JOIN tasks on task_id = approval_task_id WHERE approval_id = $approval_id AND approval_task_id = $task_id AND approval_url_key = '$url_key' AND approval_status = 'pending' AND approval_scope = 'client'"));
 
-    $task_name = escapeHtml($approval_row['task_name']);
+    if (!$approval_row) {
+        flashAlert("That task isn't waiting for your approval", 'error');
+        redirect();
+    }
+
+    $task_name = escapeSql($approval_row['task_name']);
     $scope = escapeHtml($approval_row['approval_scope']);
     $type = escapeHtml($approval_row['approval_type']);
     $required_user = intval($approval_row['approval_required_user_id']);
     $created_by = intval($approval_row['approval_created_by']);
     $ticket_id = intval($approval_row['task_ticket_id']);
-
-    if (!$approval_row) {
-        flashAlert("Cannot find/approve that task", 'warning');
-        redirect();
-        exit;
-    }
 
     // Approve
     mysqli_query($mysqli, "UPDATE task_approvals SET approval_status = 'approved', approval_approved_by = $session_user_id WHERE approval_id = $approval_id AND approval_task_id = $task_id AND approval_url_key = '$url_key' AND approval_status = 'pending' AND approval_scope = 'client'");
@@ -217,7 +388,7 @@ if (isset($_GET['approve_ticket_task'])) {
     // Logging
     logAudit("Task", "Edit", "Contact $session_contact_email approved task $task_name (approval $approval_id)", $session_client_id, $task_id);
 
-    flashAlert("Task Approved");
+    flashAlert("Task approved - thank you");
     redirect();
 
 }
@@ -227,7 +398,8 @@ if (isset($_POST['add_ticket_feedback'])) {
     validateCSRFToken();
 
     $ticket_id = intval($_POST['ticket_id']);
-    $feedback = escapeSql($_POST['add_ticket_feedback']);
+    // Only the two ratings the portal offers - the reports count Good against Bad
+    $feedback = $_POST['add_ticket_feedback'] === 'Bad' ? 'Bad' : 'Good';
 
     // Verify the contact has access to the provided ticket ID
     if (verifyContactTicketAccess($ticket_id, "Closed")) {
@@ -268,6 +440,13 @@ if (isset($_GET['resolve_ticket'])) {
 
     // Verify the contact has access to the provided ticket ID
     if (verifyContactTicketAccess($ticket_id, "Open")) {
+
+        // Only a ticket that isn't resolved yet, with its tasks done - as its page offers
+        $resolvable = mysqli_fetch_row(mysqli_query($mysqli, "SELECT ticket_resolved_at FROM tickets WHERE ticket_id = $ticket_id LIMIT 1"));
+        if (!$resolvable || $resolvable[0] !== null || ticketOpenTaskCount($ticket_id)) {
+            flashAlert("This ticket can't be resolved yet", 'error');
+            redirect("ticket.php?id=" . $ticket_id);
+        }
 
         // Resolve the ticket
         mysqli_query($mysqli, "UPDATE tickets SET ticket_status = 4, ticket_resolved_at = NOW() WHERE ticket_id = $ticket_id AND ticket_client_id = $session_client_id");
@@ -345,6 +524,13 @@ if (isset($_GET['close_ticket'])) {
     // Verify the contact has access to the provided ticket ID
     if (verifyContactTicketAccess($ticket_id, "Open")) {
 
+        // Only a resolved ticket closes - as its page offers
+        $closable = mysqli_fetch_row(mysqli_query($mysqli, "SELECT ticket_resolved_at FROM tickets WHERE ticket_id = $ticket_id LIMIT 1"));
+        if (!$closable || $closable[0] === null) {
+            flashAlert("Only a resolved ticket can be closed", 'error');
+            redirect("ticket.php?id=" . $ticket_id);
+        }
+
         // Fully close ticket
         mysqli_query($mysqli, "UPDATE tickets SET ticket_status = 5, ticket_closed_at = NOW() WHERE ticket_id = $ticket_id AND ticket_client_id = $session_client_id");
         syncTicketSlaClock($ticket_id);
@@ -366,6 +552,34 @@ if (isset($_GET['close_ticket'])) {
     }
 }
 
+
+if (isset($_GET['export_statement_pdf'])) {
+
+    validateCSRFToken();
+
+    portalBillingGate();
+
+    /*
+     * SCOPING: the client is taken from the session, never from the request.
+     * There is no client_id parameter on this handler by design - a contact
+     * cannot ask for another company's statement because there is nothing to
+     * ask with.
+     *
+     * The same statement the agents email (functions/billing_email.php): the
+     * open invoices, or with paid=1 everything from the last twelve months.
+     */
+    $with_paid = !empty($_GET['paid']);
+    $statement = billingStatement($session_client_id, $with_paid ? date('Y-m-d', strtotime('-12 months')) : '', '', $with_paid);
+
+    if (!$statement['invoices']) {
+        flashAlert("There is nothing to put on a statement", 'error');
+        redirect("statement.php");
+    }
+
+    billingPdfSend(billingStatementPdf($statement), true);
+
+}
+
 if (isset($_GET['logout'])) {
 
     setcookie("PHPSESSID", '', time() - 3600, "/");
@@ -378,319 +592,600 @@ if (isset($_GET['logout'])) {
 
 }
 
-if (isset($_POST['edit_profile'])) {
+if (isset($_POST['portal_password_change'])) {
 
     validateCSRFToken();
 
-    $new_password = $_POST['new_password'];
-
-    if (!empty($new_password)) {
-        $password_hash = password_hash($new_password, PASSWORD_DEFAULT);
-        mysqli_query($mysqli, "UPDATE users SET user_password = '$password_hash' WHERE user_id = $session_user_id");
-
-        // Logging
-        logAudit("Contact", "Edit", "Client contact $session_contact_name edited their profile/password in the client portal", $session_client_id, $session_contact_id);
+    // Your account > Signing in. A password account only, and the current
+    // password first - a hijacked session can't lock the contact out
+    if ($session_auth_method !== 'local') {
+        redirect('profile.php');
+    }
+    $new_password = (string) ($_POST['new_password'] ?? '');
+    if (!portalReauthenticate($_POST['current_password'] ?? '')) {
+        flashAlert("That is not your current password - your password has not been changed", 'error');
+        redirect('profile.php#security');
+    }
+    if (($problem = userPasswordProblem($new_password)) !== '') {
+        flashAlert(escapeHtml($problem) . ' Your password has not been changed.', 'error');
+        redirect('profile.php#security');
+    }
+    if ($new_password !== (string) ($_POST['confirm_password'] ?? '')) {
+        flashAlert('The two new passwords are not the same - your password has not been changed', 'error');
+        redirect('profile.php#security');
     }
 
-    redirect('index.php');
+    $new_hash = password_hash($new_password, PASSWORD_DEFAULT);
+    mysqli_query($mysqli, "UPDATE users SET user_password = '" . escapeSql($new_hash) . "' WHERE user_id = $session_user_id AND user_type = 2");
+    portalPasswordLinkClear($session_user_id);
+    // This browser stays signed in, with a new session id - every other session of theirs ends
+    userSessionRestamp($session_user_id, $new_hash);
+
+    logAudit("Contact", "Edit", "Client contact $session_contact_name changed their password in the client portal", $session_client_id, $session_contact_id);
+    portalMailAccountChange(stripslashes($session_contact_email), stripslashes($session_contact_name), 'password');
+
+    flashAlert("Your password is changed");
+    redirect('profile.php');
 
 }
 
-if (isset($_POST['add_contact'])) {
+if (isset($_POST['portal_mfa_enable'])) {
 
     validateCSRFToken();
 
-    enforceContactCan('contacts');
+    // Two-step sign-in on: the code from the app has to match the secret shown
+    // (profile.php?mfa=setup keeps it in the session until then)
+    require_once '../libs/totp/totp.php';
 
-    $contact_name = escapeSql($_POST['contact_name']);
-    $contact_email = escapeSql($_POST['contact_email']);
-    $contact_technical = intval($_POST['contact_technical'] ?? 0);
-    $contact_billing = intval($_POST['contact_billing'] ?? 0);
-    $contact_auth_method = escapeSql($_POST['contact_auth_method']);
-
-    // Check the email isn't already in use
-    $sql = mysqli_query($mysqli, "SELECT user_id FROM users WHERE user_email = '$contact_email'");
-    if ($sql && mysqli_num_rows($sql) > 0) {
-        flashAlert("Cannot add contact as that email address is already in use", 'danger');
-        redirect('contact_add.php');
+    $secret = (string) ($_SESSION['portal_mfa_secret'] ?? '');
+    $code = preg_replace('/\s+/', '', (string) ($_POST['verify_code'] ?? ''));
+    if ($session_auth_method !== 'local' || $secret === '') {
+        redirect('profile.php');
+    }
+    if (!preg_match('/^[0-9]{6}$/', $code) || !TokenAuth6238::verify($secret, $code, 1)) {
+        flashAlert("That code did not match - check the time on your phone is right, and enter the newest code", 'error');
+        redirect('profile.php?mfa=setup#security');
     }
 
-    // Create user account with rand password for the contact
-    $contact_user_id = 0;
-    if ($contact_name && $contact_email && $contact_auth_method) {
+    mysqli_query($mysqli, "UPDATE users SET user_token = '" . escapeSql($secret) . "' WHERE user_id = $session_user_id AND user_type = 2");
+    mysqli_query($mysqli, "DELETE FROM remember_tokens WHERE remember_token_user_id = $session_user_id");
+    unset($_SESSION['portal_mfa_secret']);
 
-        $password_hash = password_hash(randomString(), PASSWORD_DEFAULT);
+    logAudit("Contact", "Edit", "Client contact $session_contact_name turned on two-step sign-in in the client portal", $session_client_id, $session_contact_id);
+    portalMailAccountChange(stripslashes($session_contact_email), stripslashes($session_contact_name), 'mfa_on');
 
-        mysqli_query($mysqli, "INSERT INTO users SET user_name = '$contact_name', user_email = '$contact_email', user_password = '$password_hash', user_auth_method = '$contact_auth_method', user_type = 2");
+    flashAlert("Two-step sign-in is on - signing in will ask for a code from your app");
+    redirect('profile.php');
 
-        $contact_user_id = mysqli_insert_id($mysqli);
+}
 
+if (isset($_POST['portal_mfa_disable'])) {
+
+    validateCSRFToken();
+
+    if ($session_auth_method !== 'local' || !$session_mfa_on) {
+        redirect('profile.php');
+    }
+    if (intval($config_client_portal_require_mfa) === 1) {
+        flashAlert(escapeHtml($session_company_name) . " asks everyone to use two-step sign-in, so it stays on", 'error');
+        redirect('profile.php#security');
+    }
+    if (!portalReauthenticate($_POST['current_password'] ?? '')) {
+        flashAlert("That is not your current password - two-step sign-in is still on", 'error');
+        redirect('profile.php#security');
     }
 
-    // Create contact record
-    mysqli_query($mysqli, "INSERT INTO contacts SET contact_name = '$contact_name', contact_email = '$contact_email', contact_billing = $contact_billing, contact_technical = $contact_technical, contact_client_id = $session_client_id, contact_user_id = $contact_user_id");
+    portalMfaReset($session_user_id);
 
-    $contact_id = mysqli_insert_id($mysqli);
+    logAudit("Contact", "Edit", "Client contact $session_contact_name turned off two-step sign-in in the client portal", $session_client_id, $session_contact_id);
+    portalMailAccountChange(stripslashes($session_contact_email), stripslashes($session_contact_name), 'mfa_off');
 
-    // Logging
-    logAudit("Contact", "Create", "Client contact $session_contact_name created contact $contact_name in the client portal", $session_client_id, $contact_id);
+    flashAlert("Two-step sign-in is off");
+    redirect('profile.php');
 
+}
+
+if (isset($_POST['portal_forget_browsers'])) {
+
+    validateCSRFToken();
+
+    // Every browser ticked to skip the code asks for it again - this one too
+    mysqli_query($mysqli, "DELETE FROM remember_tokens WHERE remember_token_user_id = $session_user_id");
+    setcookie('rememberme', '', time() - 3600, '/', '', true, true);
+
+    logAudit("Contact", "Edit", "Client contact $session_contact_name made their remembered browsers ask for a code again", $session_client_id, $session_contact_id);
+
+    flashAlert("Done - every browser asks for a code next time");
+    redirect('profile.php#security');
+
+}
+
+if (isset($_POST['portal_email_prefs'])) {
+
+    validateCSRFToken();
+
+    // Your account > Emails from us. Other tickets at the company only for
+    // those who see them - primary and technical contacts
+    $ticket_emails = (string) ($_POST['ticket_emails'] ?? 'all');
+    $company_emails = (string) ($_POST['company_ticket_emails'] ?? 'none');
+    if (!isset(PORTAL_TICKET_EMAILS[$ticket_emails])) {
+        $ticket_emails = 'all';
+    }
+    if (!isset(PORTAL_COMPANY_TICKET_EMAILS[$company_emails]) || !($session_contact_primary || $session_contact_is_technical_contact)) {
+        $company_emails = 'none';
+    }
+
+    mysqli_query($mysqli, "UPDATE contacts SET contact_ticket_emails = '$ticket_emails', contact_company_ticket_emails = '$company_emails'
+        WHERE contact_id = $session_contact_id AND contact_client_id = $session_client_id");
+
+    logAudit("Contact", "Edit", "Client contact $session_contact_name changed the ticket emails they get in the client portal", $session_client_id, $session_contact_id);
+
+    flashAlert("Saved - those are the emails you will get");
+    redirect('profile.php#emails');
+
+}
+
+// Your account > Texts from us - their own say-so, so a STOP they sent before is lifted when they turn it on (functions/sms.php)
+if (isset($_POST['portal_sms_prefs'])) {
+
+    validateCSRFToken();
+
+    $state = smsContactTextState(intval($session_contact_id));
+    if (!$state['ready'] || $state['number'] === '') {
+        flashAlert('Add your mobile first.', 'error');
+        redirect('profile.php#texts');
+    }
+    $want = !empty($_POST['sms_opt_in']);
+    if ($want !== ($state['on'] && !$state['stopped'])) {
+        smsOptInSet(intval($session_contact_id), $want, 'them, in the client portal');
+        logAudit("Contact", "Edit", "Client contact $session_contact_name turned " . ($want ? 'on' : 'off') . " texts about their tickets, visits and invoices in the client portal", $session_client_id, $session_contact_id);
+    }
+    flashAlert($want ? 'Saved - we\'ll text you about your tickets, visits and invoices' : 'Saved - we won\'t text you');
+    redirect('profile.php#texts');
+
+}
+
+if (isset($_POST['portal_contact_save'])) {
+
+    validateCSRFToken();
+
+    /*
+     * Add a person, or change one - the primary contact only, and never their
+     * own record (Your account is for that) or another primary contact's. A
+     * contact with a portal login has it follow their name and email, and the
+     * email must not sign in to any other account.
+     */
+    enforceContactCan('contacts_manage');
+
+    $contact_id = intval($_POST['contact_id'] ?? 0);
+    $existing = null;
+    if ($contact_id) {
+        $existing = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT contact_id, contact_primary, contact_user_id, user_id FROM contacts
+            LEFT JOIN users ON user_id = contact_user_id
+            WHERE contact_id = $contact_id AND contact_client_id = $session_client_id AND contact_archived_at IS NULL LIMIT 1"));
+        if (!$existing || intval($existing['contact_primary']) || $contact_id === $session_contact_id) {
+            flashAlert("That contact can't be changed here", 'error');
+            redirect('contacts.php');
+        }
+    }
+    $back = $contact_id ? "contact.php?id=$contact_id" : 'contact.php?new=1';
+
+    $digits = function ($field, $length = 200) {
+        return substr(preg_replace('/[^0-9]/', '', (string) ($_POST[$field] ?? '')), 0, $length);
+    };
+    $in = [
+        'contact_id' => $contact_id,
+        'contact_name' => trim(mb_substr((string) ($_POST['contact_name'] ?? ''), 0, 200)),
+        'contact_title' => trim(mb_substr((string) ($_POST['contact_title'] ?? ''), 0, 200)),
+        'contact_email' => trim(mb_substr((string) ($_POST['contact_email'] ?? ''), 0, 200)),
+        'contact_department' => trim(mb_substr((string) ($_POST['contact_department'] ?? ''), 0, 200)),
+        'contact_phone' => $digits('contact_phone'),
+        'contact_phone_country_code' => $digits('contact_phone_country_code', 10),
+        'contact_extension' => $digits('contact_extension', 20),
+        'contact_mobile' => $digits('contact_mobile'),
+        'contact_mobile_country_code' => $digits('contact_mobile_country_code', 10),
+        'contact_billing' => !empty($_POST['contact_billing']) ? 1 : 0,
+        'contact_technical' => !empty($_POST['contact_technical']) ? 1 : 0,
+        'invite' => !$contact_id && !empty($_POST['invite']) ? 1 : 0,
+        'method' => (string) ($_POST['method'] ?? 'local'),
+    ];
+    // A country code or extension on its own is not a number
+    if ($in['contact_phone'] === '') {
+        $in['contact_phone_country_code'] = $in['contact_extension'] = '';
+    }
+    if ($in['contact_mobile'] === '') {
+        $in['contact_mobile_country_code'] = '';
+    }
+
+    $error = '';
+    if ($in['contact_name'] === '') {
+        $error = 'A contact needs a name';
+    } elseif (!filter_var($in['contact_email'], FILTER_VALIDATE_EMAIL)) {
+        $error = ($in['contact_email'] === '' ? 'Nothing' : escapeHtml($in['contact_email'])) . ' is not an email address';
+    } elseif (($in['invite'] || intval($existing['user_id'] ?? 0)) && userCheckIdentity(['name' => $in['contact_name'], 'email' => $in['contact_email']], intval($existing['user_id'] ?? 0), $identity_error) === null) {
+        $error = rtrim($identity_error, '.');
+    }
+    if ($error !== '') {
+        $_SESSION['portal_contact_form'] = $in;
+        flashAlert($error, 'error');
+        redirect($back);
+    }
+
+    $set = [];
+    foreach (['contact_name', 'contact_title', 'contact_email', 'contact_department', 'contact_phone', 'contact_phone_country_code', 'contact_extension', 'contact_mobile', 'contact_mobile_country_code'] as $field) {
+        $set[] = "$field = '" . escapeSql($in[$field]) . "'";
+    }
+    $set[] = "contact_billing = {$in['contact_billing']}";
+    $set[] = "contact_technical = {$in['contact_technical']}";
+    $set = implode(', ', $set);
+    $name_sql = escapeSql($in['contact_name']);
+
+    if ($contact_id) {
+        mysqli_query($mysqli, "UPDATE contacts SET $set WHERE contact_id = $contact_id AND contact_client_id = $session_client_id AND contact_archived_at IS NULL AND contact_primary = 0");
+        if (intval($existing['user_id'])) {
+            mysqli_query($mysqli, "UPDATE users SET user_name = '$name_sql', user_email = '" . escapeSql($in['contact_email']) . "' WHERE user_id = " . intval($existing['user_id']) . " AND user_type = 2");
+        }
+        logAudit("Contact", "Edit", "Client contact $session_contact_name changed contact $name_sql in the client portal", $session_client_id, $contact_id);
+        triggerCustomAction('contact_update', $contact_id);
+        flashAlert("Saved <strong>" . escapeHtml($in['contact_name']) . "</strong>");
+        redirect("contact.php?id=$contact_id");
+    }
+
+    mysqli_query($mysqli, "INSERT INTO contacts SET $set, contact_client_id = $session_client_id, contact_user_id = 0");
+    $contact_id = intval(mysqli_insert_id($mysqli));
+    logAudit("Contact", "Create", "Client contact $session_contact_name added contact $name_sql in the client portal", $session_client_id, $contact_id);
+    appNotify("Contact", "$session_contact_name added $name_sql as a contact for " . escapeSql($session_client_name) . " in the client portal", "/agent/contact.php?client_id=$session_client_id&contact_id=$contact_id", $session_client_id, $contact_id);
     triggerCustomAction('contact_create', $contact_id);
 
-    flashAlert("Contact $contact_name created");
-
-    redirect('contacts.php');
+    $message = "Added <strong>" . escapeHtml($in['contact_name']) . "</strong>";
+    if ($in['invite']) {
+        $invite = portalContactInvite($contact_id, $in['method'], (string) ($contact['contact_name'] ?? ''));
+        if (!$invite['ok']) {
+            $message .= ' - but their portal access could not be set up: ' . escapeHtml($invite['error']);
+        } else {
+            logAudit("Contact", "Edit", "Client contact $session_contact_name gave $name_sql portal access in the client portal", $session_client_id, $contact_id);
+            $message .= $invite['emailed'] ? ' and emailed them an invite to the portal' : ' and gave them portal access - email is not set up here, so ask us to send them how to sign in';
+        }
+    }
+    flashAlert($message);
+    redirect("contact.php?id=$contact_id");
 
 }
 
-if (isset($_POST['edit_contact'])) {
+if (isset($_POST['portal_contact_access']) || isset($_POST['portal_contact_left'])) {
 
     validateCSRFToken();
 
-    enforceContactCan('contacts');
+    // A contact's portal access - give it with an invite, send that again, or turn it off;
+    // and someone who has left: access off, then a ticket for the rest. The primary contact only.
+    enforceContactCan('contacts_manage');
 
-    $contact_id = intval($_POST['contact_id']);
-    // A contact cannot edit their own record - that would let them change their own roles
-    if ($contact_id === $session_contact_id) {
-        flashAlert("You cannot edit your own contact record", 'danger');
+    $contact_id = intval($_POST['contact_id'] ?? 0);
+    $target = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT contact_id, contact_name, contact_email, contact_primary FROM contacts
+        WHERE contact_id = $contact_id AND contact_client_id = $session_client_id AND contact_archived_at IS NULL LIMIT 1"));
+    if (!$target || intval($target['contact_primary']) || $contact_id === $session_contact_id) {
+        flashAlert("That contact's access can't be changed here", 'error');
         redirect('contacts.php');
     }
-    $contact_name = escapeSql($_POST['contact_name']);
-    $contact_email = escapeSql($_POST['contact_email']);
-    $contact_technical = intval($_POST['contact_technical'] ?? 0);
-    $contact_billing = intval($_POST['contact_billing'] ?? 0);
-    $contact_auth_method = escapeSql($_POST['contact_auth_method']);
+    $name = (string) $target['contact_name'];
+    $name_sql = escapeSql($name);
+    $agent_link = "/agent/contact.php?client_id=$session_client_id&contact_id=$contact_id";
 
-    // Get the existing contact_user_id - we look it up ourselves so the user can't just overwrite random users
-    $sql = mysqli_query($mysqli,"SELECT contact_user_id FROM contacts WHERE contact_id = $contact_id AND contact_client_id = $session_client_id");
-    $row = mysqli_fetch_assoc($sql);
-    $contact_user_id = intval($row['contact_user_id']);
-
-    // Check the email isn't already in use
-    $sql = mysqli_query($mysqli, "SELECT user_id FROM users WHERE user_email = '$contact_email' AND user_id != $contact_user_id");
-    if ($sql && mysqli_num_rows($sql) > 0) {
-        flashAlert("Cannot update contact as that email address is already in use", 'danger');
-        redirect('contact_edit.php?id=' . $contact_id);
+    if (isset($_POST['portal_contact_left'])) {
+        portalContactAccessOff($contact_id);
+        logAudit("Contact", "Edit", "Client contact $session_contact_name said $name_sql has left and turned off their portal access", $session_client_id, $contact_id);
+        appNotify("Contact", "$session_contact_name says $name_sql has left " . escapeSql($session_client_name) . " - their portal access is off", $agent_link, $session_client_id, $contact_id);
+        flashAlert(escapeHtml($name) . "'s portal access is off. Tell us below what else to close down - their email, accounts and devices - and their last day.");
+        redirect('ticket_add.php?' . http_build_query(['subject' => "Offboarding: $name has left"]));
     }
 
-    // Update Existing User
-    if ($contact_user_id > 0) {
-        mysqli_query($mysqli, "UPDATE users SET user_name = '$contact_name', user_email = '$contact_email', user_auth_method = '$contact_auth_method' WHERE user_id = $contact_user_id");
-
-    // Else, create New User
-    } elseif ($contact_user_id == 0 && $contact_name && $contact_email && $contact_auth_method) {
-        $password_hash = password_hash(randomString(), PASSWORD_DEFAULT);
-        mysqli_query($mysqli, "INSERT INTO users SET user_name = '$contact_name', user_email = '$contact_email', user_password = '$password_hash', user_auth_method = '$contact_auth_method', user_type = 2");
-
-        $contact_user_id = mysqli_insert_id($mysqli);
+    if ($_POST['portal_contact_access'] === 'off') {
+        portalContactAccessOff($contact_id);
+        logAudit("Contact", "Edit", "Client contact $session_contact_name turned off portal access for $name_sql", $session_client_id, $contact_id);
+        appNotify("Contact", "$session_contact_name turned off client portal access for $name_sql", $agent_link, $session_client_id, $contact_id);
+        flashAlert(escapeHtml($name) . "'s portal access is off");
+        redirect("contact.php?id=$contact_id");
     }
 
-    // Update contact
-    mysqli_query($mysqli, "UPDATE contacts SET contact_name = '$contact_name', contact_email = '$contact_email', contact_billing = $contact_billing, contact_technical = $contact_technical, contact_user_id = $contact_user_id WHERE contact_id = $contact_id AND contact_client_id = $session_client_id AND contact_archived_at IS NULL AND contact_primary = 0 AND contact_id != $session_contact_id");
+    $invite = portalContactInvite($contact_id, (string) ($_POST['method'] ?? 'local'), (string) ($contact['contact_name'] ?? ''));
+    if (!$invite['ok']) {
+        flashAlert(escapeHtml($invite['error']), 'error');
+        redirect("contact.php?id=$contact_id");
+    }
+    logAudit("Contact", "Edit", "Client contact $session_contact_name gave $name_sql portal access and sent an invite", $session_client_id, $contact_id);
+    appNotify("Contact", "$session_contact_name gave $name_sql client portal access", $agent_link, $session_client_id, $contact_id);
+    flashAlert($invite['emailed'] ? "Invite emailed to <strong>" . escapeHtml($target['contact_email']) . "</strong>" : escapeHtml($name) . " can sign in now - email is not set up here, so ask us to send them how");
+    redirect("contact.php?id=$contact_id");
 
-    logAudit("Contact", "Edit", "Client contact $session_contact_name edited contact $contact_name in the client portal", $session_client_id, $contact_id);
+}
 
-    flashAlert("Contact $contact_name updated");
+if (isset($_POST['portal_invites_send'])) {
 
-    triggerCustomAction('contact_update', $contact_id);
+    validateCSRFToken();
 
+    // Invite people to the portal - the primary contact only. Each is emailed a link to join (functions/portal_invite.php).
+    enforceContactCan('contacts_manage');
+
+    if (!portalInvitesReady() || !portalMailReady()) {
+        flashAlert("Invites can't be sent just now - add the person instead, or ask us", 'error');
+        redirect('contacts.php');
+    }
+    $typed = mb_substr((string) ($_POST['emails'] ?? ''), 0, 20000);
+    $parsed = portalInviteParse($typed);
+    if (!$parsed['people'] || count($parsed['people']) > PORTAL_INVITE_MAX) {
+        $_SESSION['portal_invite_form'] = $typed;
+        flashAlert(!$parsed['people'] ? ($parsed['bad'] ? escapeHtml($parsed['bad'][0]) . ' is not an email address' : 'Put in an email address to invite')
+            : 'That is ' . count($parsed['people']) . ' addresses - invite up to ' . PORTAL_INVITE_MAX . ' at a time', 'error');
+        redirect('invite.php');
+    }
+
+    $done = portalInviteSend($session_client_id, $parsed['people'], ['billing' => !empty($_POST['billing']), 'technical' => !empty($_POST['technical'])], ['contact_id' => $session_contact_id]);
+    $sent = array_merge($done['invited'], $done['resent']);
+    if ($sent) {
+        logAudit("Contact", "Invite", "Client contact $session_contact_name invited " . escapeSql(implode(', ', $sent)) . " to the client portal", $session_client_id);
+    }
+    $left_out = array_map(function ($bad) { return escapeHtml($bad) . ' (not an email address)'; }, $parsed['bad']);
+    foreach ($done['skipped'] as $email => $why) {
+        $left_out[] = escapeHtml($email) . ' (' . escapeHtml($why) . ')';
+    }
+    $lines = [];
+    if ($sent) {
+        $lines[] = 'Invited <strong>' . (count($sent) === 1 ? escapeHtml($sent[0]) : count($sent) . ' people') . '</strong> - we email you when they join';
+    }
+    if ($left_out) {
+        $lines[] = 'Left out: ' . implode(', ', $left_out);
+    }
+    flashAlert(implode('<br>', $lines), $sent ? 'success' : 'error');
     redirect('contacts.php');
 
 }
 
-if (isset($_GET['add_payment_by_provider'])) {
+if (isset($_POST['portal_invite_resend']) || isset($_POST['portal_invite_cancel'])) {
 
     validateCSRFToken();
 
-    $invoice_id = intval($_GET['invoice_id']);
-    $saved_payment_id = intval($_GET['add_payment_by_provider']);
+    // Send an invite waiting to be accepted again - a new link - or cancel it. The primary contact only, for their own company's.
+    enforceContactCan('contacts_manage');
 
-    // Get invoice details
-    $sql = mysqli_query($mysqli,"SELECT client_id, client_name, contact_email, contact_extension, contact_mobile,
-        contact_mobile_country_code, contact_name, contact_phone, contact_phone_country_code,
-        invoice_amount, invoice_currency_code, invoice_number, invoice_prefix, invoice_status,
-        invoice_url_key FROM invoices
-            LEFT JOIN clients ON invoice_client_id = client_id
-            LEFT JOIN contacts ON client_id = contact_client_id AND contact_primary = 1
-            WHERE invoice_id = $invoice_id AND client_id = $session_client_id"
-    );
-    $row = mysqli_fetch_assoc($sql);
-    $invoice_number = intval($row['invoice_number']);
-    $invoice_status = escapeSql($row['invoice_status']);
-    $invoice_amount = floatval($row['invoice_amount']);
-    $invoice_prefix = escapeSql($row['invoice_prefix']);
-    $invoice_number = intval($row['invoice_number']);
-    $invoice_url_key = escapeSql($row['invoice_url_key']);
-    $invoice_currency_code = escapeSql($row['invoice_currency_code']);
-    $client_id = intval($row['client_id']);
-    $client_name = escapeSql($row['client_name']);
-    $contact_name = escapeSql($row['contact_name']);
-    $contact_email = escapeSql($row['contact_email']);
-    $contact_phone = escapeSql(formatPhoneNumber($row['contact_phone'], $row['contact_phone_country_code']));
-    $contact_extension = preg_replace("/[^0-9]/", '',$row['contact_extension']);
-    $contact_mobile = escapeSql(formatPhoneNumber($row['contact_mobile'], $row['contact_mobile_country_code']));
+    $invite = portalInvitesReady() ? portalInviteRow($_POST['invite_id'] ?? 0) : null;
+    if (!$invite || intval($invite['invite_client_id']) !== $session_client_id || $invite['invite_kind'] !== 'invite'
+        || !in_array(portalInviteState($invite), ['pending', 'expired'], true)) {
+        flashAlert("That invite isn't waiting any more - they may have joined already", 'error');
+        redirect('contacts.php');
+    }
+    $email = (string) $invite['invite_email'];
 
-    // Get ITFlow company details
-    $sql = mysqli_query($mysqli,"SELECT company_address, company_city, company_country, company_email, company_name, company_phone,
-        company_phone_country_code, company_state, company_website, company_zip FROM companies WHERE company_id = 1");
-    $row = mysqli_fetch_assoc($sql);
-    $company_name = escapeSql($row['company_name']);
-    $company_country = escapeSql($row['company_country']);
-    $company_address = escapeSql($row['company_address']);
-    $company_city = escapeSql($row['company_city']);
-    $company_state = escapeSql($row['company_state']);
-    $company_zip = escapeSql($row['company_zip']);
-    $company_phone = escapeSql(formatPhoneNumber($row['company_phone'], $row['company_phone_country_code']));
-    $company_email = escapeSql($row['company_email']);
-    $company_website = escapeSql($row['company_website']);
-
-    // Sanitize Config vars from get_settings.php
-    $config_invoice_from_name = escapeSql($config_invoice_from_name);
-    $config_invoice_from_email = escapeSql($config_invoice_from_email);
-
-    // Get Client Payment Details
-    $sql = mysqli_query($mysqli, "SELECT payment_provider_account, payment_provider_client, payment_provider_private_key,
-        payment_provider_public_key, saved_payment_client_id, saved_payment_description,
-        saved_payment_provider_method FROM client_saved_payment_methods LEFT JOIN payment_providers ON saved_payment_provider_id = payment_provider_id LEFT JOIN client_payment_provider ON saved_payment_client_id = client_id WHERE saved_payment_id = $saved_payment_id AND saved_payment_client_id = $session_client_id LIMIT 1");
-    $row = mysqli_fetch_assoc($sql);
-
-    $public_key = escapeSql($row['payment_provider_public_key']);
-    $private_key = escapeSql($row['payment_provider_private_key']);
-    $account_id = intval($row['payment_provider_account']);
-    $payment_provider_client = escapeSql($row['payment_provider_client']);
-    $saved_payment_method = escapeSql($row['saved_payment_provider_method']);
-    $saved_payment_description = escapeSql($row['saved_payment_description']);
-    $payment_client_id = intval($row['saved_payment_client_id']);
-
-    // Sanity checks
-    // Check to make invoice belongs to logged in client
-    if ($client_id !== $session_client_id) {
-        flashAlert("Invoice does not belong to you!", 'danger');
-        redirect();
-    } elseif ($payment_client_id !== $session_client_id) {
-        flashAlert("Saved Payment method does not belong to you!", 'danger');
-        redirect();
-    } elseif (!$payment_provider_client || !$saved_payment_method) {
-        flashAlert("Stripe not enabled or no client card saved", 'error');
-        redirect();
-    } elseif ($invoice_status !== 'Sent' && $invoice_status !== 'Viewed') {
-        flashAlert("Invalid invoice state (draft/partial/paid/not billable)", 'error');
-        redirect();
-    } elseif ($invoice_amount == 0) {
-        flashAlert("Invalid invoice amount", 'error');
-        redirect();
+    if (isset($_POST['portal_invite_resend'])) {
+        if (!portalInviteResend($invite['invite_id'], $session_client_id)) {
+            flashAlert("The invite couldn't be sent just now - try again later, or ask us", 'error');
+            redirect('contacts.php');
+        }
+        logAudit("Contact", "Invite", "Client contact $session_contact_name sent the client portal invite to " . escapeSql($email) . " again", $session_client_id);
+        flashAlert('Sent the invite to <strong>' . escapeHtml($email) . '</strong> again, with a new link');
+        redirect('contacts.php');
     }
 
-    // Initialize Stripe
-    require_once __DIR__ . '/../includes/stripe_init.php';
-    $stripe = new \Stripe\StripeClient($private_key);
+    portalInviteCancel($invite['invite_id'], $session_client_id);
+    logAudit("Contact", "Cancel", "Client contact $session_contact_name cancelled the client portal invite to " . escapeSql($email), $session_client_id);
+    flashAlert('Cancelled the invite to <strong>' . escapeHtml($email) . '</strong>');
+    redirect('contacts.php');
 
-    $balance_to_pay = round($invoice_amount, 2);
-    $pi_description = "ITFlow: $client_name payment of $invoice_currency_code $balance_to_pay for $invoice_prefix$invoice_number";
+}
 
-    // Create a payment intent
-    try {
-        $payment_intent = $stripe->paymentIntents->create([
-            'amount' => intval($balance_to_pay * 100), // Times by 100 as Stripe expects values in cents
-            'currency' => $invoice_currency_code,
-            'customer' => $payment_provider_client,
-            'payment_method' => $saved_payment_method,
-            'off_session' => true,
-            'confirm' => true,
-            'description' => $pi_description,
-            'metadata' => [
-                'itflow_client_id' => $client_id,
-                'itflow_client_name' => $client_name,
-                'itflow_invoice_number' => $invoice_prefix . $invoice_number,
-                'itflow_invoice_id' => $invoice_id,
-            ]
-        ]);
+if (isset($_POST['portal_quote_answer'])) {
 
-        // Get details from PI
-        $pi_id = escapeSql($payment_intent->id);
-        $pi_date = date('Y-m-d', $payment_intent->created);
-        $pi_amount_paid = floatval(($payment_intent->amount_received / 100));
-        $pi_currency = strtoupper(escapeSql($payment_intent->currency));
-        $pi_livemode = $payment_intent->livemode;
+    validateCSRFToken();
 
-    } catch (Exception $e) {
-        $error = $e->getMessage();
-        error_log("Stripe payment error - encountered exception during payment intent for invoice ID $invoice_id / $invoice_prefix$invoice_number: $error");
-        logApp("Stripe", "error", "Exception during PI for invoice ID $invoice_id: $error");
+    portalBillingGate();
+
+    // Accept or decline a quote, signed with a name and with a note for us - billingQuoteAnswer() in functions/billing.php,
+    // which the quote's guest link uses too
+    $quote_id = intval($_POST['quote_id'] ?? 0);
+    $accept = ($_POST['answer'] ?? '') === 'accept';
+    $name = trim(mb_substr((string) ($_POST['name'] ?? ''), 0, 200));
+    $note = trim(mb_substr((string) ($_POST['note'] ?? ''), 0, 2000));
+
+    $quote = billingRow('quote', $quote_id, false);
+    if (!$quote || intval($quote['client_id']) !== $session_client_id || $quote['quote_status'] === 'Draft') {
+        flashAlert("That quote isn't here", 'error');
+        redirect('quotes.php');
+    }
+    if ($name === '' || ($accept && empty($_POST['authorised']))) {
+        flashAlert($name === '' ? 'Put your name to your answer' : 'Tick to confirm you can accept the quote', 'error');
+        redirect("quote.php?id=$quote_id");
     }
 
-    if ($payment_intent->status == "succeeded" && intval($balance_to_pay) == intval($pi_amount_paid)) {
+    $answer = billingQuoteAnswer($quote_id, $accept, ['name' => $name, 'note' => $note]);
+    if (!$answer['ok']) {
+        flashAlert($answer['error'], 'error');
+        redirect("quote.php?id=$quote_id");
+    }
 
-        // Update Invoice Status
-        mysqli_query($mysqli, "UPDATE invoices SET invoice_status = 'Paid' WHERE invoice_id = $invoice_id");
+    $number = escapeHtml(billingNumber('quote', $quote));
+    flashAlert($accept ? "Thank you - quote <strong>$number</strong> is accepted and our team has been told" : "Quote <strong>$number</strong> declined - thank you for letting us know");
 
-        // Add Payment to History
-        mysqli_query($mysqli, "INSERT INTO payments SET payment_date = '$pi_date', payment_amount = $pi_amount_paid, payment_currency_code = '$pi_currency', payment_account_id = $account_id, payment_method = 'Stripe', payment_reference = 'Stripe - $pi_id', payment_invoice_id = $invoice_id");
-        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Paid', history_description = 'Online Payment added (agent)', history_invoice_id = $invoice_id");
+    redirect("quote.php?id=$quote_id");
 
-        // Email receipt
-        if (!empty($config_smtp_host)) {
-            $subject = "Payment Received - Invoice $invoice_prefix$invoice_number";
-            $body = "Hello $contact_name,<br><br>We have received online payment for the amount of " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . " for invoice <a href=\'https://$config_base_url/guest/guest_view_invoice.php?invoice_id=$invoice_id&url_key=$invoice_url_key\'>$invoice_prefix$invoice_number</a>. Please keep this email as a receipt for your records.<br><br>Amount Paid: " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . "<br><br>Thank you for your business!<br><br><br>--<br>$company_name - Billing Department<br>$config_invoice_from_email<br>$company_phone";
+}
 
-            // Queue Mail
-            $data = [
-                [
-                    'from' => $config_invoice_from_email,
-                    'from_name' => $config_invoice_from_name,
-                    'recipient' => $contact_email,
-                    'recipient_name' => $contact_name,
-                    'subject' => $subject,
-                    'body' => $body,
-                ]
-            ];
+if (isset($_POST['portal_sign_contract'])) {
 
-            // Email the internal notification address too
-            if (!empty($config_invoice_paid_notification_email)) {
-                $subject = "Payment Received - $client_name - Invoice $invoice_prefix$invoice_number";
-                $body = "Hello, <br><br>This is a notification that an invoice has been paid in ITFlow. Below is a copy of the receipt sent to the client:-<br><br>--------<br><br>Hello $contact_name,<br><br>We have received online payment for the amount of " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . " for invoice <a href=\'https://$config_base_url/guest/guest_view_invoice.php?invoice_id=$invoice_id&url_key=$invoice_url_key\'>$invoice_prefix$invoice_number</a>. Please keep this email as a receipt for your records.<br><br>Amount Paid: " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . "<br><br>Thank you for your business!<br><br><br>--<br>$company_name - Billing Department<br>$config_invoice_from_email<br>$company_phone";
+    validateCSRFToken();
 
-                $data[] = [
-                    'from' => $config_invoice_from_email,
-                    'from_name' => $config_invoice_from_name,
-                    'recipient' => $config_invoice_paid_notification_email,
-                    'recipient_name' => $contact_name,
-                    'subject' => $subject,
-                    'body' => $body,
-                ];
-            }
+    portalContractsGate();
 
-            $mail = addToMailQueue($data);
+    // Signed as the contact signed in - functions/contract_signature.php, which the emailed link uses too
+    $round = contractSignaturesReady() ? contractSignatureRow(intval($_POST['contract_signature_id'] ?? 0)) : null;
+    $visible = $round && mysqli_num_rows(mysqli_query($mysqli, "SELECT contract_id FROM contracts WHERE contract_id = " . intval($round['contract_id']) . " AND " . portalContractScopeSql()));
+    if (!$visible) {
+        flashAlert("That contract isn't here", 'error');
+        redirect('contracts.php');
+    }
+    $back = 'contract.php?id=' . intval($round['contract_id']);
+    $state = contractSignatureState($round);
+    if (!in_array($state['key'], ['sent', 'viewed'], true) || (string) $round['contract_signature_url_key'] === '') {
+        flashAlert($state['key'] === 'withdrawn' ? "That request was withdrawn, so it wasn't signed" : 'It has already been signed', 'error');
+        redirect($back);
+    }
+    if (!hash_equals((string) $round['contract_signature_document_hash'], (string) ($_POST['document_hash'] ?? ''))) {
+        flashAlert('The contract changed while you had it open - read it again before signing', 'error');
+        redirect($back);
+    }
+    [$f, $error] = contractSignatureFromInput($_POST);
+    if ($error !== '') {
+        flashAlert(escapeHtml($error) . ' It was not signed yet.', 'error');
+        redirect($back);
+    }
+    if (!contractSignatureClientSign($round, $f, 'portal', $session_contact_id)) {
+        flashAlert("It couldn't be signed - it may have just been withdrawn", 'error');
+        redirect($back);
+    }
+    flashAlert("Signed - thank you. We'll countersign <strong>" . escapeHtml($round['contract_name']) . "</strong> and email you a copy.");
 
-            // Email Logging
-            $email_id = mysqli_insert_id($mysqli);
-            mysqli_query($mysqli,"INSERT INTO history SET history_status = 'Sent', history_description = 'Payment Receipt sent to mail queue ID: $email_id!', history_invoice_id = $invoice_id");
-            logAudit("Invoice", "Payment", "Payment receipt for invoice $invoice_prefix$invoice_number queued to $contact_email Email ID: $email_id", $client_id, $invoice_id);
-        }
+    redirect($back);
 
-        // Log info
-        $extended_log_desc = '';
-        if (!$pi_livemode) {
-            $extended_log_desc = '(DEV MODE)';
-        }
+}
 
-        // Notify/log
-        appNotify("Invoice Paid", "Invoice $invoice_prefix$invoice_number automatically paid", "/agent/invoice.php?invoice_id=$invoice_id", $client_id);
-        logAudit("Invoice", "Payment", "$session_name initiated Stripe payment amount of " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . " added to invoice $invoice_prefix$invoice_number - $pi_id $extended_log_desc", $client_id, $invoice_id);
-        triggerCustomAction('invoice_pay', $invoice_id);
+if (isset($_POST['portal_quote_file'])) {
 
-        flashAlert("The amount " . numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) . " paid Invoice $invoice_prefix$invoice_number");
+    validateCSRFToken();
 
-        redirect();
+    portalBillingGate();
 
+    // A signed copy or purchase order for an accepted quote - billingQuoteAddFiles() in functions/billing.php
+    $quote_id = intval($_POST['quote_id'] ?? 0);
+    $quote = billingRow('quote', $quote_id, false);
+    if (!$quote || intval($quote['client_id']) !== $session_client_id || $quote['quote_status'] !== 'Accepted') {
+        flashAlert("Files can only be sent with an accepted quote", 'error');
+        redirect($quote ? "quote.php?id=$quote_id" : 'quotes.php');
+    }
+
+    $upload = billingQuoteAddFiles($quote_id, $_FILES['file'] ?? [], ['name' => (string) ($contact['contact_name'] ?? '')]);
+    if ($upload['added'] && !$upload['failed']) {
+        flashAlert('Sent - thank you. ' . escapeHtml(implode(', ', $upload['added'])) . ' is with us now');
+    } elseif ($upload['added']) {
+        flashAlert('Sent ' . escapeHtml(implode(', ', $upload['added'])) . ' - but ' . $upload['failed'] . ' could not be taken. Only PDFs can be sent', 'error');
     } else {
-        mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Payment failed', history_description = 'Stripe pay failed due to payment error', history_invoice_id = $invoice_id");
-
-        logAudit("Invoice", "Payment", "Failed online payment amount of invoice $invoice_prefix$invoice_number due to Stripe payment error", $client_id, $invoice_id);
-        flashAlert("Payment failed", 'error');
-
-        redirect();
+        flashAlert('That file could not be taken - only PDFs can be sent', 'error');
     }
+
+    redirect("quote.php?id=$quote_id");
+
+}
+
+if (isset($_POST['portal_pay'])) {
+
+    validateCSRFToken();
+
+    portalBillingGate();
+
+    /*
+     * Pay one or more invoices by card - functions/billing_pay.php. The choice
+     * is checked again here: the invoices must be this client's and still
+     * owed, in one currency and under the card limit. A saved card is charged
+     * there and then; a new card goes on to the checkout page (pay.php).
+     */
+    $invoice_ids = array_map('intval', (array) ($_POST['invoice_ids'] ?? []));
+    $method = (string) ($_POST['method'] ?? 'new');
+    $back = 'unpaid_invoices.php' . ($invoice_ids ? '?' . http_build_query(['select' => implode(',', $invoice_ids)]) : '');
+
+    if (!billingStripeProvider()) {
+        flashAlert('Card payments are not set up', 'error');
+        redirect('invoices.php');
+    }
+
+    $selection = billingPaySelection($session_client_id, $invoice_ids, $error);
+    if (!$selection) {
+        flashAlert(escapeHtml($error), 'error');
+        redirect($back);
+    }
+
+    if ($method === 'new') {
+        $_SESSION['portal_checkout'] = ['ids' => array_keys($selection['cents']), 'pi' => $_SESSION['portal_checkout']['pi'] ?? ''];
+        redirect('pay.php');
+    }
+
+    // A saved card, charged now - the form's token keeps a double click to one charge
+    $token = (string) ($_POST['pay_token'] ?? '');
+    if (!preg_match('/^[a-f0-9]{32}$/', $token)) {
+        flashAlert('That page was out of date - check the invoices and try again', 'error');
+        redirect($back);
+    }
+    $contact_name = (string) ($contact['contact_name'] ?? '');
+    $charge = billingStripeChargeSaved($selection, $session_client_id, intval($method), $token, ['name' => $contact_name]);
+    if (!$charge['ok']) {
+        flashAlert(escapeHtml($charge['error']), 'error');
+        redirect($back);
+    }
+
+    $booked = billingStripeBook($charge['pi'], $session_client_id, ['name' => $contact_name, 'how' => 'Saved card', 'via' => 'in the client portal']);
+    if (!$booked['ok']) {
+        $pi_id = escapeSql((string) $charge['pi']->id);
+        logApp("Stripe", "error", "Saved card payment $pi_id for client $session_client_id went through but could not be booked: " . $booked['error']);
+        appNotify("Invoice Payment", "A card payment of " . escapeSql(billingMoney($selection['charge'], $selection['currency'])) . " from " . escapeSql($session_client_name) . " went through in the client portal but could not be recorded - $pi_id", "/agent/invoices.php?client_id=$session_client_id", $session_client_id);
+        flashAlert('Your card was charged, but we could not record the payment here - we have been told and will put it right', 'error');
+        redirect('invoices.php');
+    }
+
+    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($selection['charge'], $selection['currency'])) . '</strong> went through');
+    redirect('receipt.php?id=' . $booked['payment_id']);
+
+}
+
+if (isset($_GET['portal_pay_return'])) {
+
+    portalBillingGate();
+
+    /*
+     * Back from Stripe after paying on the checkout page (pay.php) - with the
+     * payment's id and client secret. The secret must match the payment, and
+     * the payment must be this client's: then it is booked, once
+     * (billingStripeBook() in functions/billing_pay.php).
+     */
+    $pi_id = (string) ($_GET['payment_intent'] ?? '');
+    $secret = (string) ($_GET['payment_intent_client_secret'] ?? '');
+    $stripe = billingStripeClient();
+    if (!$stripe || !preg_match('/^pi_[A-Za-z0-9_]+$/', $pi_id)) {
+        flashAlert('That payment could not be found', 'error');
+        redirect('invoices.php');
+    }
+
+    try {
+        $pi = $stripe->paymentIntents->retrieve($pi_id);
+    } catch (Throwable $e) {
+        logApp("Stripe", "error", "Could not retrieve $pi_id on return to the client portal: " . $e->getMessage());
+        flashAlert('We could not check that payment just now - if your card was charged, it will show here shortly', 'error');
+        redirect('invoices.php');
+    }
+
+    if (!hash_equals((string) $pi->client_secret, $secret) || intval($pi->metadata['itflow_client_id'] ?? 0) !== $session_client_id) {
+        flashAlert('That payment could not be found', 'error');
+        redirect('invoices.php');
+    }
+
+    if ($pi->status === 'processing') {
+        flashAlert('Your payment is processing - the invoices show as paid once it clears');
+        redirect('invoices.php');
+    }
+    if ($pi->status !== 'succeeded') {
+        flashAlert('That payment did not go through - nothing was charged. Try again, or use another card', 'error');
+        redirect('pay.php');
+    }
+
+    $booked = billingStripeBook($pi, $session_client_id, ['name' => (string) ($contact['contact_name'] ?? ''), 'how' => 'Online card', 'via' => 'in the client portal']);
+    if (!$booked['ok']) {
+        $pi_id_sql = escapeSql($pi_id);
+        logApp("Stripe", "error", "Card payment $pi_id for client $session_client_id went through but could not be booked: " . $booked['error']);
+        appNotify("Invoice Payment", "A card payment from " . escapeSql($session_client_name) . " went through in the client portal but could not be recorded - $pi_id_sql", "/agent/invoices.php?client_id=$session_client_id", $session_client_id);
+        flashAlert('Your card was charged, but we could not record the payment here - we have been told and will put it right', 'error');
+        redirect('invoices.php');
+    }
+
+    unset($_SESSION['portal_checkout']);
+    if (!$booked['already']) {
+        flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney(intval($pi->amount_received) / 100, strtoupper((string) $pi->currency))) . '</strong> went through');
+    }
+    redirect('receipt.php?id=' . $booked['payment_id']);
 
 }
 
@@ -710,7 +1205,7 @@ if (isset($_POST['create_stripe_customer'])) {
 
     $stripe_provider = mysqli_fetch_assoc($stripe_provider_result);
     if (!$stripe_provider) {
-        flashAlert("Stripe provider is not configured in the system.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -718,7 +1213,7 @@ if (isset($_POST['create_stripe_customer'])) {
     $stripe_secret_key = escapeHtml($stripe_provider['payment_provider_private_key']);
 
     if (empty($stripe_secret_key)) {
-        flashAlert("Stripe credentials missing. Please contact support.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -758,9 +1253,11 @@ if (isset($_POST['create_stripe_customer'])) {
                     client_payment_provider_created_at = NOW()
             ");
 
-            logAudit("Stripe", "Create", "$session_contact_name created Stripe customer for $session_client_name as $stripe_customer_id and authorized future automatic payments", $session_client_id, $session_client_id);
+            logAudit("Stripe", "Create", "$session_contact_name created Stripe customer for " . escapeSql($session_client_name) . " as $stripe_customer_id and authorized future automatic payments", $session_client_id, $session_client_id);
 
-            flashAlert("Stripe customer created. Thank you for your consent.");
+            flashAlert("Thank you - now add your card.");
+
+            redirect('saved_payment_methods.php?add=1');
 
         } catch (Exception $e) {
             $error = $e->getMessage();
@@ -769,12 +1266,13 @@ if (isset($_POST['create_stripe_customer'])) {
 
             logApp("Stripe", "error", "Failed to create Stripe customer for $session_client_name: $error");
 
-            flashAlert("An error occurred while creating your Stripe customer. Please try again.", 'danger');
+            flashAlert("Card payments could not be set up just now - try again", 'error');
 
         }
 
     } else {
-        flashAlert("Stripe customer already exists for your account.", 'danger');
+        // Already set up - on to adding the card
+        redirect('saved_payment_methods.php?add=1');
     }
 
     redirect('saved_payment_methods.php');
@@ -784,7 +1282,7 @@ if (isset($_GET['create_stripe_checkout'])) {
 
     //validateCSRFToken();
 
-    // This page is called by autopay_setup_stripe.js, returns a Checkout Session client_secret
+    // This page is called by js/portal_stripe.js, returns a Checkout Session client_secret
 
     enforceContactCan('accounting');
 
@@ -852,9 +1350,19 @@ if (isset($_GET['create_stripe_checkout'])) {
         }
         $checkout_session = $stripe->checkout->sessions->create($session_params);
 
+        // Only the session made here can be saved when Stripe sends them back (stripe_save_card)
+        $_SESSION['stripe_checkout_session_id'] = $checkout_session->id;
+
         echo json_encode(['clientSecret' => $checkout_session->client_secret]);
 
     } catch (Exception $e) {
+        // A customer Stripe no longer has - forgotten, and the page reloads to set them up again
+        if ($stripe_customer_id && billingStripeCustomerGone($e)) {
+            billingStripeCustomerForget($session_client_id, $stripe_customer_id);
+            flashAlert("Your card details are no longer with Stripe - add your card again to save it.", 'warning');
+            echo json_encode(['error' => 'Set up again', 'reload' => true]);
+            exit;
+        }
         $error = $e->getMessage();
         error_log("Stripe error creating checkout session: $error");
         logApp("Stripe", "error", "Exception creating checkout session: $error");
@@ -881,7 +1389,7 @@ if (isset($_GET['stripe_save_card'])) {
 
     $stripe_provider = mysqli_fetch_assoc($stripe_provider_result);
     if (!$stripe_provider) {
-        flashAlert("Stripe provider not configured.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -889,7 +1397,7 @@ if (isset($_GET['stripe_save_card'])) {
     $stripe_secret_key = escapeHtml($stripe_provider['payment_provider_private_key']);
 
     if (empty($stripe_secret_key)) {
-        flashAlert("Stripe credentials missing.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -905,12 +1413,18 @@ if (isset($_GET['stripe_save_card'])) {
     $stripe_customer_id = escapeSql($client_provider['payment_provider_client'] ?? '');
 
     if (empty($stripe_customer_id)) {
-        flashAlert("Stripe customer ID not found for client.", 'danger');
+        flashAlert("Card payments are not set up for you yet - add your card again", 'error');
         redirect("saved_payment_methods.php");
     }
 
-    // Get session ID from URL
-    $checkout_session_id = escapeSql($_GET['session_id']);
+    // The checkout session from the address must be the one this sign-in started
+    $checkout_session_id = (string) ($_GET['session_id'] ?? '');
+    $expected_session_id = (string) ($_SESSION['stripe_checkout_session_id'] ?? '');
+    unset($_SESSION['stripe_checkout_session_id']);
+    if ($checkout_session_id === '' || $expected_session_id === '' || !hash_equals($expected_session_id, $checkout_session_id)) {
+        flashAlert("That card setup ran out - try again", 'error');
+        redirect("saved_payment_methods.php");
+    }
 
     try {
         require_once '../includes/stripe_init.php';
@@ -918,6 +1432,11 @@ if (isset($_GET['stripe_save_card'])) {
 
         // Retrieve checkout session & setup intent
         $checkout_session = $stripe->checkout->sessions->retrieve($checkout_session_id, []);
+        // ... and set up for this client's own Stripe customer
+        if (!empty($checkout_session->customer) && $checkout_session->customer !== stripslashes($stripe_customer_id)) {
+            flashAlert("That card setup isn't yours", 'error');
+            redirect("saved_payment_methods.php");
+        }
         $setup_intent_id = $checkout_session->setup_intent;
         $setup_intent = $stripe->setupIntents->retrieve($setup_intent_id, []);
         $payment_method_id = escapeSql($setup_intent->payment_method);
@@ -946,52 +1465,29 @@ if (isset($_GET['stripe_save_card'])) {
         ");
 
     } catch (Exception $e) {
+        // Its customer went from Stripe while the card was being entered
+        if (billingStripeCustomerGone($e)) {
+            billingStripeCustomerForget($session_client_id, $stripe_customer_id);
+            flashAlert("Your card details are no longer with Stripe - add your card again to save it.", 'warning');
+            redirect("saved_payment_methods.php");
+        }
         $error = $e->getMessage();
         error_log("Stripe error while saving payment method: $error");
         logApp("Stripe", "error", "Exception saving payment method: $error");
 
-        flashAlert("An error occurred while saving your payment method.", 'danger');
+        flashAlert("Your payment method could not be saved just now - try again", 'error');
         redirect("saved_payment_methods.php");
     }
 
-    // Email Confirmation
-    $sql_settings = mysqli_query($mysqli, "
-        SELECT company_name, company_phone, company_phone_country_code, config_invoice_from_email,
-            config_invoice_from_name, config_smtp_host FROM companies, settings
-        WHERE companies.company_id = settings.company_id
-        AND companies.company_id = 1
-    ");
-    $row = mysqli_fetch_assoc($sql_settings);
-
-    $company_name = escapeSql($row['company_name']);
-    $company_phone = escapeSql(formatPhoneNumber($row['company_phone'], $row['company_phone_country_code']));
-    $config_invoice_from_email = escapeSql($row['config_invoice_from_email']);
-    $config_invoice_from_name = escapeSql($row['config_invoice_from_name']);
-
-    if (!empty($row['config_smtp_host'])) {
-        $subject = "Payment method saved";
-        $body = "Hello $session_contact_name<br><br>
-        Were writing to confirm that your payment details have been securely stored with Stripe our trusted payment processor.<br><br>
-        You authorized us to automatically bill your card ($saved_payment_description) for future invoices.<br><br>
-        You may update or remove your payment method at any time via the client portal.<br><br>
-        Thank you for your business!<br><br>
-        --<br>$company_name - Billing Department<br>$config_invoice_from_email<br>$company_phone";
-
-        $data = [[
-            'from' => $config_invoice_from_email,
-            'from_name' => $config_invoice_from_name,
-            'recipient' => $session_contact_email,
-            'recipient_name' => $session_contact_name,
-            'subject' => $subject,
-            'body' => $body
-        ]];
-
-        $mail = addToMailQueue($data);
+    // Their confirmation, in the billing emails' look - from the invoice mailbox
+    if (billingEmailReady()) {
+        billingMailCardSaved(stripslashes($session_contact_email), stripslashes($session_contact_name), stripslashes((string) $session_client_name),
+            stripslashes((string) $card_brand), stripslashes((string) $last4), intval($exp_month), intval($exp_year));
     }
 
-    logAudit("Stripe", "Update", "$session_contact_name saved payment method ($saved_payment_description) (PM: $payment_method_id)", $session_client_id);
+    logAudit("Stripe", "Create", "$session_contact_name saved payment method ($saved_payment_description) (PM: $payment_method_id)", $session_client_id);
 
-    flashAlert("Payment method saved – thank you.");
+    flashAlert("Payment method saved - thank you");
     redirect("saved_payment_methods.php");
 }
 
@@ -1013,7 +1509,7 @@ if (isset($_GET['delete_saved_payment'])) {
     $stripe_provider = mysqli_fetch_assoc($stripe_provider_result);
 
     if (!$stripe_provider) {
-        flashAlert("Stripe provider is not configured.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -1021,7 +1517,7 @@ if (isset($_GET['delete_saved_payment'])) {
     $stripe_secret_key = escapeHtml($stripe_provider['payment_provider_private_key']);
 
     if (empty($stripe_secret_key)) {
-        flashAlert("Stripe credentials are missing.", 'danger');
+        flashAlert('Card payments are not set up', 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -1037,7 +1533,7 @@ if (isset($_GET['delete_saved_payment'])) {
     $saved_payment = mysqli_fetch_assoc($saved_payment_result);
 
     if (!$saved_payment) {
-        flashAlert("Payment method not found or does not belong to you.", 'danger');
+        flashAlert("That payment method isn't here", 'error');
         redirect("saved_payment_methods.php");
     }
 
@@ -1061,7 +1557,7 @@ if (isset($_GET['delete_saved_payment'])) {
 
         logApp("Stripe", "error", "Exception removing payment method $payment_method_id: $error");
 
-        flashAlert("An error occurred while removing your payment method.", 'danger');
+        flashAlert("Your payment method could not be removed just now - try again", 'error');
 
         redirect("saved_payment_methods.php");
 
@@ -1090,9 +1586,9 @@ if (isset($_GET['delete_saved_payment'])) {
         ");
     }
 
-    logAudit("Stripe", "Update", "$session_contact_name deleted Stripe payment method $saved_payment_description (PM: $payment_method_id)", $session_client_id);
+    logAudit("Stripe", "Delete", "$session_contact_name deleted Stripe payment method $saved_payment_description (PM: $payment_method_id)", $session_client_id);
 
-    flashAlert("Payment method $saved_payment_description removed.");
+    flashAlert("Payment method $saved_payment_description removed");
 
     redirect("saved_payment_methods.php");
 }
@@ -1101,13 +1597,21 @@ if (isset($_POST['set_recurring_payment'])) {
 
     validateCSRFToken();
 
+    enforceContactCan('accounting');
+
     $recurring_invoice_id = intval($_POST['recurring_invoice_id']);
     $saved_payment_id = intval($_POST['saved_payment_id']);
 
-    // Get Recurring Invoice Info for logging and alerting
+    // Get Recurring Invoice Info - scoped to the logged-in client, so this is also the ownership check
     $sql = mysqli_query($mysqli, "SELECT recurring_invoice_amount, recurring_invoice_currency_code, recurring_invoice_number,
         recurring_invoice_prefix FROM recurring_invoices WHERE recurring_invoice_id = $recurring_invoice_id AND recurring_invoice_client_id = $session_client_id");
     $row = mysqli_fetch_assoc($sql);
+
+    if (!$row) {
+        flashAlert("That recurring invoice isn't here", 'error');
+        redirect("recurring_invoices.php");
+    }
+
     $recurring_invoice_prefix = escapeSql($row['recurring_invoice_prefix']);
     $recurring_invoice_number = intval($row['recurring_invoice_number']);
     $recurring_invoice_currency_code = escapeSql($row['recurring_invoice_currency_code']);
@@ -1127,6 +1631,11 @@ if (isset($_POST['set_recurring_payment'])) {
 
         $row = mysqli_fetch_assoc($sql);
 
+        if (!$row) {
+            flashAlert("That payment method isn't here", 'error');
+            redirect("recurring_invoices.php");
+        }
+
         $provider_id = intval($row['payment_provider_id']);
         $provider_name = escapeSql($row['payment_provider_name']);
         $account_id = intval($row['payment_provider_account']);
@@ -1137,16 +1646,16 @@ if (isset($_POST['set_recurring_payment'])) {
         // Get Payment ID for reference
         $recurring_payment_id = mysqli_insert_id($mysqli);
 
-        logAudit("Recurring Invoice", "Auto Payment", "$session_name created Auto Pay for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number in the amount of " . numfmt_format_currency($currency_format, $recurring_invoice_amount, $recurring_invoice_currency_code), $session_client_id, $recurring_invoice_id);
+        logAudit("Recurring Invoice", "Auto Payment", "$session_contact_name created Auto Pay for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number in the amount of " . billingMoney($recurring_invoice_amount, $recurring_invoice_currency_code), $session_client_id, $recurring_invoice_id);
 
-        flashAlert("Automatic Payment $saved_payment_description enabled for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number");
+        flashAlert("Automatic payment with $saved_payment_description turned on for recurring invoice $recurring_invoice_prefix$recurring_invoice_number");
     } else {
         // Delete
         mysqli_query($mysqli, "DELETE FROM recurring_payments WHERE recurring_payment_recurring_invoice_id = $recurring_invoice_id");
 
-        logAudit("Recurring Invoice", "Auto Payment", "$session_name removed Auto Pay for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number in the amount of " . numfmt_format_currency($currency_format, $recurring_invoice_amount, $recurring_invoice_currency_code), $session_client_id, $recurring_invoice_id);
+        logAudit("Recurring Invoice", "Auto Payment", "$session_contact_name removed Auto Pay for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number in the amount of " . billingMoney($recurring_invoice_amount, $recurring_invoice_currency_code), $session_client_id, $recurring_invoice_id);
 
-        flashAlert("Automatic Payment Disabled for Recurring Invoice $recurring_invoice_prefix$recurring_invoice_number");
+        flashAlert("Automatic payment turned off for recurring invoice $recurring_invoice_prefix$recurring_invoice_number");
     }
 
     redirect();
@@ -1157,14 +1666,22 @@ if (isset($_POST['client_add_document'])) {
 
     validateCSRFToken();
 
-    // Permission check - only primary or technical contacts can create documents
-    enforceContactCan('itdoc');
+    // Primary and technical contacts, with IT documentation on
+    portalItGate();
 
-    $document_name = escapeSql($_POST['document_name']);
-    $document_description = escapeSql($_POST['document_description']);
-    $document_content_raw = escapeSql($document_name . " " . strip_tags($_POST['document_content']));
+    $raw_content = (string) ($_POST['document_content'] ?? '');
+    $name = trim(mb_substr((string) ($_POST['document_name'] ?? ''), 0, 200));
+    $description = trim(mb_substr((string) ($_POST['document_description'] ?? ''), 0, 255));
+    if ($name === '' || portalHtmlIsEmpty($raw_content)) {
+        flashAlert('Give the document a name and write something in it', 'error');
+        redirect('document_add.php');
+    }
 
-    // Create document
+    $document_name = escapeSql($name);
+    $document_description = escapeSql($description);
+    $document_content_raw = escapeSql(documentContentRaw($name, $raw_content));
+
+    // Shared with the client, and the portal user as its author - the agent pages show the author from users
     mysqli_query($mysqli, "INSERT INTO documents SET
         document_name = '$document_name',
         document_description = '$document_description',
@@ -1172,28 +1689,20 @@ if (isset($_POST['client_add_document'])) {
         document_content_raw = '$document_content_raw',
         document_client_visible = 1,
         document_client_id = $session_client_id,
-        document_created_by = $session_contact_id");
+        document_created_by = $session_user_id");
 
     $document_id = mysqli_insert_id($mysqli);
 
-    $processed_content = mysqli_escape_string(
-        $mysqli,
-        saveBase64Images(
-            $_POST['document_content'],
-            $_SERVER['DOCUMENT_ROOT'] . "/uploads/documents/",
-            "uploads/documents/",
-            $document_id
-        )
-    );
+    // Pasted pictures are saved as files rather than kept in the HTML
+    $processed_content = mysqli_escape_string($mysqli, saveBase64Images($raw_content, $_SERVER['DOCUMENT_ROOT'] . "/uploads/documents/", "uploads/documents/", $document_id));
+    mysqli_query($mysqli, "UPDATE documents SET document_content = '$processed_content' WHERE document_id = $document_id");
 
-    // Document update content
-    mysqli_query($mysqli,"UPDATE documents SET document_content = '$processed_content' WHERE document_id = $document_id");
+    logAudit("Document", "Create", "Client contact $session_contact_name created document $document_name in the client portal", $session_client_id, $document_id);
+    appNotify("Document", "$session_contact_name added the document $document_name in the client portal", "/agent/document.php?document_id=$document_id", $session_client_id, $document_id);
 
-    logAudit("Document", "Create", "Client contact $session_contact_name created document $document_name", $session_client_id, $document_id);
+    flashAlert("Document <strong>" . escapeHtml($name) . "</strong> saved");
 
-    flashAlert("Document <strong>$document_name</strong> created successfully");
-
-    redirect('documents.php');
+    redirect("document.php?id=$document_id");
 
 }
 
@@ -1201,85 +1710,72 @@ if (isset($_POST['client_upload_document'])) {
 
     validateCSRFToken();
 
-    // Permission check - only primary or technical contacts can upload documents
-    enforceContactCan('itdoc');
+    // Primary and technical contacts, with IT documentation on
+    portalItGate();
 
-    $document_name = escapeSql($_POST['document_name']);
-    $document_description = escapeSql($_POST['document_description']);
-    $client_dir = "../uploads/clients/$session_client_id";
+    $name = trim(mb_substr((string) ($_POST['document_name'] ?? ''), 0, 200));
+    $description = trim(mb_substr((string) ($_POST['document_description'] ?? ''), 0, 255));
+    if ($name === '' || empty($_FILES['document_file']) || intval($_FILES['document_file']['error']) !== 0) {
+        flashAlert('Give the document a name and choose a file', 'error');
+        redirect('document_add.php?upload=1');
+    }
 
-    // Create client directory if it doesn't exist
+    $file_reference_name = checkFileUpload($_FILES['document_file'], ['pdf', 'doc', 'docx', 'txt', 'md', 'odt', 'rtf']);
+    if (!$file_reference_name) {
+        flashAlert('That file could not be taken - upload a PDF, Word, OpenDocument, RTF or text file', 'error');
+        redirect('document_add.php?upload=1');
+    }
+
+    $client_dir = $_SERVER['DOCUMENT_ROOT'] . "/uploads/clients/$session_client_id";
     if (!is_dir($client_dir)) {
         mkdir($client_dir, 0755, true);
     }
-
-    // Allowed file extensions for documents
-    $allowedExtensions = ['pdf', 'doc', 'docx', 'txt', 'md', 'odt', 'rtf'];
-
-    // Check if file was uploaded
-    if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] == 0) {
-
-        // Validate and get a safe file reference name
-        if ($file_reference_name = checkFileUpload($_FILES['document_file'], $allowedExtensions)) {
-
-            $file_tmp_path = $_FILES['document_file']['tmp_name'];
-            $file_name = escapeSql($_FILES['document_file']['name']);
-            $extParts = explode('.', $file_name);
-            $file_extension = strtolower(end($extParts));
-            $file_mime_type = escapeSql($_FILES['document_file']['type']);
-            $file_size = intval($_FILES['document_file']['size']);
-
-            // Define destination path and move the uploaded file
-            $dest_path = $client_dir . "/" . $file_reference_name;
-
-            if (move_uploaded_file($file_tmp_path, $dest_path)) {
-
-                // Create document entry
-                $document_content = "<p>Uploaded file: <strong>$file_name</strong></p><p>$document_description</p>";
-                $document_content_raw = "$document_name $file_name $document_description";
-
-                mysqli_query($mysqli, "INSERT INTO documents SET
-                    document_name = '$document_name',
-                    document_description = '$document_description',
-                    document_content = '$document_content',
-                    document_content_raw = '$document_content_raw',
-                    document_client_visible = 1,
-                    document_client_id = $session_client_id,
-                    document_created_by = $session_contact_id");
-
-                $document_id = mysqli_insert_id($mysqli);
-
-                // Create file entry
-                mysqli_query($mysqli, "INSERT INTO files SET
-                    file_reference_name = '$file_reference_name',
-                    file_name = '$file_name',
-                    file_description = 'Attached to document: $document_name',
-                    file_ext = '$file_extension',
-                    file_mime_type = '$file_mime_type',
-                    file_size = $file_size,
-                    file_created_by = $session_contact_id,
-                    file_client_id = $session_client_id");
-
-                $file_id = mysqli_insert_id($mysqli);
-
-                // Link file to document
-                mysqli_query($mysqli, "INSERT INTO document_files SET document_id = $document_id, file_id = $file_id");
-
-                logAudit("Document", "Upload", "Client contact $session_contact_name uploaded document $document_name with file $file_name", $session_client_id, $document_id);
-
-                flashAlert("Document <strong>$document_name</strong> uploaded successfully");
-
-            } else {
-                flashAlert('Error uploading file. Please try again.', 'error');
-            }
-
-        } else {
-            flashAlert('Invalid file type. Please upload PDF, Word documents, or text files only.', 'error');
-        }
-
-    } else {
-        flashAlert('Please select a file to upload.', 'error');
+    if (!move_uploaded_file($_FILES['document_file']['tmp_name'], "$client_dir/$file_reference_name")) {
+        flashAlert('Something went wrong uploading the file - please try again', 'error');
+        redirect('document_add.php?upload=1');
     }
 
-    redirect('documents.php');
+    $original = (string) $_FILES['document_file']['name'];
+    $ext_parts = explode('.', $original);
+    $file_name = escapeSql($original);
+    $file_extension = escapeSql(strtolower(end($ext_parts)));
+    // The type from the file itself, as agent uploads take it - not what the browser said
+    $detected_mime = function_exists('finfo_open') ? (string) finfo_file(finfo_open(FILEINFO_MIME_TYPE), "$client_dir/$file_reference_name") : '';
+    $file_mime_type = escapeSql($detected_mime !== '' ? $detected_mime : 'application/octet-stream');
+    $file_size = intval($_FILES['document_file']['size']);
+    $document_name = escapeSql($name);
+    $document_description = escapeSql($description);
+    // What the document says is the file - its name and description, escaped for the page
+    $document_content = mysqli_real_escape_string($mysqli, '<p>Uploaded file: <strong>' . escapeHtml($original) . '</strong></p>' . ($description !== '' ? '<p>' . escapeHtml($description) . '</p>' : ''));
+    $document_content_raw = escapeSql("$name $original $description");
+
+    mysqli_query($mysqli, "INSERT INTO documents SET
+        document_name = '$document_name',
+        document_description = '$document_description',
+        document_content = '$document_content',
+        document_content_raw = '$document_content_raw',
+        document_client_visible = 1,
+        document_client_id = $session_client_id,
+        document_created_by = $session_user_id");
+    $document_id = mysqli_insert_id($mysqli);
+
+    mysqli_query($mysqli, "INSERT INTO files SET
+        file_reference_name = '" . escapeSql($file_reference_name) . "',
+        file_name = '$file_name',
+        file_description = 'Attached to document: $document_name',
+        file_ext = '$file_extension',
+        file_mime_type = '$file_mime_type',
+        file_size = $file_size,
+        file_created_by = $session_user_id,
+        file_client_id = $session_client_id");
+    $file_id = mysqli_insert_id($mysqli);
+
+    mysqli_query($mysqli, "INSERT INTO document_files SET document_id = $document_id, file_id = $file_id");
+
+    logAudit("Document", "Upload", "Client contact $session_contact_name uploaded document $document_name with file $file_name in the client portal", $session_client_id, $document_id);
+    appNotify("Document", "$session_contact_name uploaded the document $document_name in the client portal", "/agent/document.php?document_id=$document_id", $session_client_id, $document_id);
+
+    flashAlert("Document <strong>" . escapeHtml($name) . "</strong> uploaded");
+
+    redirect("document.php?id=$document_id");
 }

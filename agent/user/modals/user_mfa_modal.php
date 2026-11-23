@@ -1,15 +1,17 @@
 <?php
-require_once '../../libs/totp/totp.php';
 
-// Only generate the token once and store it in session:
+/*
+ * Turn on MFA - from Your account > Security. The secret is made once and
+ * kept in the session until a code from it is checked, so the modal opening
+ * again (a wrong code) shows the same one.
+ */
+
+require_once dirname(__DIR__, 3) . '/libs/totp/totp.php';
+
 if (empty($_SESSION['mfa_token'])) {
-    $token = generateTotpSecret();
-    $_SESSION['mfa_token'] = $token;
+    $_SESSION['mfa_token'] = generateTotpSecret();
 }
-$token = $_SESSION['mfa_token'];
-
-// Generate QR Code
-$data = "otpauth://totp/ITFlow:$session_email?secret=$token";
+$mfa_secret = $_SESSION['mfa_token'];
 
 ?>
 
@@ -17,35 +19,17 @@ $data = "otpauth://totp/ITFlow:$session_email?secret=$token";
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header bg-dark">
-                <h5 class="modal-title"><i class="fa fa-fw fa-lock mr-2"></i>Multi-Factor Authentication</h5>
-                <button type="button" class="close text-white" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
+                <h5 class="modal-title"><i class="fas fa-fw fa-mobile-alt me-2"></i>Turn On Multi-factor Authentication</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form action="post.php" method="post" autocomplete="off">
                 <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                 <div class="modal-body">
-
-                    <div class="text-center">
-                        <img src='../../libs/barcode/barcode.php?f=png&s=qr&d=<?= $data ?>'>
-                        <p><span class='text-secondary'>Secret:</span> <?= $token ?>
-                            <button type="button" class='btn btn-sm clipboardjs' data-clipboard-text='<?= $token ?>'><i class='far fa-copy text-secondary'></i></button>
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <div class="input-group">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-fw fa-lock"></i></span>
-                            </div>
-                            <input type="text" class="form-control" inputmode="numeric" pattern="[0-9]*" minlength="6" maxlength="6" name="verify_code" placeholder="Enter 6 digit code to verify MFA" required>
-                        </div>
-                    </div>
-
+                    <?php require __DIR__ . '/../includes/mfa_setup.php'; ?>
                 </div>
                 <div class="modal-footer">
-                    <button type="submit" name="enable_mfa" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Enable</button>
-                    <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+                    <button type="submit" name="enable_mfa" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Turn On</button>
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
                 </div>
             </form>
         </div>

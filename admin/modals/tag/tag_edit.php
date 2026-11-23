@@ -2,80 +2,37 @@
 
 require_once '../../includes/modal_header.php';
 
-$tag_id = intval($_GET['id']);
-
-$sql = mysqli_query($mysqli, "SELECT tag_color, tag_icon, tag_name, tag_type FROM tags WHERE tag_id = $tag_id LIMIT 1");
-
-$row = mysqli_fetch_assoc($sql);
-$tag_name = escapeHtml($row['tag_name']);
-$tag_type = intval($row['tag_type']);
-$tag_color = escapeHtml($row['tag_color']);
-$tag_icon = escapeHtml($row['tag_icon']);
-
-if ($tag_type == 1) {
-    $tag_type_display = "Client";
-} elseif ( $tag_type == 2) {
-    $tag_type_display = "Location";
-} elseif ( $tag_type == 3) {
-    $tag_type_display = "Contact";
-} elseif ( $tag_type == 4) {
-    $tag_type_display = "Credential";
- } elseif ( $tag_type == 5) {
-    $tag_type_display = "Asset";
-} else {
-    $tag_type_display = "Unknown";
-}
+$tag = tagRow(intval($_GET['id'] ?? 0));
 
 ob_start();
-?>
+
+if (!$tag) { ?>
+    <div class="modal-body text-center text-secondary py-5">That tag is gone - it may have been merged into another, or deleted.</div>
+<?php } else {
+    $tag_id = intval($tag['tag_id']);
+    $type = intval($tag['tag_type']);
+    $tag_used = tagUsage($tag_id);
+    $tag_lines = tagSeatLines($tag_id); ?>
+
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-tag mr-2"></i><?= $tag_type_display ?> Tag: <strong><?= $tag_name ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-tag me-2"></i>Edit Tag <span class="fw-normal text-white-50 ms-1"><?= escapeHtml($tag['tag_name']) ?></span></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="tag_id" value="<?= $tag_id ?>">
 
     <div class="modal-body">
-
-        <div class="form-group">
-            <label>Name <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-tag"></i></span>
-                </div>
-                <input type="text" class="form-control" name="name" maxlength="200" value="<?= $tag_name ?>" required>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Color <strong class="text-danger">*</strong></label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-paint-brush"></i></span>
-                </div>
-                <input type="color" class="form-control col-3" name="color" value="<?= $tag_color ?>" required>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Icon</label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-image"></i></span>
-                </div>
-                <input type="text" class="form-control" name="icon" placeholder="Icon ex handshake" maxlength="200" value="<?= $tag_icon ?>">
-            </div>
-        </div>
-
+        <?php if ($tag['tag_archived_at']) { ?>
+            <div class="alert alert-secondary small py-2"><i class="fas fa-fw fa-archive me-1"></i>Archived <?= date('M j, Y', strtotime($tag['tag_archived_at'])) ?> - it stays on its records, but isn't offered for tagging or in the filters.</div>
+        <?php } ?>
+        <?php require __DIR__ . '/tag_form.php'; ?>
     </div>
     <div class="modal-footer">
-        <button type="submit" name="edit_tag" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save changes</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fas fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="edit_tag" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Save</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 
-<?php
+<?php }
 require_once '../../../includes/modal_footer.php';

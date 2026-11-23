@@ -1,6 +1,6 @@
 <?php
 
-require_once '../../../includes/modal_header.php';
+require_once '../../includes/modal_header.php'; // admin/includes - admins only
 require_once '../../../includes/cron_jobs.php';
 
 $cron_job_id = intval($_GET['id']);
@@ -27,31 +27,31 @@ if (empty($cron_job_daily_at)) {
 ob_start();
 ?>
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-clock mr-2"></i>Editing: <strong><?= $cron_job_label ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-clock me-2"></i>Edit Job <span class="fw-normal text-white-50 ms-1"><?= $cron_job_label ?></span></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="cron_job_id" value="<?= $cron_job_id ?>">
     <div class="modal-body">
 
-        <div class="form-group">
-            <div class="custom-control custom-switch">
-                <input type="checkbox" class="custom-control-input" name="enabled" value="1" id="cronJobEnabledSwitch" <?= $cron_job_enabled == 1 ? 'checked' : '' ?>>
-                <label class="custom-control-label" for="cronJobEnabledSwitch">Enabled</label>
+        <?php if (!empty($job['description'])) { ?>
+            <p class="small text-body-secondary"><?= escapeHtml($job['description']) ?></p>
+        <?php } ?>
+
+        <div class="mb-3">
+            <div class="form-check form-switch">
+                <input type="checkbox" class="form-check-input" name="enabled" value="1" id="cronJobEnabledSwitch" <?= $cron_job_enabled == 1 ? 'checked' : '' ?>>
+                <label class="form-check-label" for="cronJobEnabledSwitch">Runs on its schedule</label>
             </div>
-            <small class="text-muted">A disabled job never runs on its schedule, but Run Now still works.</small>
+            <div class="form-text">Switched off, it only runs when someone asks it to with Run now.</div>
         </div>
 
-        <div class="form-group">
-            <label>Schedule</label>
+        <div class="mb-3">
+            <label class="form-label">Schedule</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
-                <select class="form-control" name="schedule" id="cronJobSchedule">
+                    <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
+                <select class="form-select select2" name="schedule" id="cronJobSchedule">
                     <?php if ($cron_job_interval_safe) { ?>
                         <option value="Interval" <?= $cron_job_schedule === 'Interval' ? 'selected' : '' ?>>Every so many minutes</option>
                     <?php } ?>
@@ -59,39 +59,33 @@ ob_start();
                 </select>
             </div>
             <?php if (!$cron_job_interval_safe) { ?>
-                <small class="text-muted">This job's work repeats if it runs twice in one day, so it only runs on the daily schedule.</small>
+                <div class="form-text">It only runs once a day - run more often, its work would be done twice.</div>
             <?php } ?>
         </div>
 
-        <div class="form-group" id="cronJobIntervalGroup">
-            <label>Run every</label>
+        <div class="mb-3" id="cronJobIntervalGroup">
+            <label class="form-label">Run every</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-redo"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-redo"></i></span>
                 <input type="number" class="form-control" name="interval_minutes" value="<?= $cron_job_interval_minutes ?>" min="1" max="1440">
-                <div class="input-group-append">
                     <span class="input-group-text">minutes</span>
-                </div>
             </div>
-            <small class="text-muted">Cron wakes once a minute, so 1 is as often as anything can run.</small>
+            <div class="form-text">Cron wakes once a minute, so 1 is as often as anything can run.</div>
         </div>
 
-        <div class="form-group" id="cronJobDailyGroup">
-            <label>Run at</label>
+        <div class="mb-3" id="cronJobDailyGroup">
+            <label class="form-label">Run at</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-clock"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-clock"></i></span>
                 <input type="time" class="form-control" name="daily_at" value="<?= $cron_job_daily_at ?>">
             </div>
-            <small class="text-muted">Your ITFlow timezone. A run missed because the server was off happens at the next opportunity instead of waiting a day.</small>
+            <div class="form-text">In ITFlow's time zone<?= !empty($session_timezone) ? ', ' . escapeHtml($session_timezone) : '' ?>. A run missed because the server was off happens when it's back, not a day later.</div>
         </div>
 
     </div>
     <div class="modal-footer">
-        <button type="submit" name="edit_cron_job" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Save</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="edit_cron_job" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Save</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

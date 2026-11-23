@@ -117,7 +117,7 @@ function checkFileUpload($file, $allowed_extensions) {
     }
 
     // Reject empty files and enforce the 500 MB ceiling
-    $size = (int) $file['size'];
+    $size = intval($file['size']);
     if ($size <= 0 || $size > 500 * 1024 * 1024) {
         return false;
     }
@@ -158,4 +158,65 @@ function escapeCsvFormula($value) {
     }
 
     return $value;
+}
+
+/**
+ * Render a flash alert message for output.
+ *
+ * flashAlert() messages deliberately carry a little formatting markup - roughly
+ * 480 of the ~653 call sites wrap a value in <strong> - while 429 of them also
+ * interpolate PHP variables that are user controlled (custom link names, ticket
+ * status names, saved payment descriptions and so on). Escaping the lot would
+ * print the tags; printing the lot raw is an XSS hole.
+ *
+ * So: escape everything, then restore a fixed allowlist of formatting tags that
+ * carry no attributes and cannot execute. Attribute injection, </script>, event
+ * handlers and <a href> are all neutralised because the escaped forms are never
+ * put back.
+ *
+ * Every place that displays $_SESSION['alert_message'] must use this. Before it
+ * existed there were four separate implementations and one of them interpolated
+ * raw.
+ */
+/**
+ * Map a flashAlert type onto a real Bootstrap contextual class.
+ *
+ * flashAlert() takes 'success', 'info', 'warning' and 'error'; 'danger' and
+ * 'alert' are still understood. Bootstrap has no alert-error, so the raw type
+ * can't be used as the class.
+ */
+function alertStyleClass($type) {
+
+    $alert_classes = [
+        'success' => 'success',
+        'info'    => 'info',
+        'warning' => 'warning',
+        'alert'   => 'warning',
+        'error'   => 'danger',
+        'danger'  => 'danger',
+    ];
+
+    return $alert_classes[$type] ?? 'secondary';
+}
+
+function alertMessageHtml($message) {
+
+    $allowed_tags = [
+        '<strong>', '</strong>',
+        '<b>', '</b>',
+        '<em>', '</em>',
+        '<i>', '</i>',
+        '<code>', '</code>',
+        '<br>', '<br/>', '<br />',
+    ];
+
+    // Entities already in the message stay as they are - a name a handler ran
+    // through escapeHtml() first shows as "A & B", not "A &amp; B"
+    $safe = htmlspecialchars((string) $message, ENT_QUOTES, 'UTF-8', false);
+
+    foreach ($allowed_tags as $tag) {
+        $safe = str_replace(htmlspecialchars($tag, ENT_QUOTES, 'UTF-8'), $tag, $safe);
+    }
+
+    return $safe;
 }

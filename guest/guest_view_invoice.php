@@ -1,488 +1,177 @@
 <?php
 
+/*
+ * An invoice as the client opens it from its link - the invoice on the
+ * left, as it prints; on the right what is owed and by when, that autopay
+ * pays it on its due date when it does, Pay Now when it can be paid online, the PDF, the payments made, and everything else
+ * they owe with a link to each. Opening it marks a sent invoice viewed and
+ * tells the agents.
+ */
+
 require_once "includes/inc_all_guest.php";
 
-if (!isset($_GET['invoice_id'], $_GET['url_key'])) {
-    echo "<br><h2>Oops, something went wrong! Please raise a ticket if you believe this is an error.</h2>";
-    require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/footer.php';
+$invoice = billingRow('invoice', intval($_GET['invoice_id'] ?? 0), false);
+$url_key = (string) ($_GET['url_key'] ?? '');
 
+if (!$invoice || (string) $invoice['invoice_url_key'] === '' || !hash_equals((string) $invoice['invoice_url_key'], $url_key)) {
+    echo guestDeadEndHtml('fa-file-invoice-dollar', "This invoice link isn't working", "It may have been mistyped or replaced. Ask whoever sent it for a new link.");
+    require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/footer.php';
     exit();
 }
 
-$url_key = escapeSql($_GET['url_key']);
-$invoice_id = intval($_GET['invoice_id']);
+$invoice_id = intval($invoice['invoice_id']);
+$client_id = intval($invoice['client_id']);
+$number = billingNumber('invoice', $invoice);
+$status = (string) $invoice['invoice_status'];
+$currency = (string) $invoice['invoice_currency_code'];
+$money = function ($amount) use ($currency) {
+    return escapeHtml(billingMoney($amount, $currency));
+};
 
-$sql = mysqli_query(
-    $mysqli,
-    "SELECT client_currency_code, client_id, client_name, client_net_terms, client_website,
-        contact_email, contact_extension, contact_mobile, contact_mobile_country_code,
-        contact_phone, contact_phone_country_code, invoice_amount, invoice_category_id,
-        invoice_currency_code, invoice_date, invoice_discount_amount, invoice_due, invoice_id,
-        invoice_note, invoice_number, invoice_prefix, invoice_status, location_address,
-        location_city, location_country, location_state, location_zip FROM invoices
-    LEFT JOIN clients ON invoice_client_id = client_id
-    LEFT JOIN locations ON clients.client_id = locations.location_client_id AND location_primary = 1
-    LEFT JOIN contacts ON clients.client_id = contacts.contact_client_id AND contact_primary = 1
-    WHERE invoice_id = $invoice_id
-    AND invoice_url_key = '$url_key'"
-);
+billingGuestViewed('invoice', $invoice);
 
-if (mysqli_num_rows($sql) !== 1) {
-    // Invalid invoice/key
-    echo "<br><h2>Oops, something went wrong! Please raise a ticket if you believe this is an error.</h2>";
-    require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/footer.php';
+$items = billingItems('invoice', $invoice_id);
+$totals = billingTotals('invoice', $invoice, $items);
+$payments = invoicePayments($invoice_id);
+$state = invoiceState($invoice, invoicePaid($invoice_id));
+$company = billingCompany();
+$open_invoices = billingClientOpenInvoices($client_id);
+$open_total = 0;
+foreach ($open_invoices as $open) {
+    $open_total += floatval($open['invoice_amount']) - floatval($open['paid']);
+}
+$query_key = rawurlencode($url_key);
 
-    exit();
+// Paying online - through Stripe, under its limit, when there is something to pay
+$stripe = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_threshold FROM payment_providers WHERE payment_provider_active = 1 AND payment_provider_name = 'Stripe' LIMIT 1"));
+$pay_url = '';
+if ($stripe && invoiceCanPay($invoice, $state) && (floatval($stripe['payment_provider_threshold']) == 0 || floatval($stripe['payment_provider_threshold']) > floatval($invoice['invoice_amount']))) {
+    $stripe_customer = mysqli_fetch_row(mysqli_query($mysqli, "SELECT payment_provider_client FROM client_payment_provider WHERE client_id = $client_id AND payment_provider_id = " . intval($stripe['payment_provider_id']) . " LIMIT 1"));
+    $pay_url = ($stripe_customer ? 'guest_pay_invoice_stripe.php' : 'guest_pay_setup_stripe_customer.php') . "?invoice_id=$invoice_id&url_key=$query_key";
+}
+// The card fee on paying by card, when the client pays one (functions/billing_pay.php)
+$card_fee = $pay_url ? billingCardFeeCents(intval(round($state['balance'] * 100)), billingCardFeeFor($client_id)) / 100 : 0;
+// Paid by its recurring invoice's autopay on the due date - said, so it isn't paid twice, while that will go through
+$autopay = $state['state'] === 'open' ? invoiceAutopay($invoice) : null;
+if ($autopay && $autopay['problem'] !== '') {
+    $autopay = null;
 }
 
-$row = mysqli_fetch_assoc($sql);
-
-$invoice_id = intval($row['invoice_id']);
-$invoice_prefix = escapeHtml($row['invoice_prefix']);
-$invoice_number = intval($row['invoice_number']);
-$invoice_status = escapeHtml($row['invoice_status']);
-$invoice_date = escapeHtml($row['invoice_date']);
-$invoice_due = escapeHtml($row['invoice_due']);
-$invoice_discount = floatval($row['invoice_discount_amount']);
-$invoice_amount = floatval($row['invoice_amount']);
-$invoice_currency_code = escapeHtml($row['invoice_currency_code']);
-$invoice_note = escapeHtml($row['invoice_note']);
-$invoice_category_id = intval($row['invoice_category_id']);
-$client_id = intval($row['client_id']);
-$client_name = escapeHtml($row['client_name']);
-$client_name_escaped = escapeSql($row['client_name']);
-$location_address = escapeHtml($row['location_address']);
-$location_city = escapeHtml($row['location_city']);
-$location_state = escapeHtml($row['location_state']);
-$location_zip = escapeHtml($row['location_zip']);
-$location_country = escapeHtml($row['location_country']);
-$contact_email = escapeHtml($row['contact_email']);
-$contact_phone_country_code = escapeHtml($row['contact_phone_country_code']);
-$contact_phone = escapeHtml(formatPhoneNumber($row['contact_phone'], $contact_phone_country_code));
-$contact_extension = escapeHtml($row['contact_extension']);
-$contact_mobile_country_code = escapeHtml($row['contact_mobile_country_code']);
-$contact_mobile = escapeHtml(formatPhoneNumber($row['contact_mobile'], $contact_mobile_country_code));
-$client_website = escapeHtml($row['client_website']);
-$client_currency_code = escapeHtml($row['client_currency_code']);
-$client_net_terms = intval($row['client_net_terms']);
-
-$sql = mysqli_query($mysqli, "SELECT company_address, company_city, company_country, company_email, company_locale,
-    company_logo, company_name, company_phone, company_phone_country_code, company_state,
-    company_tax_id, company_website, company_zip, config_invoice_footer FROM companies, settings WHERE companies.company_id = settings.company_id AND companies.company_id = 1");
-$row = mysqli_fetch_assoc($sql);
-
-$company_name = escapeHtml($row['company_name']);
-$company_address = escapeHtml($row['company_address']);
-$company_city = escapeHtml($row['company_city']);
-$company_state = escapeHtml($row['company_state']);
-$company_zip = escapeHtml($row['company_zip']);
-$company_country = escapeHtml($row['company_country']);
-$company_phone_country_code = escapeHtml($row['company_phone_country_code']);
-$company_phone = escapeHtml(formatPhoneNumber($row['company_phone'], $company_phone_country_code));
-$company_email = escapeHtml($row['company_email']);
-$company_website = escapeHtml($row['company_website']);
-$company_tax_id = escapeHtml($row['company_tax_id']);
-if ($config_invoice_show_tax_id && !empty($company_tax_id)) {
-    $company_tax_id_display = "Tax ID: $company_tax_id";
-} else {
-    $company_tax_id_display = "";
-}
-$company_logo = escapeHtml($row['company_logo']);
-if (!empty($company_logo)) {
-    $company_logo_base64 = base64_encode(file_get_contents("../uploads/settings/$company_logo"));
-}
-$company_locale = escapeHtml($row['company_locale']);
-$config_invoice_footer = escapeHtml($row['config_invoice_footer']);
-
-// Get Payment Provide Details
-$sql = mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_name, payment_provider_threshold FROM payment_providers WHERE payment_provider_active = 1 LIMIT 1");
-$row = mysqli_fetch_assoc($sql);
-$payment_provider_id = intval($row['payment_provider_id']);
-$payment_provider_name = escapeHtml($row['payment_provider_name']);
-$payment_provider_threshold = floatval($row['payment_provider_threshold']);
-
-//Set Currency Format
-$currency_format = numfmt_create($company_locale, NumberFormatter::CURRENCY);
-
-$invoice_tally_total = 0; // Default
-
-//Set Badge color based off of invoice status
-$invoice_badge_color = getInvoiceBadgeColor($invoice_status);
-
-//Update status to Viewed only if invoice_status = "Sent"
-if ($invoice_status == 'Sent') {
-    mysqli_query($mysqli, "UPDATE invoices SET invoice_status = 'Viewed' WHERE invoice_id = $invoice_id");
-}
-
-//Mark viewed in history
-mysqli_query($mysqli, "INSERT INTO history SET history_status = '$invoice_status', history_description = 'Invoice viewed - $ip - $os - $browser', history_invoice_id = $invoice_id");
-
-if ($invoice_status !== 'Paid') {
-
-    appNotify("Invoice Viewed", "Invoice $invoice_prefix$invoice_number has been viewed by $client_name_escaped - $ip - $os - $browser", "/agent/invoice.php?invoice_id=$invoice_id", $client_id);
-
-}
-$sql_payments = mysqli_query($mysqli, "SELECT * FROM payments, accounts WHERE payment_account_id = account_id AND payment_invoice_id = $invoice_id ORDER BY payments.payment_id DESC");
-
-//Add up all the payments for the invoice and get the total amount paid to the invoice
-$sql_amount_paid = mysqli_query($mysqli, "SELECT SUM(payment_amount) AS amount_paid FROM payments WHERE payment_invoice_id = $invoice_id");
-$row = mysqli_fetch_assoc($sql_amount_paid);
-$amount_paid = floatval($row['amount_paid']);
-
-// Calculate the balance owed
-$balance = $invoice_amount - $amount_paid;
-
-//check to see if overdue
-$invoice_color = $invoice_badge_color; // Default
-if ($invoice_status !== "Paid" && $invoice_status !== "Draft" && $invoice_status !== "Cancelled" && $invoice_status !== "Non-Billable") {
-    $unixtime_invoice_due = strtotime($invoice_due) + 86400;
-    if ($unixtime_invoice_due < time()) {
-        $invoice_color = "text-danger";
-    }
-}
-
-// Invoice individual items
-$sql_invoice_items = mysqli_query($mysqli, "SELECT item_description, item_id, item_name, item_price, item_quantity, item_tax, item_total FROM invoice_items WHERE item_invoice_id = $invoice_id ORDER BY item_order ASC");
-
-
-// Get Total Account Balance
-//Add up all the payments for the invoice and get the total amount paid to the invoice
-$sql_invoice_amounts = mysqli_query($mysqli, "SELECT SUM(invoice_amount) AS invoice_amounts FROM invoices WHERE invoice_client_id = $client_id AND invoice_status != 'Draft' AND invoice_status != 'Cancelled' AND invoice_status != 'Non-Billable'");
-$row = mysqli_fetch_assoc($sql_invoice_amounts);
-
-$account_balance = floatval($row['invoice_amounts']);
-
-$sql_amount_paid = mysqli_query($mysqli, "SELECT SUM(payment_amount) AS amount_paid FROM payments, invoices WHERE payment_invoice_id = invoice_id AND invoice_client_id = $client_id");
-$row = mysqli_fetch_assoc($sql_amount_paid);
-
-$account_amount_paid = floatval($row['amount_paid']);
-
-$account_balance = $account_balance - $account_amount_paid;
-//set Text color on balance
-if ($balance > 0) {
-    $balance_text_color = "text-danger font-weight-bold";
-} else {
-    $balance_text_color = "";
-}
+$paper = [
+    'type' => 'invoice',
+    'row' => $invoice,
+    'items' => $items,
+    'totals' => $totals,
+    'paid' => $state['paid'],
+    'balance' => $state['balance'],
+    'logo_url' => $company['logo_url'],
+];
 
 ?>
 
-<div class="card">
-    <div class="card-header bg-light d-print-none">
-        <div class="row">
-            <div class="col-6">
-                <h4 class="mt-1">Account Balance: <b><?= numfmt_format_currency($currency_format, $account_balance, $invoice_currency_code) ?></b></h4>
-            </div>
-            <div class="col-6">
-                <div class="float-right">
-                    <a class="btn btn-default" href="#" onclick="window.print();"><i class="fas fa-fw fa-print mr-2"></i>Print</a>
-                    <a class="btn btn-default" href="guest_post.php?export_invoice_pdf=<?= $invoice_id ?>&url_key=<?= $url_key ?>">
-                        <i class="fa fa-fw fa-download mr-2"></i>Download
-                    </a>
-                    <?php
-                    if ($invoice_status !== "Paid" &&
-                        $invoice_status  !== "Cancelled" &&
-                        $invoice_status !== "Draft" &&
-                        $payment_provider_id &&
-                        (
-                            $payment_provider_threshold == 0 ||
-                            $payment_provider_threshold > $invoice_amount
-                        )
-                    ){ ?>
-                        <a class="btn btn-success" href="guest_pay_invoice_stripe.php?invoice_id=<?= $invoice_id ?>&url_key=<?= $url_key ?>"><i class="fa fa-fw fa-credit-card mr-2"></i>Pay Now </a>
-                    <?php } ?>
-                </div>
-            </div>
-        </div>
+<div class="row g-3 my-1">
+
+    <div class="col-lg-8 itflow-paper-col">
+        <?php require $_SERVER['DOCUMENT_ROOT'] . '/includes/billing_paper.php'; ?>
     </div>
-    <div class="card-body">
 
-        <div class="row mb-3">
-            <?php if (file_exists("../uploads/settings/$company_logo")) { ?>
-            <div class="col-sm-2">
-                <img class="img-fluid" src="<?= "../uploads/settings/$company_logo" ?>" alt="Company logo">
-            </div>
-            <?php } ?>
-            <div class="col-sm-6 <?php if (!file_exists("../uploads/settings/$company_logo")) { echo "col-sm-8"; } ?>">
-                <ul class="list-unstyled">
-                    <li><h4><strong><?= $company_name ?></strong></h4></li>
-                    <li><?= formatAddress($company_address, $company_city, $company_state, $company_zip, $company_country, '<br>') ?></li>
-                    <li><?= "$company_email | $company_phone" ?></li>
-                    <li><?= $company_website ?></li>
-                    <?php if ($company_tax_id_display) { ?>
-                    <li><?= $company_tax_id_display ?></li>
-                    <?php } ?>
-                </ul>
-            </div>
+    <div class="col-lg-4 d-print-none">
 
-            <div class="col-sm-4">
-                <h3 class="text-right"><strong>INVOICE</strong></h3>
-                <h5 class="badge badge-<?= $invoice_badge_color ?> p-2 float-right">
-                    <?= "$invoice_status" ?>
-                </h5>
-                <table class="table table-sm table-borderless">
-                    <tr>
-                        <th>Invoice #:</th>
-                        <td class="text-right"><?= "$invoice_prefix$invoice_number" ?></td>
-                    </tr>
-                    <tr>
-                        <th>Date:</th>
-                        <td class="text-right"><?= $invoice_date ?></td>
-                    </tr>
-                    <tr>
-                        <th>Due:</th>
-                        <td class="text-right"><?= $invoice_due ?></td>
-                    </tr>
-                </table>
-            </div>
-
-        </div>
-        <div class="row mb-3 bg-light p-3">
-            <div class="col">
-                <h6><strong>Bill To:</strong></h6>
-                <ul class="list-unstyled mb-0">
-                    <li><?= $client_name ?></li>
-                    <li><?= formatAddress($location_address, $location_city, $location_state, $location_zip, $location_country, '<br>') ?></li>
-                    <li><?= "$contact_email | $contact_phone $contact_extension" ?></li>
-                </ul>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead class="bg-light">
-                            <tr>
-                                <th>Item</th>
-                                <th>Description</th>
-                                <th class="text-center">Qty</th>
-                                <th class="text-right">Unit Price</th>
-                                <th class="text-right">Tax</th>
-                                <th class="text-right">Amount</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            <?php
-
-                            $total_tax = 0.00;
-                            $sub_total = 0.00 - $invoice_discount;
-
-                            while ($row = mysqli_fetch_assoc($sql_invoice_items)) {
-                                $item_id = intval($row['item_id']);
-                                $item_name = escapeHtml($row['item_name']);
-                                $item_description = escapeHtml($row['item_description']);
-                                $item_quantity = floatval($row['item_quantity']);
-                                $item_price = floatval($row['item_price']);
-                                $item_tax = floatval($row['item_tax']);
-                                $item_total = floatval($row['item_total']);
-                                $total_tax = $item_tax + $total_tax;
-                                $sub_total = $item_price * $item_quantity + $sub_total;
-
-                                ?>
-
-                                <tr>
-                                    <td><?= $item_name ?></td>
-                                    <td><?= nl2br($item_description) ?></td>
-                                    <td class="text-center"><?= $item_quantity ?></td>
-                                    <td class="text-right"><?= numfmt_format_currency($currency_format, $item_price, $invoice_currency_code) ?></td>
-                                    <td class="text-right"><?= numfmt_format_currency($currency_format, $item_tax, $invoice_currency_code) ?></td>
-                                    <td class="text-right"><?= numfmt_format_currency($currency_format, $item_total, $invoice_currency_code) ?></td>
-                                </tr>
-
-                            <?php } ?>
-
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="row mb-3">
-            <div class="col-sm-7">
-                <?php if (!empty($invoice_note)) { ?>
-                    <div class="card">
-                        <div class="card-body">
-                            <?= nl2br($invoice_note) ?>
+        <!-- What is owed, and paying it -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <?php if ($state['state'] === 'paid') { ?>
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="itflow-asset-icon bg-success-subtle text-success-emphasis" aria-hidden="true"><i class="fas fa-check"></i></span>
+                        <div>
+                            <div class="fw-semibold">Paid in full</div>
+                            <div class="small text-body-secondary"><?= $payments ? 'On ' . formatDate($payments[0]['payment_date']) . ' - thank you.' : 'Thank you.' ?></div>
                         </div>
                     </div>
-                <?php } ?>
-            </div>
-            <div class="col-sm-3 offset-sm-2">
-                <table class="table table-hover mb-0">
-                    <tbody>
-                    <tr>
-                        <td>Subtotal:</td>
-                        <td class="text-right"><?= numfmt_format_currency($currency_format, $sub_total, $invoice_currency_code) ?></td>
-                    </tr>
-                    <?php
-                    if ($invoice_discount > 0) {
-                        ?>
-                        <tr>
-                            <td>Discount:</td>
-                            <td class="text-right">-<?= numfmt_format_currency($currency_format, $invoice_discount, $invoice_currency_code) ?></td>
-                        </tr>
-                    <?php
-                    }
-                    ?>
-                    <?php if ($total_tax > 0) { ?>
-                        <tr>
-                            <td>Tax:</td>
-                            <td class="text-right"><?= numfmt_format_currency($currency_format, $total_tax, $invoice_currency_code) ?></td>
-                        </tr>
+                <?php } elseif (in_array($state['state'], ['cancelled', 'nonbillable'], true)) { ?>
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="itflow-asset-icon bg-secondary-subtle text-secondary-emphasis" aria-hidden="true"><i class="fas fa-ban"></i></span>
+                        <div>
+                            <div class="fw-semibold"><?= $state['state'] === 'cancelled' ? 'Cancelled' : 'Nothing to pay' ?></div>
+                            <div class="small text-body-secondary">Nothing is owed on this invoice.</div>
+                        </div>
+                    </div>
+                <?php } else { ?>
+                    <div class="itflow-billing-stat-label">Amount due</div>
+                    <div class="itflow-billing-stat-value mb-1 <?= $state['state'] === 'overdue' ? 'text-danger-emphasis' : '' ?>"><?= $money($state['balance']) ?></div>
+                    <div class="mb-3"><?= invoiceDuePill($state) ?: '<span class="small text-body-secondary">Due ' . formatDate($invoice['invoice_due']) . '</span>' ?></div>
+                    <?php if ($autopay) { ?>
+                        <div class="alert alert-success py-2 small d-flex align-items-start gap-2 mb-3">
+                            <i class="<?= escapeHtml($autopay['icon']) ?> fa-fw mt-1"></i>
+                            <span><?= $autopay['card'] ? 'Autopay will charge ' . escapeHtml($autopay['method']) . ($card_fee > 0 ? ' ' . $money($state['balance'] + $card_fee) . ', with a ' . $money($card_fee) . ' card fee,' : '') : 'This is paid automatically by ' . escapeHtml($autopay['method']) ?>
+                                on <?= escapeHtml(date('M j', strtotime($invoice['invoice_due']))) ?> - nothing to do, unless you would rather pay now.</span>
+                        </div>
                     <?php } ?>
-                    <tr>
-                        <td>Total:</td>
-                        <td class="text-right"><?= numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) ?></td>
-                    </tr>
-                    <?php if ($amount_paid > 0) { ?>
-                        <tr>
-                            <td><div class="text-success">Paid:</div></td>
-                            <td class="text-right text-success"><?= numfmt_format_currency($currency_format, $amount_paid, $invoice_currency_code) ?></td>
-                        </tr>
-                    <?php
-                    }
-                    ?>
-                    <tr class="h5 text-bold">
-                        <td>Balance:</td>
-                        <td class="text-right"><?= numfmt_format_currency($currency_format, $balance, $invoice_currency_code) ?></td>
-                    </tr>
-
-                    </tbody>
-                </table>
+                    <?php if ($pay_url) { ?>
+                        <a class="btn btn-success btn-lg w-100 mb-2" href="<?= escapeHtml($pay_url) ?>"><i class="fas fa-credit-card me-2"></i>Pay Now</a>
+                        <div class="small text-body-secondary text-center mb-3"><i class="fas fa-lock me-1"></i>Securely, by card<?= $card_fee > 0 ? ' - plus a ' . $money($card_fee) . ' card fee' : '' ?></div>
+                    <?php } ?>
+                <?php } ?>
+                <div class="d-flex gap-2 <?= $state['state'] === 'paid' || in_array($state['state'], ['cancelled', 'nonbillable'], true) ? 'mt-3' : '' ?>">
+                    <a class="btn btn-outline-primary flex-fill" href="guest_post.php?export_invoice_pdf=<?= $invoice_id ?>&url_key=<?= $query_key ?>"><i class="fas fa-file-pdf me-2"></i>Download PDF</a>
+                    <button type="button" class="btn btn-outline-secondary" onclick="window.print();" title="Print"><i class="fas fa-print"></i></button>
+                </div>
             </div>
         </div>
 
-        <hr class="mt-5">
+        <?php if ($payments) { ?>
+            <div class="card mb-3">
+                <div class="card-header"><h3 class="card-title mb-0"><i class="fas fa-fw fa-receipt text-secondary me-2"></i>Payments</h3></div>
+                <div class="list-group list-group-flush">
+                    <?php foreach ($payments as $payment) { ?>
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="fw-semibold itflow-money"><?= escapeHtml(billingMoney($payment['payment_amount'], $payment['payment_currency_code'])) ?></div>
+                                <div class="small text-body-secondary"><?= escapeHtml(implode(' · ', array_filter([$payment['payment_method'], $payment['payment_reference']]))) ?></div>
+                            </div>
+                            <span class="small text-body-secondary"><?= formatDate($payment['payment_date']) ?></span>
+                        </div>
+                    <?php } ?>
+                </div>
+            </div>
+        <?php } ?>
 
-        <div class="text-center text-secondary"><?= nl2br($config_invoice_footer) ?></div>
+        <?php if ($open_invoices && !(count($open_invoices) === 1 && intval($open_invoices[0]['invoice_id']) === $invoice_id)) { ?>
+            <!-- Everything else they owe -->
+            <div class="card mb-3">
+                <div class="card-header d-flex align-items-center">
+                    <h3 class="card-title mb-0 me-auto"><i class="fas fa-fw fa-file-alt text-secondary me-2"></i>Your account</h3>
+                    <span class="fw-semibold itflow-money"><?= escapeHtml(billingMoney($open_total, $currency)) ?></span>
+                </div>
+                <div class="list-group list-group-flush">
+                    <?php foreach ($open_invoices as $open) {
+                        $open_id = intval($open['invoice_id']);
+                        $open_state = invoiceState($open, $open['paid']); ?>
+                        <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 <?= $open_id === $invoice_id ? 'active' : '' ?>"
+                            href="guest_view_invoice.php?invoice_id=<?= $open_id ?>&url_key=<?= rawurlencode((string) $open['invoice_url_key']) ?>">
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="fw-semibold"><?= escapeHtml($open['invoice_prefix'] . $open['invoice_number']) ?></div>
+                                <div class="small text-truncate <?= $open_id === $invoice_id ? '' : 'text-body-secondary' ?>"><?= escapeHtml($open['invoice_scope']) ?: 'Dated ' . formatDate($open['invoice_date']) ?></div>
+                            </div>
+                            <div class="text-end">
+                                <div class="itflow-money small fw-semibold"><?= escapeHtml(billingMoney($open_state['balance'], $open['invoice_currency_code'])) ?></div>
+                                <?php if ($open_id !== $invoice_id) { ?><?= invoiceDuePill($open_state) ?><?php } ?>
+                            </div>
+                        </a>
+                    <?php } ?>
+                </div>
+            </div>
+        <?php } ?>
+
+        <?php if (!empty($company['company_email']) || !empty($company['phone_display'])) { ?>
+            <div class="small text-body-secondary px-1">
+                Questions about this invoice? Contact <?= escapeHtml($company['company_name']) ?>
+                <?php if (!empty($company['company_email'])) { ?> at <a href="mailto:<?= escapeHtml($company['company_email']) ?>?subject=<?= rawurlencode("Invoice $number") ?>"><?= escapeHtml($company['company_email']) ?></a><?php } ?>
+                <?php if (!empty($company['phone_display'])) { ?> or <?= escapeHtml($company['phone_display']) ?><?php } ?>.
+            </div>
+        <?php } ?>
+
     </div>
 </div>
 
-<?php
-
-// CURRENT INVOICES
-
-$sql_current_invoices = mysqli_query($mysqli, "SELECT invoice_amount, invoice_currency_code, invoice_date, invoice_due, invoice_id,
-    invoice_number, invoice_prefix, invoice_url_key FROM invoices WHERE invoice_client_id = $client_id AND invoice_due > CURDATE() AND(invoice_status = 'Sent' OR invoice_status = 'Viewed' OR invoice_status = 'Partial') ORDER BY invoice_number DESC");
-
-$current_invoices_count = mysqli_num_rows($sql_current_invoices);
-
-if ($current_invoices_count > 0) { ?>
-
-<div class="card d-print-none card-dark">
-    <div class="card-header">
-        <strong><i class="fas fa-fw fa-clock mr-2"></i><b><?= $current_invoices_count ?></b> Current Invoices</strong>
-    </div>
-    <div card="card-body">
-        <table class="table table-sm">
-            <thead>
-            <tr>
-                <th class="text-center">Invoice</th>
-                <th>Date</th>
-                <th>Due</th>
-                <th class="text-right">Amount</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php
-
-            while ($row = mysqli_fetch_assoc($sql_current_invoices)) {
-                $invoice_id = intval($row['invoice_id']);
-                $invoice_prefix = escapeHtml($row['invoice_prefix']);
-                $invoice_number = intval($row['invoice_number']);
-                $invoice_date = escapeHtml($row['invoice_date']);
-                $invoice_due = escapeHtml($row['invoice_due']);
-                $invoice_amount = floatval($row['invoice_amount']);
-                $invoice_currency_code = escapeHtml($row['invoice_currency_code']);
-                $invoice_url_key = escapeHtml($row['invoice_url_key']);
-                $invoice_tally_total = $invoice_amount + $invoice_tally_total;
-                $difference = strtotime($invoice_due) - time();
-                $days = floor($difference / (60*60*24));
-
-                ?>
-
-                <tr <?php if ($_GET['invoice_id'] == $invoice_id) { echo "class='table-primary'"; } ?>>
-                    <th class="text-center"><a href="guest_view_invoice.php?invoice_id=<?= $invoice_id ?>&url_key=<?= $invoice_url_key ?>"><?= "$invoice_prefix$invoice_number" ?></a></th>
-                    <td><?= $invoice_date ?></td>
-                    <td><?= $invoice_due ?> (Due in <?= $days ?> Days)</td>
-                    <td class="text-right text-bold"><?= numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) ?></td>
-                </tr>
-
-            <?php } ?>
-
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<?php
-
-}
-
-?>
-
-<?php
-
-// OUTSTANDING INVOICES
-
-$sql_outstanding_invoices = mysqli_query($mysqli, "SELECT invoice_amount, invoice_currency_code, invoice_date, invoice_due, invoice_id,
-    invoice_number, invoice_prefix, invoice_url_key FROM invoices WHERE invoice_client_id = $client_id AND invoice_due < CURDATE() AND(invoice_status = 'Sent' OR invoice_status = 'Viewed' OR invoice_status = 'Partial') ORDER BY invoice_date DESC");
-
-$outstanding_invoices_count = mysqli_num_rows($sql_outstanding_invoices);
-
-if ($outstanding_invoices_count > 0) { ?>
-
-<div class="card d-print-none card-danger">
-    <div class="card-header">
-        <strong><i class="fa fa-fw fa-exclamation-triangle mr-2"></i><b><?= $outstanding_invoices_count ?></b> Outstanding Invoices</strong>
-    </div>
-    <div card="card-body">
-        <table class="table table-sm">
-            <thead>
-            <tr>
-                <th class="text-center">Invoice</th>
-                <th>Date</th>
-                <th>Due</th>
-                <th class="text-right">Amount</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php
-
-            while ($row = mysqli_fetch_assoc($sql_outstanding_invoices)) {
-                $invoice_id = intval($row['invoice_id']);
-                $invoice_prefix = escapeHtml($row['invoice_prefix']);
-                $invoice_number = intval($row['invoice_number']);
-                $invoice_date = escapeHtml($row['invoice_date']);
-                $invoice_due = escapeHtml($row['invoice_due']);
-                $invoice_amount = floatval($row['invoice_amount']);
-                $invoice_currency_code = escapeHtml($row['invoice_currency_code']);
-                $invoice_url_key = escapeHtml($row['invoice_url_key']);
-                $invoice_tally_total = $invoice_amount + $invoice_tally_total;
-                $difference = time() - strtotime($invoice_due);
-                $days = floor($difference / (60*60*24));
-
-                ?>
-
-                <tr <?php if ($_GET['invoice_id'] == $invoice_id) { echo "class='table-primary'"; } ?>>
-                    <th class="text-center"><a href="guest_view_invoice.php?invoice_id=<?= $invoice_id ?>&url_key=<?= $invoice_url_key ?>"><?= "$invoice_prefix$invoice_number" ?></a></th>
-                    <td><?= $invoice_date ?></td>
-                    <td class="text-danger"><?= $invoice_due ?> (Over Due by <?= $days ?> Days)</td>
-                    <td class="text-right text-bold"><?= numfmt_format_currency($currency_format, $invoice_amount, $invoice_currency_code) ?></td>
-                </tr>
-
-                <?php
-            }
-            ?>
-
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<?php } // End previous unpaid invoices
-
-require_once $_SERVER['DOCUMENT_ROOT']  . '/includes/footer.php';
+<?php require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/footer.php';

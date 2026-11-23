@@ -2,11 +2,19 @@
 
 require_once '../../../includes/modal_header.php';
 
-$ticket_id = intval($_GET['ticket_id']);
+enforceUserPermission('module_sales', 2);
+
+// The ticket, after the module and client checks - or the modal's error
+$ticket = ticketForModal($_GET['ticket_id'] ?? 0, 2);
+$ticket_id = intval($ticket['ticket_id']);
+if (!intval($ticket['ticket_client_id'])) {
+    echo json_encode(['error' => 'Move the ticket to a client before quoting it.']);
+    exit;
+}
 
 $ticket_sql = mysqli_query(
     $mysqli,
-    "SELECT asset_id, asset_name, asset_type, category_name, client_id, client_rate, contact_id,
+    "SELECT asset_id, asset_name, asset_type, category_name, client_id, contact_id,
         contact_name, ticket_assigned_to, ticket_billable, ticket_category, ticket_created_at,
         ticket_created_by, ticket_first_response_at, ticket_number, ticket_onsite, ticket_prefix,
         ticket_priority, ticket_resolved_at, ticket_subject, user_name FROM tickets
@@ -24,7 +32,9 @@ $ticket_sql = mysqli_query(
 
 $row = mysqli_fetch_assoc($ticket_sql);
 $client_id = intval($row['client_id']);
-$client_rate = floatval($row['client_rate']);
+// The contract in force's rate, else the default
+$client_rate_info = contractClientRate($client_id);
+$client_rate = $client_rate_info['rate'];
 $ticket_prefix = escapeHtml($row['ticket_prefix']);
 $ticket_number = intval($row['ticket_number']);
 $ticket_category = intval($row['ticket_category']);
@@ -36,16 +46,16 @@ $ticket_onsite = intval($row['ticket_onsite']);
 
 $ticket_created_at = escapeHtml($row['ticket_created_at']);
 $ticket_created_by = intval($row['ticket_created_by']);
-$ticket_date = date('Y-m-d g:i A', strtotime($ticket_created_at));
+$ticket_date = date('M j, Y g:i A', strtotime($ticket_created_at));
 $ticket_first_response_at = escapeHtml($row['ticket_first_response_at']);
 if ($ticket_first_response_at) {
-    $ticket_first_response_date_time = date('Y-m-d g:i A', strtotime($ticket_first_response_at));
+    $ticket_first_response_date_time = date('M j, Y g:i A', strtotime($ticket_first_response_at));
 } else {
     $ticket_first_response_date_time = '';
 }
 $ticket_resolved_at = escapeHtml($row['ticket_resolved_at']);
 if ($ticket_resolved_at) {
-    $ticket_resolved_date = date('Y-m-d g:i A', strtotime($ticket_resolved_at));
+    $ticket_resolved_date = date('M j, Y g:i A', strtotime($ticket_resolved_at));
 } else {
     $ticket_resolved_date = '';
 }
@@ -92,10 +102,8 @@ ob_start();
 ?>
 
     <div class="modal-header bg-dark">
-        <h5 class="modal-title"><i class="fa fa-fw fa-comment-dollar mr-2"></i>Quote ticket</h5>
-        <button type="button" class="close text-white" data-dismiss="modal">
-            <span>&times;</span>
-        </button>
+        <h5 class="modal-title"><i class="fas fa-fw fa-comment-dollar me-2"></i>Create Quote from Ticket</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
     </div>
 
     <form action="post.php" method="post" autocomplete="off">
@@ -107,42 +115,26 @@ ob_start();
             <!-- Row 1 -->
             <div class="row">
                 <div class="col-sm-6">
-                    <div class="form-group">
-                        <label>Scope</label>
+                    <div class="mb-3">
+                        <label class="form-label">Scope</label>
                         <div class="input-group">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-fw fa-comment"></i></span>
-                            </div>
+                                <span class="input-group-text"><i class="fas fa-fw fa-comment"></i></span>
                             <input type="text" class="form-control" name="scope" placeholder="Quick description" maxlength="255">
                         </div>
                     </div>
                 </div>
 
                 <div class="col-sm-6">
-                    <div class="form-group">
-                        <label>Quote Category <strong class="text-danger">*</strong></label>
+                    <div class="mb-3">
+                        <label class="form-label">Quote category <strong class="text-danger">*</strong></label>
                         <div class="input-group">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-fw fa-list"></i></span>
-                            </div>
+                                <span class="input-group-text"><i class="fas fa-fw fa-list"></i></span>
 
-                            <select class="form-control select2" name="category">
-                                <option value="">- Select a Category -</option>
-                                <?php
-                                $sql = mysqli_query($mysqli, "SELECT category_id, category_name FROM categories WHERE category_type = 'Income' AND category_archived_at IS NULL ORDER BY category_name ASC");
-                                while ($row = mysqli_fetch_assoc($sql)) {
-                                    $category_id = intval($row['category_id']);
-                                    $category_name = escapeHtml($row['category_name']);
-                                    ?>
-                                    <option value="<?= $category_id ?>"><?= $category_name ?></option>
-                                <?php } ?>
+                            <select class="form-select select2" name="category" required>
+                                <option value="">- Select a category -</option>
+                                <?= categoryOptionsHtml('Income') ?>
                             </select>
-
-                            <div class="input-group-append">
-                                <button type="button" class="btn btn-secondary ajax-modal" data-modal-url="/admin/modals/category/category_add.php?category=Expense">
-                                    <i class="fas fa-fw fa-plus"></i>
-                                </button>
-                            </div>
+                            <?= categoryAddButtonHtml('Income') ?>
                         </div>
                     </div>
                 </div>
@@ -152,24 +144,20 @@ ob_start();
             <!-- Row 2 -->
             <div class="row">
                 <div class="col-sm-6">
-                    <div class="form-group">
-                        <label>Quote Date <strong class="text-danger">*</strong></label>
+                    <div class="mb-3">
+                        <label class="form-label">Quote date <strong class="text-danger">*</strong></label>
                         <div class="input-group">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                            </div>
-                            <input type="date" class="form-control" name="date" max="2999-12-31" value="<?= date("Y-m-d") ?>">
+                                <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
+                            <input type="date" class="form-control" name="date" max="2999-12-31" value="<?= date("Y-m-d") ?>" required>
                         </div>
                     </div>
                 </div>
 
                 <div class="col-sm-6">
-                    <div class="form-group">
-                        <label>Expire <strong class="text-danger">*</strong></label>
+                    <div class="mb-3">
+                        <label class="form-label">Expire <strong class="text-danger">*</strong></label>
                         <div class="input-group">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                            </div>
+                                <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
                             <input type="date" class="form-control" name="expire" min="<?= date("Y-m-d") ?>" max="2999-12-31" value="<?= date("Y-m-d", strtotime("+30 days")) ?>" required>
                         </div>
                     </div>
@@ -177,144 +165,64 @@ ob_start();
             </div>
             <!-- End row 2 -->
 
-            <hr>
-
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="font-weight-bold mb-0"><i class="fas fa-fw fa-clock mr-1 text-primary"></i>Support Labor Line Item</h6>
-                <div class="custom-control custom-switch">
-                    <input type="hidden" name="include_labor" value="0">
-                    <input type="checkbox" class="custom-control-input" id="quoteIncludeLaborSwitch" name="include_labor" value="1" <?= $include_labor_default ? 'checked' : '' ?>>
-                    <label class="custom-control-label font-weight-bold" for="quoteIncludeLaborSwitch">Include Labor</label>
-                </div>
-            </div>
-
-            <div id="quoteLaborSection" class="<?= $include_labor_default ? '' : 'd-none' ?>">
-                <div class="form-group">
-                    <label>Item <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-box"></i></span>
-                        </div>
-                        <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" required>
-                    </div>
+            <div class="mb-3">
+                <label class="form-label">Item <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                        <span class="input-group-text"><i class="fas fa-fw fa-box"></i></span>
+                    <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" required>
                 </div>
 
                 <?php $description = "Ticket: {$ticket_prefix}{$ticket_number} - $ticket_subject\n"; ?>
 
-                <div class="form-group">
-                    <label>Item Description</label>
-                    <div class="input-group">
-                        <textarea class="form-control" rows="5" name="item_description"><?= trim($description) ?></textarea>
-                    </div>
+            <div class="mb-3">
+                <label class="form-label">Item description</label>
+                <div class="input-group">
+                    <textarea class="form-control" rows="10" name="item_description"><?= trim($description) ?></textarea>
                 </div>
 
-                <div class="form-row">
-                    <div class="col">
-                        <div class="form-group">
-                            <label>QTY <strong class="text-danger">*</strong></label>
-                            <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-balance-scale"></i></span>
-                                </div>
-                                <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" required>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col">
-                        <div class="form-group">
-                            <label>Price <strong class="text-danger">*</strong></label>
-                            <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
-                                </div>
-                                <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
-                            </div>
-                            <small class="form-text text-muted">
-                                Hourly Client rate is <strong><?= numfmt_format_currency($currency_format, $client_rate, $session_company_currency); ?></strong>
-                            </small>
+            <div class="row g-2">
+                <div class="col">
+                    <div class="mb-3">
+                        <label class="form-label">QTY <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-fw fa-balance-scale"></i></span>
+                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" required>
                         </div>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Tax <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-piggy-bank"></i></span>
+                <div class="col">
+                    <div class="mb-3">
+                        <label class="form-label">Price <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-fw fa-dollar-sign"></i></span>
+                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
                         </div>
-
-                        <select class="form-control select2" name="tax_id" required>
-                            <option value="0">None</option>
-                            <?php
-                            $taxes_sql = mysqli_query($mysqli, "SELECT tax_id, tax_name, tax_percent FROM taxes WHERE tax_archived_at IS NULL ORDER BY tax_name ASC");
-                            while ($row = mysqli_fetch_assoc($taxes_sql)) {
-                                $tax_id_select = intval($row['tax_id']);
-                                $tax_name = escapeHtml($row['tax_name']);
-                                $tax_percent = floatval($row['tax_percent']);
-                                ?>
-                                <option value="<?= $tax_id_select ?>"><?= "$tax_name $tax_percent%" ?></option>
-                            <?php } ?>
-                        </select>
+                        <div class="form-text">
+                            <?= escapeHtml(ucfirst($client_rate_info['note'])) ?> is <strong><?= billingMoney($client_rate, $session_company_currency); ?></strong> an hour
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <?php if (!empty($ticket_products)) { ?>
-                <hr>
-                <h6 class="font-weight-bold mb-2"><i class="fas fa-fw fa-box-open mr-1 text-success"></i>Products &amp; Hardware Charges on Ticket</h6>
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered mb-0">
-                        <thead class="thead-light">
-                            <tr>
-                                <th style="width: 36px;" class="text-center">Inc</th>
-                                <th>Product</th>
-                                <th class="text-right">QTY</th>
-                                <th class="text-right">Price</th>
-                                <th class="text-right">Tax</th>
-                                <th class="text-right">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($ticket_products as $tp) {
-                                $tp_id = intval($tp['ticket_product_id']);
-                                $tp_qty = floatval($tp['ticket_product_qty']);
-                                ?>
-                                <tr>
-                                    <td class="text-center align-middle">
-                                        <input type="checkbox" name="ticket_product_ids[]" value="<?= $tp_id ?>" checked>
-                                    </td>
-                                    <td class="align-middle">
-                                        <div class="font-weight-bold"><?= escapeHtml($tp['ticket_product_name']) ?></div>
-                                        <?php if (!empty($tp['item_serial'])) { ?>
-                                            <span class="badge badge-info">S/N: <?= escapeHtml($tp['item_serial']) ?></span>
-                                        <?php } ?>
-                                    </td>
-                                    <td class="text-right align-middle"><?= number_format($tp_qty, $tp_qty == floor($tp_qty) ? 0 : 2) ?></td>
-                                    <td class="text-right align-middle"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_price']), $session_company_currency) ?></td>
-                                    <td class="text-right align-middle"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_tax']), $session_company_currency) ?></td>
-                                    <td class="text-right align-middle font-weight-bold"><?= numfmt_format_currency($currency_format, floatval($tp['ticket_product_total']), $session_company_currency) ?></td>
-                                </tr>
-                            <?php } ?>
-                        </tbody>
-                        <tfoot>
-                            <tr class="bg-light font-weight-bold">
-                                <td colspan="5" class="text-right">Ticket Products Total</td>
-                                <td class="text-right"><?= numfmt_format_currency($currency_format, $ticket_products_total, $session_company_currency) ?></td>
-                            </tr>
-                        </tfoot>
-                    </table>
+            <div class="mb-3">
+                <label class="form-label">Tax <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fas fa-fw fa-piggy-bank"></i></span>
+                    <select class="form-select select2" name="tax_id" required>
+                        <?= taxSelectOptions(taxDefaultFor($client_id, 'time')) ?>
+                    </select>
                 </div>
             <?php } ?>
 
         </div>
 
         <div class="modal-footer">
-            <button type="submit" name="add_quote_from_ticket" class="btn btn-primary text-bold">
-                <i class="fa fa-check mr-2"></i>Quote
+            <button type="submit" name="add_quote_from_ticket" class="btn btn-primary fw-bold">
+                <i class="fas fa-check me-2"></i>Quote
             </button>
-            <button type="button" class="btn btn-light" data-dismiss="modal">
-                <i class="fa fa-times mr-2"></i>Cancel
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+                <i class="fas fa-times me-2"></i>Cancel
             </button>
         </div>
     </form>

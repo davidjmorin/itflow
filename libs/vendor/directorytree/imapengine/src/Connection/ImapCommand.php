@@ -2,6 +2,7 @@
 
 namespace DirectoryTree\ImapEngine\Connection;
 
+use DirectoryTree\ImapEngine\Support\Assert;
 use Stringable;
 
 class ImapCommand implements Stringable
@@ -9,7 +10,7 @@ class ImapCommand implements Stringable
     /**
      * The compiled command lines.
      *
-     * @var string[]
+     * @var ImapCommandLine[]|null
      */
     protected ?array $compiled = null;
 
@@ -49,7 +50,7 @@ class ImapCommand implements Stringable
     /**
      * Compile the command into lines for transmission.
      *
-     * @return string[]
+     * @return ImapCommandLine[]
      */
     public function compile(): array
     {
@@ -59,6 +60,9 @@ class ImapCommand implements Stringable
 
         $lines = [];
 
+        Assert::hasNoControlCharacters($this->tag);
+        Assert::hasNoControlCharacters($this->command);
+
         $line = trim("{$this->tag} {$this->command}");
 
         foreach ($this->tokens as $token) {
@@ -66,17 +70,24 @@ class ImapCommand implements Stringable
                 // For tokens provided as arrays, the first element is a placeholder
                 // (for example, "{20}") that signals a literal value will follow.
                 // The second element holds the actual literal content.
-                [$placeholder, $literal] = $token;
+                [$length, $literal] = $token;
 
-                $lines[] = "{$line} {$placeholder}";
+                Assert::hasNoControlCharacters($length);
+
+                $lines[] = new ImapCommandLine(
+                    value: "{$line} {$length}",
+                    synchronizing: ! str_contains($length, '+'),
+                );
 
                 $line = $literal;
             } else {
+                Assert::hasNoControlCharacters($token);
+
                 $line .= " {$token}";
             }
         }
 
-        $lines[] = $line;
+        $lines[] = new ImapCommandLine($line);
 
         return $this->compiled = $lines;
     }

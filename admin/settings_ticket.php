@@ -1,124 +1,141 @@
 <?php
+
+/*
+ * Admin > Settings > Tickets - how tickets are numbered, made from email
+ * (cron/ticket_email_parser.php, reading the mailbox in Mail > Receiving) and
+ * from texts (functions/sms.php, once texting is set up in Text Messaging),
+ * timed and billed, who hears about new ones, when resolved ones close, and
+ * how the tickets page opens, and whether AI triages new tickets
+ * (functions/ai_ticket.php). Saved by edit_ticket_settings
+ * (admin/post/settings_ticket.php).
+ */
+
 require_once "includes/inc_all_admin.php";
- ?>
 
-    <div class="card card-dark">
-        <div class="card-header py-3">
-            <h3 class="card-title"><i class="fas fa-fw fa-life-ring mr-2"></i>Ticket Settings</h3>
-        </div>
+echo settingsPageStart('ticket');
+
+?>
+
+<form action="post.php" method="post" autocomplete="off" data-settings-form>
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="card itflow-settings-card">
         <div class="card-body">
-            <form action="post.php" method="post" autocomplete="off">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
-                <div class="form-group">
-                    <label>Ticket Prefix</label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-life-ring"></i></span>
-                        </div>
-                        <input type="text" class="form-control" name="config_ticket_prefix" placeholder="Ticket Prefix" maxlength="200" value="<?= escapeHtml($config_ticket_prefix) ?>" pattern="^[A-Za-z-]+$" title="Only letters and hyphens are allowed" required>
-                    </div>
-                </div>
+            <?= settingsSectionStart('numbering', 'Numbering', 'Each ticket gets the next number, after its prefix. A reply by email finds its ticket by it.') ?>
+                <?= settingsNumberingFields('ticket', $config_ticket_prefix, $config_ticket_next_number) ?>
+            <?= settingsSectionEnd() ?>
 
-                <div class="form-group">
-                    <label>Next Number</label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-barcode"></i></span>
-                        </div>
-                        <input type="number" min="<?= intval($config_ticket_next_number) ?>" class="form-control" name="config_ticket_next_number" placeholder="Next Ticket Number" value="<?= intval($config_ticket_next_number) ?>" required>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="config_ticket_email_parse" <?php if($config_ticket_email_parse == 1){ echo "checked"; } ?> value="1" id="emailToTicketParseSwitch">
-                        <label class="custom-control-label" for="emailToTicketParseSwitch">Email-to-ticket parsing <small class="text-secondary">(the Ticket Email Parser cron job must also be enabled - see <a href="cron.php">Maintenance &gt; Cron</a>)</small></label>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="config_ticket_email_parse_unknown_senders" <?php if($config_ticket_email_parse_unknown_senders == 1){ echo "checked"; } ?> value="1" id="emailToTicketAnonParseSwitch" <?php if($config_ticket_email_parse == 0){ echo "disabled"; } ?>>
-                        <label class="custom-control-label" for="emailToTicketAnonParseSwitch">Create tickets for emails from unknown senders/domains <small class="text-secondary">(Enable to ensure all emails automatically create tickets)</small></label>
-                    </div>
-                </div>
-
-                <div class="form-group pl-4">
-                    <a href="ticket_rules.php" class="btn btn-outline-primary btn-sm">
-                        <i class="fas fa-filter mr-1"></i> Configure Inbound Email Rules &amp; Spam Filter &rarr;
-                    </a>
-                </div>
-
-                <?php if ($config_module_enable_accounting) { ?>
-                <div class="form-group">
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="config_ticket_default_billable" <?php if ($config_ticket_default_billable == 1) { echo "checked"; } ?> value="1" id="ticketBillableSwitch">
-                        <label class="custom-control-label" for="ticketBillableSwitch">Default to Billable <small class="text-secondary">(This will check the billable box on all new tickets)</small></label>
-                    </div>
-                </div>
+            <?= settingsSectionStart('email', 'Email to ticket', 'An email to your support mailbox becomes a ticket, and a reply to one goes on it - read from the mailbox in <a href="settings_mail.php?tab=receiving">Mail &gt; Receiving</a> each time the Ticket Email Parser job in <a href="cron.php">Maintenance &gt; Cron</a> runs.') ?>
+                <?php if ($config_ticket_email_parse && empty($config_imap_provider)) { ?>
+                    <div class="alert alert-warning py-2 small" data-ticket-no-mailbox><i class="fas fa-exclamation-triangle me-2"></i>No mailbox is set up in Mail &gt; Receiving, so there is nothing to read.</div>
                 <?php } ?>
-
-                <div class="form-group">
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="config_ticket_timer_autostart" <?php if ($config_ticket_timer_autostart == 1) { echo "checked"; } ?> value="1" id="ticketTimerSwitch">
-                        <label class="custom-control-label" for="ticketTimerSwitch">Autostart Ticket Timer <small class="text-secondary">(This option will control if the timer starts automatically or manually)</small></label>
+                <?= settingsSwitch('config_ticket_email_parse', $config_ticket_email_parse) ?>
+                <div data-settings-depends-on="config_ticket_email_parse">
+                    <?= settingsSwitch('config_ticket_email_parse_unknown_senders', $config_ticket_email_parse_unknown_senders, ['help' => 'From someone who isn\'t a contact, at a domain no client has - otherwise those are left in the mailbox, flagged and unread.']) ?>
+                    <?php // What an email from someone with some subject would become, without sending one (functions/ticket_mail_try.php) ?>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary ajax-modal" data-modal-url="modals/ticket_mail/ticket_mail_try.php" data-ticket-mail-try><i class="fas fa-vial me-2"></i>Try an Email</button>
+                        <span class="small text-body-secondary">What an email from someone would become - a reply, a ticket, or left in the mailbox - and why. Uses the saved settings.</span>
                     </div>
                 </div>
+            <?= settingsSectionEnd() ?>
 
-                <div class="form-group">
-                    <label>Number of hours to auto close resolved tickets</label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-clock"></i></span>
-                        </div>
-                        <input type="number" min="24" class="form-control" name="config_ticket_autoclose_hours" placeholder="Delay in hours before a resolved ticket is fully closed" value="<?= intval($config_ticket_autoclose_hours) ?>">
+            <?php if (settingsColumnExists($mysqli, 'config_ticket_sms_parse')) {
+                $sms_settings = smsTicketSettings(); ?>
+                <?= settingsSectionStart('text', 'Text to ticket', 'A text to your number from one of your contacts becomes a ticket, and a text on a ticket goes on it - texts from anyone else, verification codes and spam wait in Texts instead. Texting is set up in <a href="text_messaging.php">Text Messaging</a>.') ?>
+                    <?php if (!smsProvider()) { ?>
+                        <div class="alert alert-light border py-2 small" data-ticket-no-texting><i class="fas fa-info-circle me-2"></i>Texting isn't set up yet, so no texts come in.</div>
+                    <?php } ?>
+                    <?= settingsSwitch('config_ticket_sms_parse', intval($sms_settings['config_ticket_sms_parse']), ['help' => 'Off, every text waits in Texts for an agent - STOP, START and HELP are still answered.']) ?>
+                    <div data-settings-depends-on="config_ticket_sms_parse">
+                        <?= settingsSwitch('config_ticket_sms_unknown_senders', intval($sms_settings['config_ticket_sms_unknown_senders']), ['help' => 'From a number that isn\'t a contact\'s, as a ticket for no client - otherwise those wait in Texts, where an agent opens a ticket from one. Codes and spam wait there either way.']) ?>
+                        <?= settingsSwitch('config_ticket_sms_acknowledge', intval($sms_settings['config_ticket_sms_acknowledge']), ['help' => 'The first text of a new ticket is answered with its number, so they know it landed and that replying adds to it.']) ?>
                     </div>
-                </div>
+                <?= settingsSectionEnd() ?>
+            <?php } ?>
 
-                <div class="form-group">
-                    <label>Email address to notify when new tickets are raised <small class="text-secondary">(Ideally a distribution list/shared mailbox)</small></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-bell"></i></span>
-                        </div>
-                        <input type="email" class="form-control" name="config_ticket_new_ticket_notification_email" placeholder="Address to notify for new tickets, leave blank for none" maxlength="200" value="<?= escapeHtml($config_ticket_new_ticket_notification_email) ?>">
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label>Tickets Default View</label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-eye"></i></span>
-                        </div>
-                        <select class="form-control" name="config_ticket_default_view">
-                            <option value=0 <?php if ($config_ticket_default_view == 0) { echo "selected"; } ?>>List</option>
-                            <option value=1 <?php if ($config_ticket_default_view == 1) { echo "selected"; } ?>>Compact</option>
-                            <option value=2 <?php if ($config_ticket_default_view == 2) { echo "selected"; } ?>>Kanban</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                <label>Kanban Settings</label>
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="config_ticket_ordering" <?php if ($config_ticket_ordering == 1) { echo "checked"; } ?> value="1" id="ticketOrderingSwitch">
-                        <label class="custom-control-label" for="ticketOrderingSwitch">Allow ticket ordering within its column<small class="text-secondary"> (unchecked = order by priority and id)</small></label>
-                    </div>
-                    <div class="custom-control custom-switch">
-                    <input type="checkbox" class="custom-control-input" name="config_ticket_moving_columns" <?php if ($config_ticket_moving_columns == 1) { echo "checked"; } ?> value="1" id="ticketMovingColumnsSwitch">
-                        <label class="custom-control-label" for="ticketMovingColumnsSwitch">Allow moving columns</label>
-                    </div>
-                </div>
+            <?= settingsSectionStart('new', 'New tickets', 'Who hears about a ticket as it is raised - in the portal, by email or on a schedule - and whether AI sorts it.') ?>
+                <?= settingsInput('config_ticket_new_ticket_notification_email', $config_ticket_new_ticket_notification_email, ['icon' => 'fa-bell', 'type' => 'email', 'maxlength' => 200,
+                    'placeholder' => 'support@company.com', 'help' => 'A shared mailbox or list works best. Empty, nobody is emailed.']) ?>
+                <?php if (aiTriageReady()) { ?>
+                    <?php if (!getAiModel('Tickets')) { ?>
+                        <div class="alert alert-warning py-2 small" data-ticket-ai-no-model><i class="fas fa-exclamation-triangle me-2"></i>AI triage needs an AI model for Tickets, or one for everything - <a href="ai_providers.php">AI Providers</a>.</div>
+                    <?php } ?>
+                    <?= settingsSelect('config_ticket_ai_triage', aiTriageMode(), aiTriageModes(), ['icon' => 'fa-robot',
+                        'help' => 'A ticket from email, the portal or the API is given a category and a priority by AI as it comes in, with a line on what the client needs - within a minute, by the AI Triage job in <a href="cron.php">Maintenance &gt; Cron</a>. Fill in sets the category when the ticket has none, and the priority of an emailed one, since nobody picked it; the rest is suggested. Any ticket can be triaged from its menu too.']) ?>
+                <?php } ?>
+            <?= settingsSectionEnd() ?>
 
-                <hr>
+            <?php if (version_compare((string) CURRENT_DATABASE_VERSION, '4.0.9', '>=')) { ?>
+                <?= settingsSectionStart('assigning', 'Assigning', 'Who a ticket goes to when nobody has picked it up.') ?>
+                    <?= settingsSwitch('config_ticket_reply_assigns', ticketReplyAssigns() ? 1 : 0, ['help' => 'The agent who replies to a ticket nobody is assigned to - by email, by text or as a public note - is assigned it, as Assign to me would. An internal note doesn\'t assign it, so a ticket can be looked at, or someone @mentioned on it, without taking it. A ticket already assigned keeps its agent.']) ?>
+                <?= settingsSectionEnd() ?>
+            <?php } ?>
 
-                <button type="submit" name="edit_ticket_settings" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save</button>
+            <?= settingsSectionStart('time', 'Time and billing', 'How time on a ticket starts, and whether it bills.') ?>
+                <?= settingsSwitch('config_ticket_timer_autostart', $config_ticket_timer_autostart, ['help' => 'The timer runs from opening a ticket, rather than from pressing start.']) ?>
+                <?php if ($config_module_enable_accounting) { ?>
+                    <?= settingsSwitch('config_ticket_default_billable', $config_ticket_default_billable, ['help' => 'A new ticket starts billable - each can be changed. How the time is billed is in <a href="settings_invoice.php#billing-time">Invoices and billing</a>.']) ?>
+                <?php } ?>
+            <?= settingsSectionEnd() ?>
 
-            </form>
+            <?php if (quickTicketReady()) {
+                $quick = quickTicketSettings(); ?>
+                <?= settingsSectionStart('quick', 'Quick tickets', 'The <i class="fas fa-plus-circle"></i> in the top bar - the client, the contact and the issue, for a call or a walk-up. It shows the contact\'s tickets still open first, so the same problem isn\'t raised twice. These are what a quick ticket starts with.', 'quick') ?>
+                    <?= settingsSwitch('config_quick_ticket_on', $quick['on'] ? 1 : 0, ['help' => 'For everyone who can make tickets.']) ?>
+                    <div data-settings-depends-on="config_quick_ticket_on">
+                        <?= settingsSelect('config_quick_ticket_assign', $quick['assign'], quickTicketAssignChoices(), ['icon' => 'fa-user-check', 'search' => true,
+                            'help' => 'The window has an "Assign it to ..." switch, to change it for one ticket.']) ?>
+                        <?= settingsSelect('config_quick_ticket_status', $quick['status'], quickTicketStatusChoices(), ['icon' => 'fa-info-circle']) ?>
+                        <?= settingsSelect('config_quick_ticket_priority', $quick['priority'], ['Low' => 'Low', 'Medium' => 'Medium', 'High' => 'High', 'Urgent' => 'Urgent'], ['icon' => 'fa-thermometer-half',
+                            'help' => 'The window can change it for one ticket. Its SLA follows the priority, as any ticket\'s does.']) ?>
+                        <?= settingsSelect('config_quick_ticket_category', $quick['category'], [], ['icon' => 'fa-layer-group', 'search' => true,
+                            'options_html' => '<option value="0"' . ($quick['category'] ? '' : ' selected') . '>- Not categorized -</option>' . categoryOptionsHtml('Ticket', $quick['category'] ?: null)]) ?>
+                        <?php if ($config_module_enable_accounting) { ?>
+                            <?= settingsSelect('config_quick_ticket_billable', $quick['billable'], QUICK_TICKET_BILLABLE, ['icon' => 'fa-dollar-sign']) ?>
+                        <?php } ?>
+                        <?= settingsSelect('config_quick_ticket_timer', $quick['timer'], QUICK_TICKET_TIMER, ['icon' => 'fa-stopwatch',
+                            'help' => 'It runs on the ticket page, as a ticket\'s timer does, until the time goes on a reply.']) ?>
+                        <?= settingsSwitch('config_quick_ticket_primary', $quick['primary'] ? 1 : 0, ['help' => 'Off, the contact starts empty, to be picked.']) ?>
+                        <?= settingsSwitch('config_quick_ticket_open_tickets', $quick['open_tickets'] ? 1 : 0, ['help' => 'Not resolved or closed - with Work on this one, to go to one instead.']) ?>
+                        <?= settingsSwitch('config_quick_ticket_email_client', $quick['email_client'] ? 1 : 0, ['help' => 'The "ticket created" email, as New Ticket sends it.'
+                            . (intval($config_ticket_client_general_notifications) === 1 ? '' : ' Emails to clients are off in <a href="settings_notification.php">Notifications</a>, so none goes either way.')]) ?>
+                    </div>
+                <?= settingsSectionEnd() ?>
+            <?php } ?>
+
+            <?php if (ticketStatusReplyReady()) {
+                // The statuses that send it now (Admin > Ticket Statuses)
+                $assigned_sent_by = array_column(array_filter(ticketStatusesAll(), function ($status) {
+                    return intval($status['ticket_status_first_response']) === 2 && intval($status['ticket_status_active']) === 1;
+                }), 'ticket_status_name'); ?>
+                <?= settingsSectionStart('messages', 'Messages to clients', 'Sent for you as a ticket moves along. Words in square brackets are filled in from the ticket - <code>[Ticket]</code>, <code>[Subject]</code>, <code>[Contact]</code>, <code>[First Name]</code>, <code>[Client]</code>, <code>[Agent]</code>, <code>[Ticket Link]</code>, <code>[Date]</code> and the others canned responses take. The email greets each person by name, so the message needn\'t.', 'messages') ?>
+                    <?= settingsTextarea('config_ticket_assigned_message', ticketAssignedMessage(), ['rows' => 5, 'maxlength' => 5000,
+                        'help' => 'Emailed to the contact and watchers when an agent moves a ticket nobody has answered yet into a status that counts as the first response by emailing the client - set in <a href="ticket_statuses.php">Ticket Statuses</a>. It is kept on the ticket as a public note. <code>[Agent]</code> is who it is assigned to. '
+                            . ($assigned_sent_by ? 'Sent on moving into <strong>' . escapeHtml(implode(', ', $assigned_sent_by)) . '</strong>.' : 'No status sends it yet.')]) ?>
+                    <?php if (ticketNoResponseReady()) { ?>
+                        <?= settingsTextarea('config_ticket_no_response_message', ticketNoResponseMessage(), ['rows' => 7, 'maxlength' => 5000,
+                            'help' => 'For a client who never answered: the arrow beside a ticket\'s Resolve button has <strong>Resolve - No Response</strong>, which sends this - changed for the ticket first, if need be - in place of the usual "resolved" words, resolves it, and closes it later without asking how we did. <code>[Agent]</code> is whoever sends it.']) ?>
+                    <?php } ?>
+                <?= settingsSectionEnd() ?>
+            <?php } ?>
+
+            <?= settingsSectionStart('closing', 'Closing', 'A resolved ticket waits for the client to say it isn\'t, then closes by itself, each night.') ?>
+                <?= settingsInput('config_ticket_autoclose_hours', intval($config_ticket_autoclose_hours), ['icon' => 'fa-clock', 'type' => 'number', 'min' => 24, 'max' => 8760, 'required' => true,
+                    'suffix' => 'hours', 'help' => 'From when it was last changed. 72 is three days.']) ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSectionStart('page', 'The tickets page', 'How it opens for everyone, and what the board lets them do.') ?>
+                <?= settingsSelect('config_ticket_default_view', intval($config_ticket_default_view), [0 => 'A list', 1 => 'A compact list', 2 => 'A board (kanban)'], ['icon' => 'fa-eye']) ?>
+                <?= settingsSwitch('config_ticket_ordering', $config_ticket_ordering, ['help' => 'Tickets are dragged into order in a column. Off, a column is in order of priority, then number.']) ?>
+                <?= settingsSwitch('config_ticket_moving_columns', $config_ticket_moving_columns, ['help' => 'The board\'s columns are dragged into another order.']) ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSaveBar('edit_ticket_settings') ?>
         </div>
     </div>
+</form>
 
 <?php
 require_once "../includes/footer.php";
-

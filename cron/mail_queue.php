@@ -79,14 +79,30 @@ $config_mail_oauth_refresh_token           = $row['config_mail_oauth_refresh_tok
 $config_mail_oauth_access_token            = $row['config_mail_oauth_access_token'] ?? '';
 $config_mail_oauth_access_token_expires_at = $row['config_mail_oauth_access_token_expires_at'] ?? '';
 
+// Switched off isn't an error - Maintenance > Cron shows why it stopped
 if ($config_enable_cron == 0) {
-    logApp("Cron-Mail-Queue", "error", "Cron Mail Queue unable to run - cron not enabled in admin settings.");
     cronJobStop("Cron: is not enabled -- Quitting..");
 }
 
+// The demo sends no email - what was queued is cancelled, and still shows in Maintenance > Mail
+// Queue with why (functions/demo.php)
+if (demoModeOn()) {
+    mysqli_query($mysqli, "UPDATE email_queue SET email_status = " . MAIL_QUEUE_CANCELLED . ", email_failed_at = NOW()"
+        . mailQueueErrorSql("Not sent - this is the demo, which sends no email") . " WHERE email_status IN (0, 2)");
+    cronJobStop("Demo - no email is sent");
+}
+
+// Development mode sends every email to the test inbox (sendQueueEmail()) - with none set in
+// config.php, what was queued is cancelled the same way (functions/dev_mode.php)
+if (devModeOn() && devModeMailTo() === '') {
+    mysqli_query($mysqli, "UPDATE email_queue SET email_status = " . MAIL_QUEUE_CANCELLED . ", email_failed_at = NOW()"
+        . mailQueueErrorSql("Not sent - development mode, with no test inbox in config.php") . " WHERE email_status IN (0, 2)");
+    cronJobStop("Development mode with no test inbox - no email is sent");
+}
+
+// Nothing to send through isn't an error either - an App Logs entry every minute buried the real ones
 if (empty($config_smtp_provider)) {
-    logApp("Cron-Mail-Queue", "info", "SMTP sending skipped: provider not configured.");
-    cronJobStop();
+    cronJobStop("No mail server is set up to send through - see Admin > Settings > Mail");
 }
 
 /** =======================================================================
@@ -119,6 +135,13 @@ function persistMailOauthTokens(string $access_token, string $expires_at, ?strin
     }
 
     mysqli_query($mysqli, "UPDATE settings SET config_mail_oauth_access_token = '{$access_token_esc}', config_mail_oauth_access_token_expires_at = '{$expires_at_esc}'{$refresh_sql} WHERE company_id = 1");
+
+    // This run's copy too, so the next email uses the new token rather than fetching another
+    $GLOBALS['config_mail_oauth_access_token'] = $access_token;
+    $GLOBALS['config_mail_oauth_access_token_expires_at'] = $expires_at;
+    if (!empty($refresh_token)) {
+        $GLOBALS['config_mail_oauth_refresh_token'] = $refresh_token;
+    }
 }
 
 function refreshMailOauthAccessToken(string $provider, string $oauth_client_id, string $oauth_client_secret, string $oauth_tenant_id, string $oauth_refresh_token): ?array {
@@ -140,6 +163,7 @@ function refreshMailOauthAccessToken(string $provider, string $oauth_client_id, 
                 'client_secret' => $oauth_client_secret,
                 'refresh_token' => $oauth_refresh_token,
                 'grant_type' => 'refresh_token',
+                'scope' => MAIL_MICROSOFT_EXCHANGE_SCOPE, // the refresh token may last have been renewed for Graph (functions/mail_graph.php)
             ]);
         }
     }
@@ -198,6 +222,13 @@ function sendQueueEmail(
     string $oauth_access_token,
     string $oauth_access_token_expires_at
 ) {
+    // Development mode: to the test inbox instead, its real recipient at the front of the subject (functions/dev_mode.php)
+    if (devModeOn()) {
+        $subject = '[DEV to ' . $to_email . '] ' . $subject;
+        $to_email = devModeMailTo();
+        $to_name = '';
+    }
+
     // Google and Microsoft each expose exactly one XOAUTH2 SMTP endpoint, so the
     // stored host/port/encryption are overridden rather than used as a fallback -
     // the same thing cron/ticket_email_parser.php already does on the IMAP side.
@@ -239,7 +270,11 @@ function sendQueueEmail(
         $mail->SMTPSecure = $enc; // 'tls' | 'ssl'
     }
 
-    if ($provider === 'google_oauth' || $provider === 'microsoft_oauth') {
+    // Microsoft 365 sends through Microsoft Graph when the app has Mail.Send - no SMTP sign-in then
+    // (functions/mail_graph.php). Microsoft refusing Graph stops this email with its reason.
+    $graph_token = $provider === 'microsoft_oauth' ? mailGraphToken('Mail.Send') : null;
+
+    if ($graph_token === null && ($provider === 'google_oauth' || $provider === 'microsoft_oauth')) {
         // XOAUTH2
         $mail->SMTPAuth = true;
         $mail->AuthType = 'XOAUTH2';
@@ -274,9 +309,23 @@ function sendQueueEmail(
     $mail->Subject = $subject;
     $mail->Body = $html_body;
 
+    // A meeting invitation or cancellation goes in as its own text/calendar part
+    // beside the HTML - the way calendar apps send them, and the only way Outlook
+    // shows one as a meeting rather than a file. Only a meeting does: one with an
+    // organiser and attendees (an event's invitation). Microsoft 365 turns that part
+    // into a meeting as it takes the email, and refuses one with nobody in it -
+    // "data not accepted" - so a calendar file without them (a ticket's booking and
+    // its cancellation) is attached like a published event to add. PHPMailer only
+    // builds the part when there are no file attachments or pictures in the
+    // message either, so those also travel as an attached invite.ics.
     if (!empty($ics_str)) {
-        $ics_name = (strpos($ics_str, 'UID:tbr-') !== false) ? 'TBR_Meeting.ics' : 'Scheduled_ticket.ics';
-        $mail->addStringAttachment($ics_str, $ics_name, 'base64', 'text/calendar');
+        $meeting = preg_match('/^METHOD:(REQUEST|CANCEL)\r?$/m', $ics_str) && preg_match('/^ORGANIZER[;:]/m', $ics_str) && preg_match('/^ATTENDEE[;:]/m', $ics_str);
+        if ($meeting && empty($attachments_json)) {
+            $mail->Ical = $ics_str;
+            $mail->AltBody = $mail->html2text($html_body);
+        } else {
+            $mail->addStringAttachment($ics_str, 'invite.ics', 'base64', 'text/calendar');
+        }
     }
 
     // File attachments arrive as a manifest of app-root-relative paths. Each one is
@@ -301,12 +350,33 @@ function sendQueueEmail(
                     continue;
                 }
 
-                $mail->addAttachment($attachment_path, basename($attachment['name']));
+                // A picture that was in the message as data goes in inline, where its cid: points (emailInlineImages())
+                if (!empty($attachment['cid'])) {
+                    $mail->addEmbeddedImage($attachment_path, (string) $attachment['cid'], basename($attachment['name']));
+                } else {
+                    $mail->addAttachment($attachment_path, basename($attachment['name']));
+                }
             }
         }
     }
 
-    $mail->send();
+    if ($graph_token !== null) {
+        mailGraphSend($mail, $graph_token);
+        return true;
+    }
+
+    try {
+        $mail->send();
+    } catch (Exception $e) {
+        // PHPMailer names the step that failed ("data not accepted"); the mail server's reply says why - keep it with the email
+        $smtp = $mail->getSMTPInstance()->getError();
+        $detail = trim(preg_replace('/\s+/', ' ', (string) ($smtp['detail'] ?? '')));
+        if ($detail !== '' && strpos($e->getMessage(), $detail) === false) {
+            $code = trim(($smtp['smtp_code'] ?? '') . ' ' . ($smtp['smtp_code_ex'] ?? ''));
+            throw new Exception($e->getMessage() . ' The mail server said: ' . ($code !== '' ? "$code " : '') . $detail, $e->getCode(), $e);
+        }
+        throw $e;
+    }
     return true;
 }
 
@@ -324,7 +394,8 @@ function sendQueueEmail(
  *  That trade is deliberate: a duplicate is recoverable, an invoice that silently
  *  never arrives is not.
  * ======================================================================= */
-mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = email_attempts + 1 WHERE email_status = 1");
+mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = email_attempts + 1"
+    . mailQueueErrorSql('The run sending it stopped part-way through, so it is tried again') . " WHERE email_status = 1");
 $orphaned_emails = mysqli_affected_rows($mysqli);
 if ($orphaned_emails > 0) {
     logApp("Cron-Mail-Queue", "warning", "Recovered $orphaned_emails email(s) left in a sending state by a previous run - queued for retry.");
@@ -351,7 +422,8 @@ if (mysqli_num_rows($sql_queue) > 0) {
         // Check sender
         if (!filter_var($email_from, FILTER_VALIDATE_EMAIL)) {
             $email_from_logging = escapeSql($rowq['email_from']);
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99 WHERE email_id = $email_id");
+            $why = (trim((string) $email_from) === '' ? 'It has no from address' : "The from address isn't one: $email_from") . ' - the addresses are set in Settings > Mail > From addresses';
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99, email_failed_at = NOW()" . mailQueueErrorSql($why) . " WHERE email_id = $email_id");
             logApp("Cron-Mail-Queue", "Error", "Failed to send email #$email_id due to invalid sender address: $email_from_logging - check configuration in settings.");
             appNotify("Mail", "Failed to send email #$email_id due to invalid sender address");
             continue;
@@ -366,7 +438,7 @@ if (mysqli_num_rows($sql_queue) > 0) {
 
         // Basic recipient syntax check
         if (!filter_var($email_recipient, FILTER_VALIDATE_EMAIL)) {
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99 WHERE email_id = $email_id");
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99, email_failed_at = NOW()" . mailQueueErrorSql("The address it is to isn't an email address") . " WHERE email_id = $email_id");
             $email_to_logging = escapeSql($email_recipient);
             $email_subject_logging = escapeSql($rowq['email_subject']);
             logApp("Cron-Mail-Queue", "Error", "Failed to send email: $email_id to $email_to_logging due to invalid recipient address. Email subject was: $email_subject_logging");
@@ -377,7 +449,8 @@ if (mysqli_num_rows($sql_queue) > 0) {
         // More intelligent recipient MX check (if not disabled with --no-mx-validation)
         $domain = escapeSql(substr($email_recipient, strpos($email_recipient, '@') + 1));
         if (!in_array('--no-mx-validation', $argv) && !checkdnsrr($domain, 'MX')) {
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99 WHERE email_id = $email_id");
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = 99, email_failed_at = NOW()"
+                . mailQueueErrorSql('No mail server takes email for ' . substr($email_recipient, strpos($email_recipient, '@') + 1) . ' - it has no MX record') . " WHERE email_id = $email_id");
             $email_to_logging = escapeSql($email_recipient);
             $email_subject_logging = escapeSql($rowq['email_subject']);
             logApp("Cron-Mail-Queue", "Error", "Failed to send email: $email_id to $email_to_logging due to invalid recipient domain (no MX). Email subject was: $email_subject_logging");
@@ -388,7 +461,7 @@ if (mysqli_num_rows($sql_queue) > 0) {
         try {
             sendQueueEmail(
                 ($config_smtp_provider ?: 'standard_smtp'),
-                $config_smtp_host,
+                (string)$config_smtp_host,
                 (int)$config_smtp_port,
                 (string)$config_smtp_encryption,
                 (string)$config_smtp_username,
@@ -409,25 +482,29 @@ if (mysqli_num_rows($sql_queue) > 0) {
                 (string)$config_mail_oauth_access_token_expires_at
             );
 
-            // Scrub the body on delivery - it can carry share decryption keys and temporary passwords
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 3, email_sent_at = NOW(), email_attempts = 1, email_content = '', email_cal_str = '', email_attachments = '' WHERE email_id = $email_id");
+            // Sent - one with a link or code that opens something is cleared now (mailQueueSentSql())
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 3, email_sent_at = NOW(), email_attempts = 1" . mailQueueSentSql() . mailQueueErrorSql(null) . " WHERE email_id = $email_id");
 
-        } catch (Exception $e) {
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = 1 WHERE email_id = $email_id");
+        } catch (\Throwable $e) {
+            // Anything that stops this one email - not only PHPMailer's own Exception, which is what Exception names
+            // in this file. An Error used to end the whole run with this email left as Sending and the rest unsent.
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = 1" . mailQueueErrorSql($e->getMessage()) . " WHERE email_id = $email_id");
 
             $email_recipient_logging = escapeSql($rowq['email_recipient']);
             $email_subject_logging   = escapeSql($rowq['email_subject']);
             $err = substr("Mailer Error: " . $e->getMessage(), 0, 100) . "...";
 
-            appNotify("Cron-Mail-Queue", "Failed to send email #$email_id to $email_recipient_logging");
+            appNotify("Cron-Mail-Queue", "Failed to send email #$email_id to $email_recipient_logging - " . escapeSql(mb_strimwidth(mailQueueErrorText($e->getMessage()), 0, 200, '...'))
+                . " - it is tried again in " . MAIL_QUEUE_RETRY_MINUTES . " minutes", "/admin/mail_queue.php?show=retrying", 0, $email_id);
             logApp("Cron-Mail-Queue", "Error", "Failed to send email: $email_id to $email_recipient_logging regarding $email_subject_logging. $err");
         }
     }
 }
 
 /** =======================================================================
- *  RETRIES: status = 2 (Failed), attempts < 4, wait 30 min
- *  NOTE: Backoff is `email_failed_at <= NOW() - INTERVAL 30 MINUTE`
+ *  RETRIES: status = 2 (Failed), attempts < MAIL_QUEUE_TRIES (4), wait
+ *  MAIL_QUEUE_RETRY_MINUTES (30) - functions/mail_queue.php, which the Mail
+ *  Queue page reads too, to say when the next try is
  * =======================================================================
  */
 $sql_failed_queue = mysqli_query(
@@ -435,8 +512,8 @@ $sql_failed_queue = mysqli_query(
     "SELECT email_attachments, email_attempts, email_cal_str, email_content, email_from,
         email_from_name, email_id, email_recipient, email_recipient_name, email_subject FROM email_queue
      WHERE email_status = 2
-       AND email_attempts < 4
-       AND email_failed_at <= NOW() - INTERVAL 30 MINUTE"
+       AND email_attempts < " . MAIL_QUEUE_TRIES . "
+       AND email_failed_at <= NOW() - INTERVAL " . MAIL_QUEUE_RETRY_MINUTES . " MINUTE"
 );
 
 if (mysqli_num_rows($sql_failed_queue) > 0) {
@@ -459,14 +536,14 @@ if (mysqli_num_rows($sql_failed_queue) > 0) {
         }
 
         if (!filter_var($email_recipient, FILTER_VALIDATE_EMAIL)) {
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = $email_attempts WHERE email_id = $email_id");
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_attempts = $email_attempts, email_failed_at = NOW()" . mailQueueErrorSql("The address it is to isn't an email address") . " WHERE email_id = $email_id");
             continue;
         }
 
         try {
             sendQueueEmail(
                 ($config_smtp_provider ?: 'standard_smtp'),
-                $config_smtp_host,
+                (string)$config_smtp_host,
                 (int)$config_smtp_port,
                 (string)$config_smtp_encryption,
                 (string)$config_smtp_username,
@@ -487,15 +564,21 @@ if (mysqli_num_rows($sql_failed_queue) > 0) {
                 (string)$config_mail_oauth_access_token_expires_at
             );
 
-            // Scrub the body on delivery - it can carry share decryption keys and temporary passwords
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 3, email_sent_at = NOW(), email_attempts = $email_attempts, email_content = '', email_cal_str = '', email_attachments = '' WHERE email_id = $email_id");
+            // Sent - one with a link or code that opens something is cleared now (mailQueueSentSql())
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 3, email_sent_at = NOW(), email_attempts = $email_attempts" . mailQueueSentSql() . mailQueueErrorSql(null) . " WHERE email_id = $email_id");
 
-        } catch (Exception $e) {
-            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = $email_attempts WHERE email_id = $email_id");
+        } catch (\Throwable $e) {
+            mysqli_query($mysqli, "UPDATE email_queue SET email_status = 2, email_failed_at = NOW(), email_attempts = $email_attempts" . mailQueueErrorSql($e->getMessage()) . " WHERE email_id = $email_id");
 
             $email_recipient_logging = escapeSql($rowf['email_recipient']);
             $email_subject_logging   = escapeSql($rowf['email_subject']);
             $err = substr("Mailer Error: " . $e->getMessage(), 0, 100) . "...";
+
+            // The last of its tries - nothing more happens to it unless someone retries it
+            if ($email_attempts >= MAIL_QUEUE_TRIES) {
+                appNotify("Cron-Mail-Queue", "Gave up on email #$email_id to $email_recipient_logging after $email_attempts tries - " . escapeSql(mb_strimwidth(mailQueueErrorText($e->getMessage()), 0, 200, '...')),
+                    "/admin/mail_queue.php?show=failed", 0, $email_id);
+            }
 
             logApp("Cron-Mail-Queue", "Error", "Failed to re-send email #$email_id to $email_recipient_logging regarding $email_subject_logging. $err");
         }

@@ -2,21 +2,38 @@
 
 require_once '../../../includes/modal_header.php';
 
-$ticket_ids = array_map('intval', $_GET['ticket_ids'] ?? []);
+enforceUserPermission('module_support', 2);
+
+$ticket_ids = array_values(array_unique(array_filter(array_map('intval', (array) ($_GET['ticket_ids'] ?? [])))));
 
 $count = count($ticket_ids);
+if (!$count) {
+    echo json_encode(['error' => 'Tick the tickets to merge first.']);
+    exit;
+}
+$ids = implode(',', $ticket_ids);
 
-$whereNotIn = '';
-if (!empty($ticket_ids)) {
-    $ids = implode(',', $ticket_ids);
-    $whereNotIn = "AND ticket_id NOT IN ($ids)";
+// Tickets merge into one of their own client's, so they have to share one
+$merge_client_ids = [];
+$sql_clients = mysqli_query($mysqli, "SELECT DISTINCT ticket_client_id FROM tickets WHERE ticket_id IN ($ids)");
+while ($row = mysqli_fetch_row($sql_clients)) {
+    $merge_client_ids[] = intval($row[0]);
+}
+if (count($merge_client_ids) !== 1) {
+    echo json_encode(['error' => 'Those tickets are for different clients - tickets only merge into one of the same client\'s.']);
+    exit;
+}
+$client_id = $merge_client_ids[0];
+if ($client_id) {
+    enforceClientAccess();
 }
 
 $sql_merge = mysqli_query($mysqli, "SELECT client_name, ticket_id, ticket_number, ticket_prefix, ticket_status_name, ticket_subject FROM tickets
     LEFT JOIN ticket_statuses ON ticket_status = ticket_status_id
     LEFT JOIN clients ON client_id = ticket_client_id
     WHERE ticket_closed_at IS NULL
-    $whereNotIn
+    AND ticket_id NOT IN ($ids)
+    AND ticket_client_id = $client_id
     ORDER BY ticket_status ASC, ticket_id DESC"
 );
 
@@ -24,10 +41,8 @@ ob_start();
 
 ?>
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-clone mr-2"></i>Merge & close <strong><?= $count ?></strong> tickets</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-clone me-2"></i>Merge & close <strong><?= $count ?></strong> ticket<?= $count === 1 ? '' : 's' ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -41,13 +56,11 @@ ob_start();
             Selected tickets will be closed once merging is complete.
         </div>
 
-        <div class="form-group">
-            <label>Ticket number to merge this ticket into <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Ticket number to merge this ticket into <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-tag"></i></span>
-                </div>
-                <select class="form-control select2" name="merge_into_ticket_id" required>
+                    <span class="input-group-text"><i class="fas fa-fw fa-tag"></i></span>
+                <select class="form-select select2" name="merge_into_ticket_id" required>
                     <option value=''>- Select a Ticket -</option>
                     <?php
                     while ($row = mysqli_fetch_assoc($sql_merge)) {
@@ -66,20 +79,18 @@ ob_start();
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Reason for merge <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Reason for merge <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-sticky-note"></i></span>
-                </div>
-                <input type="text" class="form-control" name="merge_comment" placeholder="Comments">
+                    <span class="input-group-text"><i class="fas fa-fw fa-sticky-note"></i></span>
+                <input type="text" class="form-control" name="merge_comment" placeholder="Noted on each ticket" required>
             </div>
         </div>
 
     </div>
     <div class="modal-footer">
-        <button type="submit" name="bulk_merge_tickets" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Merge</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_merge_tickets" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Merge</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

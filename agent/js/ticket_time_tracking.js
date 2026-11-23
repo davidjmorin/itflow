@@ -89,7 +89,10 @@
         }
 
         function resetTimer() {
-            if (confirm("Are you sure you want to reset the timer?")) {
+            itflowConfirm({ title: 'Reset the timer?', text: 'The time on it goes back to zero.', button: 'Reset', danger: true }).then(function (confirmed) {
+                if (!confirmed) {
+                    return;
+                }
                 clearInterval(timerInterval);
                 timerInterval = null;
                 elapsedSecs = 0;
@@ -97,8 +100,8 @@
                 displayTime();
                 let btn = document.getElementById("startStopTimer");
                 if (btn) btn.innerHTML = "<i class='fas fa-play'></i>";
-            }
-            localStorage.setItem("ticket-timer-running-" + ticketID, "false");
+                localStorage.setItem("ticket-timer-running-" + ticketID, "false");
+            });
         }
 
         function forceResetTimer() {
@@ -196,14 +199,16 @@
             });
         }
 
+        // Reset once the reply actually goes - not on a click of Send that is held back (the
+        // composer shut, or a canned response's [word] still to fill in), which lost the time
         const addReplyBtn = document.getElementById("ticket_add_reply");
-        if (addReplyBtn) {
-            addReplyBtn.addEventListener('click', function() {
-                if (timerInterval) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                }
-                setTimeout(clearTimeStorage, 500);
+        if (addReplyBtn && addReplyBtn.form) {
+            addReplyBtn.form.addEventListener('submit', function(e) {
+                setTimeout(function() {
+                    if (!e.defaultPrevented) {
+                        forceResetTimer();
+                    }
+                }, 0);
             });
         }
 

@@ -2,53 +2,44 @@
 
 require_once '../../includes/modal_header.php';
 
-$project_template_id = intval($_GET['project_template_id']);
+$project_template_id = intval($_GET['project_template_id'] ?? 0);
 
-$sql = mysqli_query($mysqli, "SELECT project_template_description, project_template_name FROM project_templates WHERE project_template_id = $project_template_id LIMIT 1");
-$row = mysqli_fetch_assoc($sql);
-$project_template_name = escapeHtml($row['project_template_name']);
-$project_template_description = escapeHtml($row['project_template_description']);
+$row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT project_template_description, project_template_name FROM project_templates WHERE project_template_id = $project_template_id LIMIT 1"));
+if (!$row) {
+    echo json_encode(['error' => 'That project template no longer exists.']);
+    exit;
+}
 
 ob_start();
 
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-project-diagram mr-2"></i>Editing Project Template: <strong><?= $project_template_name ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title text-truncate"><i class="fas fa-fw fa-cubes me-2"></i>Edit Project Template <span class="fw-normal text-white-50 ms-1"><?= escapeHtml($row['project_template_name']) ?></span></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="project_template_id" value="<?= $project_template_id ?>">
 
     <div class="modal-body">
-        <div class="form-group">
-            <label>Project Template Name <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Name <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-project-diagram"></i></span>
-                </div>
-                <input type="text" class="form-control" name="name" placeholder="Project Template Name" maxlength="255" value="<?= $project_template_name ?>" required autofocus>
+                <span class="input-group-text"><i class="fas fa-fw fa-cubes"></i></span>
+                <input type="text" class="form-control" name="name" maxlength="200" value="<?= escapeHtml($row['project_template_name']) ?>" required autofocus>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Description</label>
-            <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-angle-right"></i></span>
-                </div>
-                <input type="text" class="form-control" name="description" placeholder="Description" value="<?= $project_template_description ?>">
-            </div>
+        <div class="mb-0">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" name="description" rows="3" placeholder="When to use it"><?= escapeHtml($row['project_template_description']) ?></textarea>
         </div>
-
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="edit_project_template" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="edit_project_template" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Save</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 
 </form>

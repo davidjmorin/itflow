@@ -3,6 +3,7 @@
 namespace DirectoryTree\ImapEngine\Support;
 
 use BackedEnum;
+use Illuminate\Support\Collection;
 
 class Str
 {
@@ -22,6 +23,18 @@ class Str
         }
 
         return sprintf('(%s)', implode(' ', $values));
+    }
+
+    /**
+     * Make a list of IMAP flags.
+     */
+    public static function flags(array $flags): string
+    {
+        foreach ($flags as $flag) {
+            Assert::isValidFlag($flag);
+        }
+
+        return static::list($flags);
     }
 
     /**
@@ -75,32 +88,65 @@ class Str
     }
 
     /**
-     * Make a range set for use in a search command.
+     * Make an IMAP sequence set.
      */
     public static function set(int|string|array $from, int|float|string|null $to = null): string
     {
-        // If $from is an array with multiple elements, return them as a comma-separated list.
-        if (is_array($from) && count($from) > 1) {
-            return implode(',', $from);
+        if (is_array($from)) {
+            foreach ($from as $value) {
+                static::set($value);
+            }
+
+            $set = static::toSequenceSet($from);
+        } else {
+            $set = (string) $from;
+
+            if (! is_null($to)) {
+                $set .= ':'.($to === INF ? '*' : $to);
+            }
         }
 
-        // If $from is an array with a single element, return that element.
-        if (is_array($from) && count($from) === 1) {
-            return (string) reset($from);
-        }
+        Assert::isValidSequenceSet($set);
 
-        // At this point, $from is an integer. No upper bound provided, return $from as a string.
-        if (is_null($to)) {
-            return (string) $from;
-        }
+        return $set;
+    }
 
-        // If the upper bound is infinite, use the '*' notation.
-        if ($to == INF) {
-            return $from.':*';
-        }
+    /**
+     * Convert the values into an IMAP sequence set.
+     *
+     * @param  array<int, int|string>  $values
+     */
+    protected static function toSequenceSet(array $values): string
+    {
+        return Collection::make(array_values($values))
+            ->chunkWhile(function (int|string $value, int $key, Collection $range) {
+                $previous = $range->last();
 
-        // Otherwise, return a typical range string.
-        return $from.':'.$to;
+                if (! is_numeric($value) || ! is_numeric($previous)) {
+                    return false;
+                }
+
+                $difference = (int) $value - (int) $previous;
+                $direction = (int) $previous <=> (int) $range->first();
+
+                return in_array($difference, [-1, 1], true)
+                    && ($range->count() === 1 || $difference === $direction);
+            })
+            ->map(fn (Collection $range) => static::toSequenceRange(
+                $range->first(),
+                $range->last(),
+            ))
+            ->implode(',');
+    }
+
+    /**
+     * Convert the values into an IMAP sequence range.
+     */
+    protected static function toSequenceRange(int|string $start, int|string $end): string
+    {
+        return (string) $start === (string) $end
+            ? (string) $start
+            : $start.':'.$end;
     }
 
     /**

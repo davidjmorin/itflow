@@ -3,11 +3,11 @@
 /*
  * ITFlow - Ticket SLA helpers
  *
- * SLAs are optional at every level. A ticket only gets SLA targets when an
- * assignment resolves for its client + priority (client-level assignments win,
- * client 0 rows are the global default, and an assignment pointing at SLA 0 is
- * an explicit "no SLA" override). Tickets with ticket_sla_id = 0 are simply
- * ignored by the SLA cron, the list highlighting and the reports.
+ * SLAs are optional. A ticket only gets SLA targets when one resolves for its
+ * client + priority: the SLA its client's contract in force sets for the
+ * priority, else the default for the priority (sla_assignments, client 0 -
+ * Admin > SLAs). A client has none of its own. Tickets with ticket_sla_id = 0
+ * are simply ignored by the SLA cron, the list highlighting and the reports.
  *
  * Deadlines are computed ONCE at write time (creation / priority change /
  * client change / manual SLA change) and stored on the ticket as
@@ -39,7 +39,7 @@ function getSlaSettings($refresh = false)
 
     // ISO weekday numbers (1 = Monday .. 7 = Sunday)
     $business_days = [];
-    foreach (explode(',', strval($row['config_business_days'])) as $day) {
+    foreach (explode(',', (string) $row['config_business_days']) as $day) {
         $day = intval($day);
         if ($day >= 1 && $day <= 7) {
             $business_days[] = $day;
@@ -59,8 +59,119 @@ function getSlaSettings($refresh = false)
     return $sla_settings;
 }
 
+// Closure days for the business calendar, fetched once per request. Returns a
+// map of 'Y-m-d' => holiday name so the day-walk in addBusinessMinutes and
+// businessMinutesBetween can do an O(1) lookup rather than a query per day -
+// those loops run up to 731 iterations.
+//
+// Callers that have just written to business_holidays pass true, same contract
+// as getSlaSettings().
+function getBusinessHolidays($refresh = false)
+{
+    global $mysqli;
+
+    static $holidays = null;
+
+    if ($refresh) {
+        $holidays = null;
+    }
+
+    if (!is_null($holidays)) {
+        return $holidays;
+    }
+
+    $holidays = [];
+
+    $sql = mysqli_query($mysqli, "SELECT holiday_date, holiday_name FROM business_holidays");
+    if ($sql) {
+        while ($row = mysqli_fetch_assoc($sql)) {
+            $holidays[$row['holiday_date']] = $row['holiday_name'];
+        }
+    }
+
+    return $holidays;
+}
+
+// US federal holidays for a calendar year, as a list of ['date' => 'Y-m-d',
+// 'name' => string]. Six of the eleven float on an nth-weekday rule, which
+// strtotime() understands directly, so no recurrence table is needed - the
+// generator writes concrete dates and the lookup above stays an exact match.
+//
+// Fixed-date holidays are shifted to the OBSERVED day (Saturday -> the Friday
+// before, Sunday -> the Monday after), because that is the weekday a business
+// actually closes. The floating ones always land on a Monday or Thursday and
+// need no shift.
+function usFederalHolidays($year)
+{
+    $year = intval($year);
+
+    $observed = function ($date) {
+        $day = intval(date('N', strtotime($date)));
+        if ($day == 6) {
+            return date('Y-m-d', strtotime($date . ' -1 day'));
+        }
+        if ($day == 7) {
+            return date('Y-m-d', strtotime($date . ' +1 day'));
+        }
+        return $date;
+    };
+
+    $fixed = [
+        "$year-01-01" => "New Year's Day",
+        "$year-06-19" => 'Juneteenth',
+        "$year-07-04" => 'Independence Day',
+        "$year-11-11" => 'Veterans Day',
+        "$year-12-25" => 'Christmas Day',
+    ];
+
+    $floating = [
+        "third monday of january $year"    => 'Martin Luther King Jr. Day',
+        "third monday of february $year"   => "Presidents' Day",
+        "last monday of may $year"         => 'Memorial Day',
+        "first monday of september $year"  => 'Labor Day',
+        "second monday of october $year"   => 'Columbus Day',
+        "fourth thursday of november $year" => 'Thanksgiving Day',
+    ];
+
+    $holidays = [];
+
+    foreach ($fixed as $date => $name) {
+        $holidays[] = ['date' => $observed($date), 'name' => $name];
+    }
+
+    foreach ($floating as $rule => $name) {
+        $holidays[] = ['date' => date('Y-m-d', strtotime($rule)), 'name' => $name];
+    }
+
+    usort($holidays, function ($a, $b) {
+        return strcmp($a['date'], $b['date']);
+    });
+
+    return $holidays;
+}
+
+// Re-stamp every open SLA ticket. Business hours and closure days both feed the
+// due-date math, so anything that changes the calendar has to run this or the
+// change only applies to tickets raised afterwards - which is the opposite of
+// what an operator adding next week's shutdown expects. Returns the count.
+function restampOpenSlaTickets()
+{
+    global $mysqli;
+
+    $restamped = 0;
+
+    $sql = mysqli_query($mysqli, "SELECT ticket_id, ticket_sla_id FROM tickets WHERE ticket_sla_id > 0 AND ticket_closed_at IS NULL AND ticket_archived_at IS NULL");
+    while ($row = mysqli_fetch_assoc($sql)) {
+        applyTicketSla($row['ticket_id'], $row['ticket_sla_id']);
+        $restamped++;
+    }
+
+    return $restamped;
+}
+
 // Add $minutes of business time to a datetime, honouring the configured
-// business days and hours. Returns a Y-m-d H:i:s string in the app timezone
+// business days and hours, and skipping closure days entirely. Returns a
+// Y-m-d H:i:s string in the app timezone
 // (includes/inc_set_timezone.php has already set it). With no usable business
 // calendar configured the clock is treated as 24x7.
 function addBusinessMinutes($start_datetime, $minutes)
@@ -82,6 +193,8 @@ function addBusinessMinutes($start_datetime, $minutes)
         return $cursor->format('Y-m-d H:i:s');
     }
 
+    $holidays = getBusinessHolidays();
+
     $remaining_seconds = $minutes * 60;
 
     // Walk forward a day at a time consuming available business time. Interval
@@ -90,10 +203,13 @@ function addBusinessMinutes($start_datetime, $minutes)
     // the honest reading. Guard: two years of calendar.
     for ($i = 0; $i < 731; $i++) {
 
-        if (in_array(intval($cursor->format('N')), $business_days)) {
+        $date_key = $cursor->format('Y-m-d');
 
-            $window_start = new DateTime($cursor->format('Y-m-d') . " $day_start");
-            $window_end = new DateTime($cursor->format('Y-m-d') . " $day_end");
+        // A closure day yields no business time, same as a non-business weekday
+        if (in_array(intval($cursor->format('N')), $business_days) && !isset($holidays[$date_key])) {
+
+            $window_start = new DateTime($date_key . " $day_start");
+            $window_end = new DateTime($date_key . " $day_end");
 
             if ($cursor < $window_start) {
                 $cursor = $window_start;
@@ -123,7 +239,8 @@ function addBusinessMinutes($start_datetime, $minutes)
 
 // Business minutes elapsed between two datetimes - the inverse of
 // addBusinessMinutes, used to measure how much of a resolution budget an
-// interval actually consumed.
+// interval actually consumed. Skips closure days for the same reason: time
+// nobody was working must not be charged to a ticket's budget.
 function businessMinutesBetween($start_datetime, $end_datetime)
 {
     $start = new DateTime($start_datetime);
@@ -142,6 +259,8 @@ function businessMinutesBetween($start_datetime, $end_datetime)
         return intval(floor(($end->getTimestamp() - $start->getTimestamp()) / 60));
     }
 
+    $holidays = getBusinessHolidays();
+
     $seconds = 0;
     $cursor = clone $start;
 
@@ -152,10 +271,12 @@ function businessMinutesBetween($start_datetime, $end_datetime)
             break;
         }
 
-        if (in_array(intval($cursor->format('N')), $business_days)) {
+        $date_key = $cursor->format('Y-m-d');
 
-            $window_start = new DateTime($cursor->format('Y-m-d') . " $day_start");
-            $window_end = new DateTime($cursor->format('Y-m-d') . " $day_end");
+        if (in_array(intval($cursor->format('N')), $business_days) && !isset($holidays[$date_key])) {
+
+            $window_start = new DateTime($date_key . " $day_start");
+            $window_end = new DateTime($date_key . " $day_end");
 
             $from = $cursor > $window_start ? $cursor : $window_start;
             $to = $end < $window_end ? $end : $window_end;
@@ -232,12 +353,12 @@ function slaPercentDisplay($percent)
         return "<span class='text-secondary'>-</span>";
     }
     if ($percent >= 95) {
-        return "<span class='text-success text-bold'>$percent%</span>";
+        return "<span class='text-success fw-bold'>$percent%</span>";
     }
     if ($percent >= 80) {
-        return "<span class='text-warning text-bold'>$percent%</span>";
+        return "<span class='text-warning fw-bold'>$percent%</span>";
     }
-    return "<span class='text-danger text-bold'>$percent%</span>";
+    return "<span class='text-danger fw-bold'>$percent%</span>";
 }
 
 // Reconcile a ticket's resolution clock with its current status. Safe to call
@@ -310,27 +431,34 @@ function syncTicketSlaClock($ticket_id)
 }
 
 // Resolve which SLA (if any) applies to a client + priority combination.
-// Returns an sla_id, or 0 when no SLA applies.
-function getTicketSlaId($client_id, $priority)
+// Returns an sla_id, or 0 when no SLA applies. A contract in force for the
+// client that sets an SLA for the priority comes first (contractSlaFor() in
+// functions/contract_billing.php), else the default for the priority in
+// Admin > SLAs (before the 3.5.0 update, the client's own first, as it was) -
+// $with_contract false gives what applies without a contract.
+function getTicketSlaId($client_id, $priority, $with_contract = true)
 {
     global $mysqli;
 
     $client_id = intval($client_id);
+
+    if ($with_contract && $client_id > 0 && function_exists('contractSlaFor')) {
+        $contract_sla_id = contractSlaFor($client_id, $priority);
+        if ($contract_sla_id) {
+            return $contract_sla_id;
+        }
+    }
+
     $priority = escapeSql($priority);
 
     $sla_id = null;
 
-    // Client-level assignment wins; a row pointing at SLA 0 is an explicit
-    // "no SLA for this client/priority" override of the global default
-    if ($client_id > 0) {
-        $sql = mysqli_query($mysqli, "SELECT sla_assignment_sla_id FROM sla_assignments WHERE sla_assignment_client_id = $client_id AND sla_assignment_priority = '$priority' LIMIT 1");
-        if (mysqli_num_rows($sql)) {
-            $sla_id = intval(mysqli_fetch_assoc($sql)['sla_assignment_sla_id']);
-        }
-    }
-
-    // Fall back to the global default (client 0)
-    if (is_null($sla_id)) {
+    // Before the 3.5.0 update, the client's own, as it was - one pointing at SLA 0 is "no SLA"
+    $legacy = $client_id > 0 && function_exists('billingClientLegacyTerms') ? billingClientLegacyTerms($client_id) : null;
+    if ($legacy && array_key_exists((string) $priority, $legacy['slas'])) {
+        $sla_id = $legacy['slas'][(string) $priority];
+    } else {
+        // Else the default for the priority, from Admin > SLAs (client 0) - a client has no SLAs of its own, only its contract's
         $sql = mysqli_query($mysqli, "SELECT sla_assignment_sla_id FROM sla_assignments WHERE sla_assignment_client_id = 0 AND sla_assignment_priority = '$priority' LIMIT 1");
         if (mysqli_num_rows($sql)) {
             $sla_id = intval(mysqli_fetch_assoc($sql)['sla_assignment_sla_id']);
@@ -360,14 +488,17 @@ function applyTicketSla($ticket_id, $forced_sla_id = null)
 
     $ticket_id = intval($ticket_id);
 
-    $sql = mysqli_query($mysqli, "SELECT ticket_client_id, ticket_priority, ticket_created_at, ticket_first_response_at, ticket_resolved_at FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
+    $sql = mysqli_query($mysqli, "SELECT ticket_client_id, ticket_priority, ticket_created_at, ticket_first_response_at, ticket_resolved_at, ticket_closed_at,
+        ticket_response_due_at, ticket_resolution_due_at, ticket_response_sla_alert_stage, ticket_resolution_sla_alert_stage, ticket_project_id, ticket_sla_id"
+        . (projectTicketsReady() ? ', ticket_sla_from' : ', NULL AS ticket_sla_from') . " FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
     if (!$sql || !mysqli_num_rows($sql)) {
         return;
     }
     $row = mysqli_fetch_assoc($sql);
 
     if (is_null($forced_sla_id)) {
-        $sla_id = getTicketSlaId($row['ticket_client_id'], $row['ticket_priority']);
+        // A project's ticket has no SLA while project tickets are kept apart - its project's dates count (functions/project_tickets.php)
+        $sla_id = projectTicketsSlaOff($row) ? 0 : getTicketSlaId($row['ticket_client_id'], $row['ticket_priority']);
     } else {
         $sla_id = intval($forced_sla_id);
     }
@@ -385,7 +516,8 @@ function applyTicketSla($ticket_id, $forced_sla_id = null)
     }
     $sla = mysqli_fetch_assoc($sla_sql);
 
-    $created_at = $row['ticket_created_at'];
+    // Counted from when it was made - or from when it left a project (functions/project_tickets.php)
+    $created_at = !empty($row['ticket_sla_from']) && $row['ticket_sla_from'] > $row['ticket_created_at'] ? $row['ticket_sla_from'] : $row['ticket_created_at'];
 
     $response_due_at = addBusinessMinutes($created_at, $sla['sla_response_minutes']);
 
@@ -408,8 +540,8 @@ function applyTicketSla($ticket_id, $forced_sla_id = null)
         $resolution_due_at_set = "'$resolution_due_at'";
     }
 
-    // Re-judge met flags for milestones already reached; alert stages reset so
-    // the SLA cron re-evaluates pending milestones against the new targets
+    // Re-judge met flags for milestones already reached; alert stages reset (unless
+    // kept below) so the SLA cron re-evaluates pending milestones against the new targets
     $response_met_set = "NULL";
     if (!empty($row['ticket_first_response_at'])) {
         $response_met_set = strtotime($row['ticket_first_response_at']) <= strtotime($response_due_at) ? 1 : 0;
@@ -420,9 +552,139 @@ function applyTicketSla($ticket_id, $forced_sla_id = null)
         $resolution_met_set = strtotime($row['ticket_resolved_at']) <= strtotime($resolution_due_at) ? 1 : 0;
     }
 
-    mysqli_query($mysqli, "UPDATE tickets SET ticket_sla_id = $sla_id, ticket_response_due_at = '$response_due_at', ticket_resolution_due_at = $resolution_due_at_set, ticket_response_sla_met = $response_met_set, ticket_resolution_sla_met = $resolution_met_set, ticket_response_sla_alert_stage = 0, ticket_resolution_sla_alert_stage = 0 WHERE ticket_id = $ticket_id");
+    // A milestone already alerted on keeps its stage when the new target doesn't undo the alert: a breach
+    // still past due stays breached (and missed), and a warning stays sent unless the deadline moved later
+    // (a minute's leeway for one worked out again from now, on a ticket that has been paused). Resetting
+    // them to 0 made the SLA cron email every open breach again each time an SLA, the SLA settings or a
+    // closure day was saved (restampOpenSlaTickets), or a ticket's priority changed.
+    $keep_stage = function ($old_stage, $old_due, $new_due, $done) {
+        $old_stage = intval($old_stage);
+        if ($done || $new_due === null || $old_due === null || $old_stage < 1) {
+            return 0;
+        }
+        if ($old_stage === 2) {
+            return strtotime($new_due) <= time() ? 2 : 0;
+        }
+        return strtotime($new_due) <= strtotime($old_due) + 60 ? 1 : 0;
+    };
+    $response_stage = $keep_stage($row['ticket_response_sla_alert_stage'], $row['ticket_response_due_at'], $response_due_at, !empty($row['ticket_first_response_at']));
+    $resolution_stage = $keep_stage($row['ticket_resolution_sla_alert_stage'], $row['ticket_resolution_due_at'], $resolution_due_at, !empty($row['ticket_resolved_at']));
+    if ($response_stage === 2) {
+        $response_met_set = 0;
+    }
+    if ($resolution_stage === 2) {
+        $resolution_met_set = 0;
+    }
+
+    mysqli_query($mysqli, "UPDATE tickets SET ticket_sla_id = $sla_id, ticket_response_due_at = '$response_due_at', ticket_resolution_due_at = $resolution_due_at_set, ticket_response_sla_met = $response_met_set, ticket_resolution_sla_met = $resolution_met_set, ticket_response_sla_alert_stage = $response_stage, ticket_resolution_sla_alert_stage = $resolution_stage WHERE ticket_id = $ticket_id");
 
     syncTicketSlaClock($ticket_id);
+}
+
+// Human-readable SLA target, e.g. "45 minutes", "4 business hours" or
+// "3 business days". The "business" qualifier is dropped when no business
+// calendar is configured, because addBusinessMinutes runs 24x7 in that case
+// and the promise would otherwise be misleading. The condition mirrors that
+// function's own guard.
+//
+// Anything at or over one business day rolls up to days: with 9-5 hours a
+// 1440-minute target is three working days, but "24 business hours" reads to
+// a client as tomorrow. The exact deadline always travels next to this text
+// in the email, so the wording only has to give the right impression - a
+// remainder under five minutes is dropped rather than rendering the likes of
+// "1 business hour 1 minute".
+//
+// $exact drops nothing - "1 business day 7 hours 30 minutes" - for where the
+// words stand alone: a contract's response times, and Admin > SLAs.
+function formatSlaMinutes($minutes, $exact = false)
+{
+    $minutes = intval($minutes);
+
+    $sla_settings = getSlaSettings();
+    $day_start = $sla_settings['business_hours_start'];
+    $day_end = $sla_settings['business_hours_end'];
+
+    $qualifier = '';
+    $day_minutes = 1440;
+    if (!empty($sla_settings['business_days']) && !empty($day_start) && !empty($day_end) && $day_start < $day_end) {
+        $qualifier = 'business ';
+        $working_minutes = intval((strtotime($day_end) - strtotime($day_start)) / 60);
+        if ($working_minutes > 0) {
+            $day_minutes = $working_minutes;
+        }
+    }
+
+    if ($minutes < 60) {
+        return $minutes . ' minute' . ($minutes == 1 ? '' : 's');
+    }
+
+    if ($minutes < $day_minutes) {
+        $hours = intdiv($minutes, 60);
+        $remainder = $minutes % 60;
+
+        $text = $hours . ' ' . $qualifier . 'hour' . ($hours == 1 ? '' : 's');
+        if ($remainder >= 5 || ($exact && $remainder > 0)) {
+            $text .= ' ' . $remainder . ' minute' . ($remainder == 1 ? '' : 's');
+        }
+
+        return $text;
+    }
+
+    $days = intdiv($minutes, $day_minutes);
+    $hours = intdiv($minutes % $day_minutes, 60);
+    $remainder = $minutes % $day_minutes % 60;
+
+    $text = $days . ' ' . $qualifier . 'day' . ($days == 1 ? '' : 's');
+    if ($hours > 0) {
+        $text .= ' ' . $hours . ' hour' . ($hours == 1 ? '' : 's');
+    }
+    if ($exact && $remainder > 0) {
+        $text .= ' ' . $remainder . ' minute' . ($remainder == 1 ? '' : 's');
+    }
+
+    return $text;
+}
+
+// The minutes in one business day, or 0 when no business calendar is set and
+// the clocks run around the clock - the same test addBusinessMinutes makes.
+function slaBusinessDayMinutes()
+{
+    $sla_settings = getSlaSettings();
+    $day_start = $sla_settings['business_hours_start'];
+    $day_end = $sla_settings['business_hours_end'];
+
+    if (empty($sla_settings['business_days']) || empty($day_start) || empty($day_end) || $day_start >= $day_end) {
+        return 0;
+    }
+
+    return intval((strtotime($day_end) - strtotime($day_start)) / 60);
+}
+
+// A target as the hours and minutes it was typed as - "48 hours", "1 hour 30
+// minutes", "45 minutes" - where formatSlaMinutes() says how long that is in
+// business days. Admin > SLAs shows both: 48 hours of a 9-5 day is six days.
+function formatSlaClockMinutes($minutes)
+{
+    $minutes = max(0, intval($minutes));
+    $hours = intdiv($minutes, 60);
+    $remainder = $minutes % 60;
+
+    $parts = [];
+    if ($hours > 0) {
+        $parts[] = $hours . ' hour' . ($hours == 1 ? '' : 's');
+    }
+    if ($remainder > 0 || !$parts) {
+        $parts[] = $remainder . ' minute' . ($remainder == 1 ? '' : 's');
+    }
+
+    return implode(' ', $parts);
+}
+
+// A target from the SLA window's two boxes, hours and minutes, in minutes.
+// Either can be left empty; a caller sending only minutes sends the lot.
+function slaTargetMinutes($hours, $minutes)
+{
+    return max(0, intval($hours)) * 60 + max(0, intval($minutes));
 }
 
 // Record the ticket's first response (if not already recorded) and judge the

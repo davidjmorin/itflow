@@ -1,206 +1,97 @@
-<div class="modal" id="addCalendarEventModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-dark">
-                <h5 class="modal-title"><i class="fa fa-fw fa-calendar-plus mr-2"></i>New Event</h5>
-                <button type="button" class="close text-white" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
-            </div>
-            <form action="post.php" method="post" autocomplete="off">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-                <div class="modal-body">
+<?php
 
-                    <ul class="nav nav-pills nav-justified mb-3">
-                        <li class="nav-item">
-                            <a class="nav-link active" data-toggle="pill" href="#pills-event"><i class="fa fa-fw fa-calendar mr-2"></i>Event</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" data-toggle="pill" href="#pills-details"><i class="fa fa-fw fa-info-circle mr-2"></i>Details</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" data-toggle="pill" href="#pills-attendees"><i class="fa fa-fw fa-users mr-2"></i>Attendees</a>
-                        </li>
-                    </ul>
+/*
+ * New Event - from the calendar (a day or a time range picked on it fills in
+ * when), inside a client, or from a client's site, contact or ticket with
+ * those already filled in. GET: client_id, start / end ('Y-m-d' or
+ * 'Y-m-d H:i'), all_day, calendar_id, location_id, contact_id, title, agent_id
+ * (the agent whose calendar it was opened from).
+ */
 
-                    <hr>
+require_once '../../../includes/modal_header.php';
 
-                    <div class="tab-content">
+// The calendar switched off (Admin > Settings > Modules)
+if (!moduleOn('calendar')) {
+    exit(json_encode(['error' => moduleOffText('calendar')]));
+}
 
-                        <div class="tab-pane fade show active" id="pills-event">
+$form_client_id = intval($_GET['client_id'] ?? 0);
+// Opened from a contact or a site with no client in the link - theirs
+if (!$form_client_id && intval($_GET['contact_id'] ?? 0)) {
+    $form_client_id = intval(getFieldById('contacts', intval($_GET['contact_id']), 'contact_client_id'));
+} elseif (!$form_client_id && intval($_GET['location_id'] ?? 0)) {
+    $form_client_id = intval(getFieldById('locations', intval($_GET['location_id']), 'location_client_id'));
+}
+if ($form_client_id) {
+    $client_id = $form_client_id;
+    if (!hasClientAccess($client_id)) {
+        echo json_encode(['error' => 'You do not have access to that client.']);
+        exit;
+    }
+    enforceCalendarEvent(['event_client_id' => $client_id], 'edit');
+}
+$form_locked_client = $form_client_id && !empty($_GET['lock_client']);
 
-                            <div class="form-group">
-                                <label>Calendar <strong class="text-danger">*</strong></label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                                    </div>
-                                    <select class="form-control select2" name="calendar" required>
-                                        <option value="">- Calendar -</option>
-                                        <?php
+// When - what was picked on the calendar, or the next whole hour
+$start = ticketScheduleValue(str_replace('T', ' ', (string) ($_GET['start'] ?? '')) . (strlen((string) ($_GET['start'] ?? '')) === 10 ? ' 00:00:00' : ''));
+$end = ticketScheduleValue(str_replace('T', ' ', (string) ($_GET['end'] ?? '')) . (strlen((string) ($_GET['end'] ?? '')) === 10 ? ' 00:00:00' : ''));
+$all_day = !empty($_GET['all_day']);
+if ($start === '') {
+    $start = date('Y-m-d H:00:00', strtotime('+1 hour'));
+}
+if ($all_day) {
+    $start = substr($start, 0, 10) . ' 00:00:00';
+    // A picked range ends the day after its last day
+    $end = $end !== '' ? date('Y-m-d 00:00:00', max(strtotime($start), strtotime(substr($end, 0, 10) . ' -1 day'))) : $start;
+} elseif ($end === '' || $end <= $start) {
+    $end = date('Y-m-d H:i:s', strtotime($start) + 3600);
+}
+// Picked on the viewer's own clock - kept in the company's (functions/user_timezone.php)
+if (!$all_day && ($_GET['start'] ?? '') !== '') {
+    [$start, $end] = [timezoneFromView($start), timezoneFromView($end)];
+}
 
-                                        $sql = mysqli_query($mysqli, "SELECT calendar_color, calendar_id, calendar_name FROM calendars ORDER BY calendar_name ASC");
-                                        while ($row = mysqli_fetch_assoc($sql)) {
-                                            $calendar_id = intval($row['calendar_id']);
-                                            $calendar_name = escapeHtml($row['calendar_name']);
-                                            $calendar_color = escapeHtml($row['calendar_color']);
-                                            ?>
-                                            <option <?php if ($config_default_calendar == $calendar_id) { echo "selected"; } ?> data-content="<i class='fa fa-circle mr-2' style='color:<?= $calendar_color ?>;'></i> <?= $calendar_name ?>" value="<?= $calendar_id ?>"><?= $calendar_name ?></option>
-                                        <?php } ?>
+$form = [
+    'event_title' => (string) ($_GET['title'] ?? ''),
+    'event_calendar_id' => intval($_GET['calendar_id'] ?? 0),
+    'event_start' => $start,
+    'event_end' => $end,
+    'event_all_day' => $all_day ? 1 : 0,
+    'event_location_id' => $form_client_id ? intval(assetClientOwnedId('location', $_GET['location_id'] ?? 0, $form_client_id)) : 0,
+];
+$form_attendees = [
+    // Assigned to the agent whose calendar it was added from, or the one adding it
+    'agents' => calendarEventDefaultAgents($_GET['agent_id'] ?? 0),
+    'contacts' => $form_client_id && intval(assetClientOwnedId('contact', $_GET['contact_id'] ?? 0, $form_client_id)) ? [intval($_GET['contact_id'])] : [],
+    'emails' => [],
+];
+$form_invited = false;
 
-                                    </select>
-                                </div>
-                            </div>
+if (!calendarList()) {
+    echo json_encode(['error' => 'There is no calendar to put it on yet - ' . (calendarCanManage() ? 'add one first.' : 'ask an admin to add one.')]);
+    exit;
+}
 
-                            <div class="form-group">
-                                <label>Title <strong class="text-danger">*</strong></label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-calendar-day"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="title" placeholder="Title of the event" maxlength="200" required autofocus>
-                                </div>
-                            </div>
+ob_start();
 
-
-                            <div class="form-group">
-                                <div class="custom-control custom-switch">
-                                    <input type="checkbox" class="custom-control-input event-all-day-toggle" id="event_add_all_day" name="all_day" value="1" checked>
-                                    <label class="custom-control-label" for="event_add_all_day">All day</label>
-                                </div>
-                            </div>
-
-                            <div class="form-row">
-                                <div class="form-group col-md-6">
-                                    <label>Date from <strong class="text-danger">*</strong></label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fa fa-fw fa-calendar-check"></i></span>
-                                        </div>
-                                        <input type="date" class="form-control event-start-date" id="event_add_start_date" name="start_date" required>
-                                    </div>
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label>Date to <strong class="text-danger">*</strong></label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                                        </div>
-                                        <input type="date" class="form-control" id="event_add_end_date" name="end_date" required>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Hidden while All day is on. The toggle handler in app.js also
-                                 adds and removes required, because a hidden required field
-                                 blocks submission with an unfocusable-element error. -->
-                            <div class="form-row d-none" id="event_add_time_fields">
-                                <div class="form-group col-md-6">
-                                    <label>Time from <strong class="text-danger">*</strong></label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fa fa-fw fa-clock"></i></span>
-                                        </div>
-                                        <input type="time" class="form-control event-start-time" id="event_add_start_time" name="start_time">
-                                    </div>
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label>Time to <strong class="text-danger">*</strong></label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fa fa-fw fa-clock"></i></span>
-                                        </div>
-                                        <input type="time" class="form-control" id="event_add_end_time" name="end_time">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Repeat</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-recycle"></i></span>
-                                    </div>
-                                    <select class="form-control select2" name="repeat">
-                                        <option value="">Never</option>
-                                        <option>Day</option>
-                                        <option>Week</option>
-                                        <option>Month</option>
-                                        <option>Year</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                        </div>
-
-                        <div class="tab-pane fade" id="pills-details">
-
-                            <div class="form-group">
-                                <label>Location</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-map-marker-alt"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="location" placeholder="Location of the event">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <textarea class="form-control" rows="8" name="description" placeholder="Enter a description"></textarea>
-                            </div>
-
-                        </div>
-
-                        <div class="tab-pane fade" id="pills-attendees">
-
-                            <?php if (isset($client_id)) { ?>
-                                <input type="hidden" name="client_id" value="<?= $client_id ?>">
-                            <?php } else{ ?>
-
-                                <div class="form-group">
-                                    <label>Client</label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                                        </div>
-                                        <select class="form-control select2" name="client_id">
-                                            <option value="">- Client -</option>
-                                            <?php
-
-                                            $sql = mysqli_query($mysqli, "SELECT client_id, client_name, contact_email FROM clients LEFT JOIN contacts ON clients.client_id = contacts.contact_client_id AND contact_primary = 1 ORDER BY client_name ASC");
-                                            while ($row = mysqli_fetch_assoc($sql)) {
-                                                $client_id = intval($row['client_id']);
-                                                $client_name = escapeHtml($row['client_name']);
-                                                $contact_email = escapeHtml($row['contact_email']);
-                                                ?>
-                                                <option value="<?= $client_id ?>"><?= $client_name ?></option>
-
-                                            <?php } ?>
-                                        </select>
-                                    </div>
-                                </div>
-
-                            <?php } ?>
-
-                            <?php if (!empty($config_smtp_host)) { ?>
-                                <div class="form-group">
-                                    <div class="custom-control custom-checkbox">
-                                        <input type="checkbox" class="custom-control-input" id="emailEventCheckbox" name="email_event" value="1" >
-                                        <label class="custom-control-label" for="emailEventCheckbox">Email Event</label>
-                                    </div>
-                                </div>
-                            <?php } ?>
-
-                        </div>
-
-                    </div>
-
-                </div>
-                <div class="modal-footer">
-                    <button type="submit" name="add_event" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Create</button>
-                    <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
+?>
+<div class="modal-header bg-dark">
+    <h5 class="modal-title"><i class="far fa-fw fa-calendar-plus me-2"></i>New Event<?php if ($form_client_id) { ?> <small class="ms-1 opacity-75"><?= escapeHtml((string) getFieldById('clients', $form_client_id, 'client_name')) ?></small><?php } ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
+<form action="post.php" method="post" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="modal-body">
+        <?php require 'calendar_event_form.php'; ?>
+    </div>
+    <div class="modal-footer">
+        <button type="submit" name="add_event" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
+    </div>
+</form>
+
+<script src="<?= staticFileUrl('/agent/js/calendar_event_modal.js') ?>"></script>
+
+<?php
+require_once '../../../includes/modal_footer.php';

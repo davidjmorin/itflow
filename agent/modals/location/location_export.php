@@ -28,10 +28,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-download mr-2"></i>Export Locations</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-download me-2"></i>Export Locations</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <?php exportTabsNav(); ?>
@@ -44,32 +42,28 @@ ob_start();
 
         <?php exportTabsFiltersOpen(); ?>
 
-        <div class="form-group">
-            <label>Search</label>
+        <div class="mb-3">
+            <label class="form-label">Search</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-search"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-search"></i></span>
                 <input type="text" class="form-control" name="q" value="<?= stripslashes(escapeHtml($q_filter)) ?>" placeholder="Name, address, city, phone">
             </div>
         </div>
 
         <?php if (!$client_id) { ?>
-        <div class="form-group">
-            <label>Client</label>
+        <div class="mb-3">
+            <label class="form-label">Client</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                </div>
-                <select class="form-control select2" name="client">
-                    <option value="">- All Clients -</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                <select class="form-select select2" name="client">
+                    <option value="">- Any client -</option>
                     <?php
-                    $sql_clients_filter = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE EXISTS (SELECT 1 FROM locations WHERE location_client_id = client_id) ORDER BY client_name ASC");
+                    $sql_clients_filter = mysqli_query($mysqli, "SELECT client_id, client_name, client_abbreviation FROM clients WHERE EXISTS (SELECT 1 FROM locations WHERE location_client_id = client_id)" . clientScopeSql('client_id') . " ORDER BY client_name ASC");
                     while ($row = mysqli_fetch_assoc($sql_clients_filter)) {
                         $filter_client_id = intval($row['client_id']);
                         $filter_client_name = escapeHtml($row['client_name']);
                     ?>
-                        <option <?php if ($client_filter == $filter_client_id) { echo "selected"; } ?> value="<?= $filter_client_id ?>"><?= $filter_client_name ?></option>
+                        <option <?php if ($client_filter == $filter_client_id) { echo "selected"; } ?> value="<?= $filter_client_id ?>"<?= selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '') ?>><?= $filter_client_name ?></option>
                     <?php
                     }
                     ?>
@@ -78,34 +72,21 @@ ob_start();
         </div>
         <?php } ?>
 
-        <div class="form-group">
-            <label>Tags</label>
+        <div class="mb-3">
+            <label class="form-label">Tags</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-tags"></i></span>
-                </div>
-                <select class="form-control select2" name="tags[]" data-placeholder="- All Tags -" multiple>
-                    <?php
-                    $sql_tags_filter = mysqli_query($mysqli, "SELECT tag_id, tag_name FROM tags WHERE tag_type = 2 ORDER BY tag_name ASC");
-                    while ($row = mysqli_fetch_assoc($sql_tags_filter)) {
-                        $filter_tag_id = intval($row['tag_id']);
-                        $filter_tag_name = escapeHtml($row['tag_name']);
-                    ?>
-                        <option <?php if (in_array($filter_tag_id, $tag_filter, true)) { echo "selected"; } ?> value="<?= $filter_tag_id ?>"><?= $filter_tag_name ?></option>
-                    <?php
-                    }
-                    ?>
+                    <span class="input-group-text"><i class="fas fa-fw fa-tags"></i></span>
+                <select class="form-select select2" name="tags[]" data-placeholder="- Any tag -" multiple>
+                    <?= tagOptionsHtml('location', $tag_filter) ?>
                 </select>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Archived</label>
+        <div class="mb-3">
+            <label class="form-label">Archived</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-archive"></i></span>
-                </div>
-                <select class="form-control select2" name="archived">
+                    <span class="input-group-text"><i class="fas fa-fw fa-archive"></i></span>
+                <select class="form-select select2" name="archived">
                     <option <?php if (!$archived_filter) { echo "selected"; } ?> value="0">Active only</option>
                     <option <?php if ($archived_filter) { echo "selected"; } ?> value="1">Archived only</option>
                 </select>

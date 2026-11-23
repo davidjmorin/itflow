@@ -4,18 +4,13 @@ require_once '../../../includes/modal_header.php';
 
 enforceUserPermission('module_support', 2);
 
-$ticket_id = intval($_GET['ticket_id']);
+// The ticket, after the module and client checks - or the modal's error
+$row = ticketForModal($_GET['ticket_id'] ?? 0, 2, true);
+$ticket_id = intval($row['ticket_id']);
 
-$sql = mysqli_query($mysqli, "SELECT ticket_client_id, ticket_number, ticket_prefix FROM tickets WHERE ticket_id = $ticket_id LIMIT 1");
-
-$row = mysqli_fetch_assoc($sql);
 $ticket_prefix = escapeHtml($row['ticket_prefix']);
 $ticket_number = intval($row['ticket_number']);
 $client_id = intval($row['ticket_client_id']);
-
-if ($client_id) {
-    enforceClientAccess();
-}
 
 ob_start();
 
@@ -23,10 +18,9 @@ ob_start();
 
 <div class="modal-header bg-dark">
     <h5 class="modal-title">
-        <i class="fa fa-fw fa-people-carry mr-2"></i>
-        Change <?= "$ticket_prefix$ticket_number" ?> to another client
+        <i class="fas fa-fw fa-people-carry me-2"></i>Move to Another Client <small class="ms-1 opacity-75"><?= "$ticket_prefix$ticket_number" ?></small>
     </h5>
-    <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -34,20 +28,24 @@ ob_start();
     <input type="hidden" name="ticket_id" value="<?= $ticket_id ?>">
 
     <div class="modal-body">
-        <div class="form-group">
-            <label>New Client <strong class="text-danger">*</strong></label>
+
+        <!-- change_client_ticket turns every reply internal - the agent should know before, not after -->
+        <div class="alert alert-info small">
+            Every reply already on this ticket becomes an internal note, so the new client never sees the old conversation. The links to it emailed to the old client stop working.
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Client <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-users"></i></span>
-                </div>
-                <select class="form-control select2" name="new_client_id" id="client_select" required>
+                    <span class="input-group-text"><i class="fas fa-fw fa-users"></i></span>
+                <select class="form-select select2" name="new_client_id" id="client_select" required>
                     <?php
-                    $sql_clients = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_lead = 0 AND client_archived_at IS NULL " . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
+                    $sql_clients = mysqli_query($mysqli, "SELECT client_id, client_name, client_abbreviation FROM clients WHERE client_lead = 0 AND client_archived_at IS NULL " . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
                     while ($row = mysqli_fetch_assoc($sql_clients)) {
                         $client_id_select = intval($row['client_id']);
                         $client_name = escapeHtml($row['client_name']);
                         ?>
-                        <option value="<?= $client_id_select ?>" <?php if ($client_id == $client_id_select) echo 'selected'; ?>>
+                        <option value="<?= $client_id_select ?>" <?php if ($client_id == $client_id_select) echo 'selected'; ?><?= selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '') ?>>
                             <?= $client_name ?>
                         </option>
                     <?php } ?>
@@ -55,13 +53,11 @@ ob_start();
             </div>
         </div>
 
-        <div class="form-group">
-            <label>New Contact</label>
+        <div class="mb-3">
+            <label class="form-label">Contact</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                </div>
-                <select class="form-control select2" name="new_contact_id" id="contact_select">
+                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                <select class="form-select select2" name="new_contact_id" id="contact_select">
                     <option value="">- Select a contact -</option>
                 </select>
             </div>
@@ -69,15 +65,15 @@ ob_start();
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="change_client_ticket" class="btn btn-primary text-bold">
-            <i class="fa fa-check mr-2"></i>Change
+        <button type="submit" name="change_client_ticket" class="btn btn-primary fw-bold">
+            <i class="fas fa-check me-2"></i>Move Ticket
         </button>
-        <button type="button" class="btn btn-light" data-dismiss="modal">
-            <i class="fa fa-times mr-2"></i>Cancel
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+            <i class="fas fa-times me-2"></i>Cancel
         </button>
     </div>
 </form>
 
-<script src="/agent/js/ticket_change_client.js"></script>
+<script src="<?= staticFileUrl('/agent/js/ticket_change_client.js') ?>"></script>
 
 <?php require_once '../../../includes/modal_footer.php'; ?>

@@ -5,67 +5,50 @@
  */
 ?>
 
-<!-- Close container -->
-</div>
+</main>
 
-<footer class="portal-footer">
-    <div class="container text-center">
-        <div class="portal-footer-brand">
-            <?= escapeHtml($session_company_name) ?>
-        </div>
-        <div class="portal-footer-sub">
-            Powered by <?= escapeHtml($session_company_name) ?>
-        </div>
+<?php /* The body is a flex column (header.php), so mt-auto here takes up the
+         height a short page leaves and the bar sits on the bottom of the
+         window rather than right under the content. On a phone it clears the
+         tab bar along the bottom. */ ?>
+<footer class="itflow-portal-footer mt-auto">
+    <div class="container d-flex flex-wrap justify-content-between gap-2">
+        <span><?= escapeHtml($session_company_name) ?></span>
+        <?php if (!$config_whitelabel_enabled) { ?>
+            <span>Powered by ITFlow</span>
+        <?php } ?>
     </div>
 </footer>
 
+<script src="<?= staticFileUrl('/js/itflow_select.js') ?>"></script>
+<script src="<?= staticFileUrl('/libs/bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/bootstrap_defaults.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/http.js') ?>"></script>
 
-<?php require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/inc_confirm_modal.php'; ?>
+<!--- TinyMCE - set up on any .tinymce by js/portal.js -->
+<script src="<?= staticFileUrl('/libs/tinymce/tinymce.min.js') ?>" referrerpolicy="origin"></script>
+<script src="<?= staticFileUrl('/js/tinymce_defaults.js') ?>"></script>
 
-<!-- jQuery -->
-<script src="/libs/jquery/jquery.min.js"></script>
+<script src="<?= staticFileUrl('/js/pretty_content.js') ?>"></script>
 
-<!-- Bootstrap 4 -->
-<script src="/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="<?= staticFileUrl('/libs/sweetalert2/js/sweetalert2.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/confirm_modal.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/autosubmit.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/otp_input.js') ?>"></script>
 
-<!--- TinyMCE -->
-<script src="/libs/tinymce/tinymce.min.js" referrerpolicy="origin"></script>
+<?php if (!empty($portal_load_phone_inputs)) { ?>
+    <script src="<?= staticFileUrl('/libs/intl-tel-input/js/intlTelInputWithUtils.min.js') ?>"></script>
+    <script src="<?= staticFileUrl('/js/phone_inputs.js') ?>"></script>
+<?php } ?>
 
-<script>
-    
-    // Initialize TinyMCE
-    tinymce.init({
-        selector: '.tinymce',
-        browser_spellcheck: true,
-        resize: true,
-        min_height: 300,
-        max_height: 600,
-        promotion: false,
-        branding: false,
-        menubar: false,
-        statusbar: false,
-        license_key: 'gpl',
-        toolbar: [
-            { name: 'styles', items: [ 'styles' ] },
-            { name: 'formatting', items: [ 'bold', 'italic', 'forecolor' ] },
-            { name: 'lists', items: [ 'bullist', 'numlist' ] },
-            { name: 'alignment', items: [ 'alignleft', 'aligncenter', 'alignright', 'alignjustify' ] },
-            { name: 'indentation', items: [ 'outdent', 'indent' ] },
-            { name: 'table', items: [ 'table' ] },
-            { name: 'extra', items: [ 'fullscreen' ] }
-        ],
-        mobile: {
-        menubar: false,
-        plugins: 'autosave lists autolink',
-        toolbar: 'undo bold italic styles',
-    },
-        plugins: 'link image lists table code codesample fullscreen autoresize',
-    });
+<script src="<?= staticFileUrl('/js/keepalive.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/portal.js') ?>"></script>
 
-</script>
+<?php if (!empty($portal_stripe)) { ?>
+    <!-- Taking a card - Stripe's own script, then the portal's use of it -->
+    <script src="https://js.stripe.com/v3/"></script>
+    <script src="<?= staticFileUrl('/js/portal_stripe.js') ?>"></script>
+<?php } ?>
 
-<script src="/js/pretty_content.js"></script>
-
-<script src="/js/confirm_modal.js"></script>
-
-<script src="/js/keepalive.js"></script>
+</body>
+</html>

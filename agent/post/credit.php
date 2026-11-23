@@ -13,6 +13,9 @@ if (isset($_POST['add_credit'])) {
     enforceUserPermission('module_sales', 2);
 
     $client_id = intval($_POST['client']);
+
+    enforceClientAccess();
+
     $amount = floatval($_POST['amount']);
     $type = escapeSql($_POST['type']);
     $expire = escapeSql($_POST['expire']);
@@ -22,9 +25,9 @@ if (isset($_POST['add_credit'])) {
     
     $credit_id = mysqli_insert_id($mysqli);
 
-    logAudit("Credit", "Create", "$session_name added " . numfmt_format_currency($currency_format, $amount, $session_company_currency) . "", $client_id, $credit_id);
+    logAudit("Credit", "Create", "$session_name added " . billingMoney($amount, $session_company_currency) . "", $client_id, $credit_id);
 
-    flashAlert(numfmt_format_currency($currency_format, $amount, $session_company_currency) . " Credit Added");
+    flashAlert("Credit of <strong>" . billingMoney($amount, $session_company_currency) . "</strong> added");
 
     redirect();
 

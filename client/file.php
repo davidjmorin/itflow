@@ -81,14 +81,7 @@ finfo_close($finfo);
 
 // MIME types that are safe to render inline in the browser
 // Everything else (esp. HTML/SVG - stored XSS risk) falls back to download
-$inline_allowed_mime_types = array(
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "text/plain"
-);
+$inline_allowed_mime_types = getInlineViewableMimeTypes();
 
 if ($disposition == "inline" && !in_array($file_mime_type, $inline_allowed_mime_types, true)) {
     $disposition = "attachment";
@@ -113,8 +106,10 @@ if ((isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH'
     exit;
 }
 
-// Audit log
-logAudit("File", "Download", "Client contact $session_contact_name viewed file $file_name_escaped via portal", $session_client_id);
+// Audit log - not for an agent viewing as the contact
+if (!portalViewingAs()) {
+    logAudit("File", "Download", "Client contact $session_contact_name viewed file $file_name_escaped via portal", $session_client_id);
+}
 
 // Send the file
 header("Content-Type: $file_mime_type");

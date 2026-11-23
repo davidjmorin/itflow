@@ -2,7 +2,19 @@
 
 require_once '../../../includes/modal_header.php';
 
+/*
+ * New Recurring Ticket - what the tickets it raises will say, how often and
+ * from when, what they are about and their tasks. Opened from a client,
+ * contact or asset, it starts with that filled in; picking an asset fills
+ * in the person it is assigned to.
+ */
+
+enforceUserPermission('module_support', 2);
+
 $client_id = intval($_GET['client_id'] ?? 0);
+if ($client_id) {
+    enforceClientAccess();
+}
 $contact_id = intval($_GET['contact_id'] ?? 0);
 $asset_id = intval($_GET['asset_id'] ?? 0);
 
@@ -10,10 +22,8 @@ ob_start();
 
 ?>
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-calendar-check mr-2"></i>New Recurring Ticket</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-calendar-check me-2"></i>New Recurring Ticket</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 <form action="post.php" method="post" autocomplete="off">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
@@ -26,16 +36,16 @@ ob_start();
 
         <ul class="nav nav-pills nav-justified mb-3">
             <li class="nav-item">
-                <a class="nav-link active" data-toggle="pill" href="#pills-add-details"><i class="fa fa-fw fa-life-ring mr-2"></i>Details</a>
+                <a class="nav-link active" data-bs-toggle="pill" href="#pills-add-details"><i class="fas fa-fw fa-life-ring me-2"></i>Details</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link" data-toggle="pill" href="#pills-add-tasks"><i class="fa fa-fw fa-tasks mr-2"></i>Tasks</a>
+                <a class="nav-link" data-bs-toggle="pill" href="#pills-add-schedule"><i class="fas fa-fw fa-calendar-alt me-2"></i>Schedule</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link" data-toggle="pill" href="#pills-add-schedule"><i class="fa fa-fw fa-building mr-2"></i>Schedule</a>
+                <a class="nav-link" data-bs-toggle="pill" href="#pills-add-assets"><i class="fas fa-fw fa-link me-2"></i>Related</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link" data-toggle="pill" href="#pills-add-assets"><i class="fa fa-fw fa-desktop mr-2"></i>Assets</a>
+                <a class="nav-link" data-bs-toggle="pill" href="#pills-add-tasks"><i class="fas fa-fw fa-tasks me-2"></i>Tasks</a>
             </li>
         </ul>
 
@@ -48,22 +58,20 @@ ob_start();
                 <?php } else { ?>
                 <div class="row">
                     <div class="col">
-                        <div class="form-group">
-                            <label>Client <strong class="text-danger">*</strong></label>
+                        <div class="mb-3">
+                            <label class="form-label">Client <strong class="text-danger">*</strong></label>
                             <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                                </div>
-                                <select class="form-control select2" name="client_id" id="changeClientSelect" required <?php if ($client_id) { echo "disabled"; } ?>>
-                                    <option value="">- Select a Client -</option>
+                                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                                <select class="form-select select2" name="client_id" id="changeClientSelect" required <?php if ($client_id) { echo "disabled"; } ?>>
+                                    <option value="">- Select a client -</option>
                                     <?php
 
-                                    $sql = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_archived_at IS NULL " . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
+                                    $sql = mysqli_query($mysqli, "SELECT client_id, client_name, client_abbreviation FROM clients WHERE client_archived_at IS NULL" . clientNotLeadSql($client_id) . clientScopeSql('clients.client_id') . " ORDER BY client_name ASC");
                                     while ($row = mysqli_fetch_assoc($sql)) {
                                         $client_id_select = intval($row['client_id']);
                                         $client_name = escapeHtml($row['client_name']); ?>
 
-                                        <option value="<?= $client_id_select ?>" <?php if ($client_id == $client_id_select) {echo "selected"; } ?>><?= $client_name ?></option>
+                                        <option value="<?= $client_id_select ?>" <?php if ($client_id == $client_id_select) {echo "selected"; } ?><?= selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '') ?>><?= $client_name ?></option>
 
                                     <?php } ?>
                                 </select>
@@ -71,13 +79,11 @@ ob_start();
                         </div>
                     </div>
                     <div class="col">
-                        <div class="form-group">
-                            <label>Contact </label>
+                        <div class="mb-3">
+                            <label class="form-label">Contact </label>
                             <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                                </div>
-                                <select class="form-control select2" name="contact_id" id="contactSelect">
+                                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                                <select class="form-select select2" name="contact_id" id="contactSelect">
                                 </select>
                             </div>
                         </div>
@@ -86,102 +92,83 @@ ob_start();
 
                 <?php } ?>
 
-                <?php require_once '../../includes/inc_ticket_template_select.php'; ?>
+                <?php
+                $ticket_template_hint = "<span class=\"font-monospace\">[Client]</span>, <span class=\"font-monospace\">[Month]</span> and the like in it are filled in each time it raises a ticket.";
+                require_once '../../includes/inc_ticket_template_select.php';
+                ?>
 
-                <div class="form-group">
-                    <label>Subject <strong class="text-danger">*</strong></label>
+                <div class="mb-3">
+                    <label class="form-label">Subject <strong class="text-danger">*</strong></label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-tag"></i></span>
-                        </div>
-                        <input type="text" class="form-control" id="subjectInput" name="subject" placeholder="Subject" maxlength="500" required>
+                            <span class="input-group-text"><i class="fas fa-fw fa-tag"></i></span>
+                        <input type="text" class="form-control" id="subjectInput" name="subject" data-template-field="subject" placeholder="Subject" maxlength="500" required>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <textarea class="form-control tinymceTicket" id="detailsInput" name="details"></textarea>
+                <div class="mb-3">
+                    <textarea class="form-control tinymceTicket" id="detailsInput" name="details" data-template-field="details"></textarea>
                 </div>
 
                 <div class="row">
 
                     <div class="col">
-                        <div class="form-group">
-                            <label>Priority <strong class="text-danger">*</strong></label>
+                        <div class="mb-3">
+                            <label class="form-label">Priority <strong class="text-danger">*</strong></label>
                             <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-thermometer-half"></i></span>
-                                </div>
-                                <select class="form-control select2" name="priority" required>
-                                    <option>Low</option>
-                                    <option>Medium</option>
-                                    <option>High</option>
-                                    <option>Urgent</option>
+                                    <span class="input-group-text"><i class="fas fa-fw fa-thermometer-half"></i></span>
+                                <select class="form-select select2" name="priority" data-template-field="priority" required>
+                                    <option data-color="var(--bs-info)">Low</option>
+                                    <option selected data-color="var(--bs-warning)">Medium</option>
+                                    <option data-color="var(--bs-danger)">High</option>
+                                    <option data-color="var(--bs-emphasis-color)">Urgent</option>
                                 </select>
                             </div>
                         </div>
                     </div>
 
                     <div class="col">
-                        <div class="form-group">
-                            <label>Category</label>
+                        <div class="mb-3">
+                            <label class="form-label">Category</label>
                             <div class="input-group">
-                                <div class="input-group-prepend">
-                                    <span class="input-group-text"><i class="fa fa-fw fa-layer-group"></i></span>
-                                </div>
-                                <select class="form-control select2" name="category_id">
-                                    <option value="0">- Not Categorized -</option>
-                                    <?php
-                                    $sql_categories = mysqli_query($mysqli, "SELECT category_id, category_name FROM categories WHERE category_type = 'Ticket' AND category_archived_at IS NULL ORDER BY category_name ASC");
-                                    while ($row = mysqli_fetch_assoc($sql_categories)) {
-                                        $category_id = intval($row['category_id']);
-                                        $category_name = escapeHtml($row['category_name']);
-
-                                        ?>
-                                        <option value="<?= $category_id ?>"><?= $category_name ?></option>
-                                    <?php } ?>
-
+                                    <span class="input-group-text"><i class="fas fa-fw fa-layer-group"></i></span>
+                                <select class="form-select select2" name="category_id" data-template-field="category">
+                                    <option value="0">- Not categorized -</option>
+                                    <?= categoryOptionsHtml('Ticket') ?>
                                 </select>
-                                <div class="input-group-append">
-                                    <button class="btn btn-secondary ajax-modal" type="button"
-                                        data-modal-url="../admin/modals/category/category_add.php?category=Ticket">
-                                        <i class="fas fa-fw fa-plus"></i>
-                                    </button>
-                                </div>
+                                <?= categoryAddButtonHtml('Ticket') ?>
                             </div>
                         </div>
                     </div>
 
                 </div>
 
-                <div class="form-group">
-                    <label>Assign to</label>
+                <div class="mb-3">
+                    <label class="form-label">Assign to</label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-user-check"></i></span>
-                        </div>
-                        <select class="form-control select2" name="assigned_to">
-                            <option value="0">- Not Assigned -</option>
+                            <span class="input-group-text"><i class="fas fa-fw fa-user-check"></i></span>
+                        <select class="form-select select2" name="assigned_to" data-template-field="assigned">
+                            <option value="0">- Unassigned -</option>
                             <?php
 
                             $sql = mysqli_query(
                                 $mysqli,
-                                "SELECT user_id, user_name FROM users
-                                WHERE user_type = 1 AND user_status = 1 AND user_archived_at IS NULL ORDER BY user_name ASC"
+                                "SELECT user_id, user_name, user_avatar FROM users
+                                WHERE user_type = 1" . serviceAccountsOutSql() . " AND user_status = 1 AND user_archived_at IS NULL ORDER BY user_name ASC"
                             );
                             while ($row = mysqli_fetch_assoc($sql)) {
                                 $user_id = intval($row['user_id']);
                                 $user_name = escapeHtml($row['user_name']); ?>
-                                <option value="<?= $user_id ?>"><?= $user_name ?></option>
+                                <option value="<?= $user_id ?>"<?= selectOptionUser($row['user_id'], $row['user_name'], $row['user_avatar'] ?? '') ?>><?= $user_name ?></option>
                             <?php } ?>
                         </select>
                     </div>
                 </div>
 
-                <?php if ($config_module_enable_accounting) { ?>
-                <div class="form-group">
-                    <div class="custom-control custom-switch">
-                        <input type="checkbox" class="custom-control-input" name="billable" <?php if ($config_ticket_default_billable == 1) { echo "checked"; } ?> value="1" id="billable">
-                        <label class="custom-control-label" for="billable">Mark Billable</label>
+                <?php if ($config_module_enable_accounting && lookupUserPermission('module_sales') >= 2) { ?>
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input type="checkbox" class="form-check-input" name="billable" <?php if ($config_ticket_default_billable == 1) { echo "checked"; } ?> value="1" id="billable" data-template-field="billable">
+                        <label class="form-check-label" for="billable">The tickets it raises are billable</label>
                     </div>
                 </div>
                 <?php } ?>
@@ -196,14 +183,12 @@ ob_start();
 
             <div class="tab-pane fade" id="pills-add-schedule">
 
-                <div class="form-group">
-                    <label>Frequency <strong class="text-danger">*</strong></label>
+                <div class="mb-3">
+                    <label class="form-label">Frequency <strong class="text-danger">*</strong></label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-recycle"></i></span>
-                        </div>
-                        <select class="form-control select2" name="frequency" required>
-                            <option value="">- Select Frequency -</option>
+                            <span class="input-group-text"><i class="fas fa-fw fa-recycle"></i></span>
+                        <select class="form-select select2" name="frequency" required>
+                            <option value="">- Select a frequency -</option>
                             <optgroup label="Days">
                                 <option>Three Days</option>
                                 <option>Weekly</option>
@@ -219,44 +204,43 @@ ob_start();
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Starting date <strong class="text-danger">*</strong></label>
+                <div class="mb-3">
+                    <label class="form-label">First run <strong class="text-danger">*</strong></label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-calendar-day"></i></span>
-                        </div>
-                        <input class="form-control" type="date" name="start_date" min="<?= date("Y-m-d") ?>" max="2999-12-31" required>
+                            <span class="input-group-text"><i class="fas fa-fw fa-calendar-day"></i></span>
+                        <input class="form-control" type="date" name="start_date" min="<?= date("Y-m-d") ?>" max="2999-12-31" value="<?= date("Y-m-d", strtotime('+1 day')) ?>" required>
                     </div>
+                    <div class="form-text">The nightly cron raises a ticket on this day, then again each time it comes round. Monthly ones keep to this day of the month - the last day, in a shorter month.</div>
                 </div>
+
+                <?= byDayField('[name=start_date]', '[name=frequency]', ['Monthly', 'Quarterly', 'Biannually', 'Annually'], ['Annually'], '') ?>
+
+                <?php $ahead_row = null; require __DIR__ . '/../../includes/inc_recurring_ticket_ahead.php'; ?>
 
             </div>
 
             <div class="tab-pane fade" id="pills-add-assets">
 
-                <div class="form-group">
-                    <label>Asset</label>
+                <div class="mb-3">
+                    <label class="form-label">Asset</label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-desktop"></i></span>
-                        </div>
-                        <select class="form-control select2" name="asset_id" id="assetSelect" data-selected="<?= $asset_id ?>">
+                            <span class="input-group-text"><i class="fas fa-fw fa-desktop"></i></span>
+                        <select class="form-select select2" name="asset_id" id="assetSelect" data-selected="<?= $asset_id ?>">
                         </select>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Additional Assets</label>
+                <div class="mb-3">
+                    <label class="form-label">Other assets</label>
                     <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-desktop"></i></span>
-                        </div>
-                        <select class="form-control select2" name="additional_assets[]" id="additionalAssetsSelect" data-placeholder="- Select Additional Assets -" multiple>
+                            <span class="input-group-text"><i class="fas fa-fw fa-desktop"></i></span>
+                        <select class="form-select select2" name="additional_assets[]" id="additionalAssetsSelect" data-placeholder="- Any other assets involved -" multiple>
                         </select>
                     </div>
                 </div>
 
                 <?php if (!$client_id) { ?>
-                <small class="form-text text-muted">Select a client on the Details tab to load its assets.</small>
+                <small class="form-text text-body-secondary">Select a client on the Details tab to load its assets.</small>
                 <?php } ?>
 
             </div>
@@ -265,18 +249,16 @@ ob_start();
 
     </div>
     <div class="modal-footer">
-        <button type="submit" name="add_recurring_ticket" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Create Recurring Ticket</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fas fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="add_recurring_ticket" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 
 
 <!-- Recurring Ticket Client/Contact JS -->
-<link rel="stylesheet" href="/libs/jquery-ui/jquery-ui.min.css">
-<script src="/libs/jquery-ui/jquery-ui.min.js"></script>
-<script src="/agent/js/tickets_add_modal.js"></script>
+<script src="<?= staticFileUrl('/agent/js/tickets_add_modal.js') ?>"></script>
 
-<script src="/agent/js/ticket_tasks_modal.js"></script>
+<script src="<?= staticFileUrl('/agent/js/ticket_tasks_modal.js') ?>"></script>
 
 <?php
 

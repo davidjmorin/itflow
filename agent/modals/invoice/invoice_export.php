@@ -29,10 +29,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-download mr-2"></i>Export Invoices</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-download me-2"></i>Export Invoices</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <?php exportTabsNav(); ?>
@@ -45,69 +43,52 @@ ob_start();
 
         <?php exportTabsFiltersOpen(); ?>
 
-        <div class="form-group">
-            <label>Search</label>
+        <div class="mb-3">
+            <label class="form-label">Search</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-search"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-search"></i></span>
                 <input type="text" class="form-control" name="q" value="<?= stripslashes(escapeHtml($q_filter)) ?>" placeholder="Number, scope, client, amount">
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Status</label>
+        <div class="mb-3">
+            <label class="form-label">Status</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-file-invoice-dollar"></i></span>
-                </div>
-                <select class="form-control select2" name="status">
-                    <option value="">- All Statuses -</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-file-invoice-dollar"></i></span>
+                <select class="form-select select2" name="status">
+                    <option value="">- Any status -</option>
                     <option <?php if ($status_filter === 'Draft') { echo "selected"; } ?> value="Draft">Draft</option>
                     <option <?php if ($status_filter === 'Unpaid') { echo "selected"; } ?> value="Unpaid">Unpaid</option>
                     <option <?php if ($status_filter === 'Overdue') { echo "selected"; } ?> value="Overdue">Overdue</option>
+                    <option <?php if ($status_filter === 'Paid') { echo "selected"; } ?> value="Paid">Paid</option>
+                    <option <?php if ($status_filter === 'Cancelled') { echo "selected"; } ?> value="Cancelled">Cancelled or non-billable</option>
                 </select>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Category</label>
+        <div class="mb-3">
+            <label class="form-label">Category</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-list"></i></span>
-                </div>
-                <select class="form-control select2" name="category">
-                    <option value="">- All Categories -</option>
-                    <?php
-                    $sql_category_filter = mysqli_query($mysqli, "SELECT category_id, category_name FROM categories WHERE category_type = 'Income' ORDER BY category_name ASC");
-                    while ($row = mysqli_fetch_assoc($sql_category_filter)) {
-                        $filter_option_id = intval($row['category_id']);
-                        $filter_option_name = escapeHtml($row['category_name']);
-                    ?>
-                        <option <?php if ($category_filter == $filter_option_id) { echo "selected"; } ?> value="<?= $filter_option_id ?>"><?= $filter_option_name ?></option>
-                    <?php
-                    }
-                    ?>
+                    <span class="input-group-text"><i class="fas fa-fw fa-list"></i></span>
+                <select class="form-select select2" name="category">
+                    <option value="">- Any category -</option>
+                    <?= categoryFilterOptionsHtml('Income', $category_filter, "SELECT DISTINCT invoice_category_id FROM invoices") ?>
                 </select>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Issued From</label>
+        <div class="mb-3">
+            <label class="form-label">Issued from</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
                 <input type="date" class="form-control" name="dtf" value="<?= $date_from_filter ?>" max="2999-12-31">
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Issued To</label>
+        <div class="mb-3">
+            <label class="form-label">Issued to</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-calendar"></i></span>
-                </div>
+                    <span class="input-group-text"><i class="fas fa-fw fa-calendar"></i></span>
                 <input type="date" class="form-control" name="dtt" value="<?= $date_to_filter ?>" max="2999-12-31">
             </div>
         </div>

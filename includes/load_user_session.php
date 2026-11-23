@@ -1,20 +1,25 @@
 <?php
 
 $session_ip = escapeSql(getIP());
-$session_user_agent = escapeSql($_SERVER['HTTP_USER_AGENT']);
+$session_user_agent = escapeSql($_SERVER['HTTP_USER_AGENT'] ?? '');
 $session_user_id = intval($_SESSION['user_id']);
 
 $sql = mysqli_query(
     $mysqli,
-    "SELECT role_is_admin, role_name, user_archived_at, user_avatar, user_config_force_mfa,
-        user_config_records_per_page, user_config_theme_dark, user_email, user_name, user_role_id,
-        user_status, user_token, user_type FROM users
+    "SELECT role_is_admin, role_name, user_archived_at, user_avatar, user_config_force_mfa," . (serviceAccountsReady() ? ' user_service_account,' : '') . "
+        user_config_records_per_page, user_config_theme_dark," . (compactRowsReady() ? ' user_config_compact_rows,' : '') . " user_email, user_name, user_role_id,
+        user_password, user_status, user_token, user_type FROM users
      LEFT JOIN user_settings ON users.user_id = user_settings.user_id
      LEFT JOIN user_roles ON user_role_id = role_id
      WHERE users.user_id = $session_user_id"
 );
 
 $row = mysqli_fetch_assoc($sql);
+
+$session_stamp_current = userSessionStamp($row['user_password'] ?? '');
+if ($row) {
+    unset($row['user_password']);
+}
 
 $session_name = escapeSql($row['user_name']);
 $session_email = $row['user_email'];
@@ -27,8 +32,9 @@ $session_user_role = intval($row['user_role_id']);
 $session_user_role_display = escapeSql($row['role_name']);
 $session_is_admin = isset($row['role_is_admin']) && $row['role_is_admin'] == 1;
 $session_user_config_force_mfa = intval($row['user_config_force_mfa']);
-$user_config_records_per_page = intval($row['user_config_records_per_page']);
+$user_config_records_per_page = max(1, intval($row['user_config_records_per_page']));
 $user_config_theme_dark = intval($row['user_config_theme_dark']);
+$user_config_compact_rows = intval($row['user_config_compact_rows'] ?? 0);
 
 // Check user type is agent aka 1
 if ($session_user_type !== 1) {
@@ -51,6 +57,32 @@ if ($session_user_archived_at !== null) {
     redirect("/login.php");
 }
 
+// An API / service account is only for API keys to act as - it doesn't sign in (functions/service_account.php)
+if (!empty($row['user_service_account'])) {
+    session_unset();
+    session_destroy();
+    redirect("/login.php");
+}
+
+// Check the password hasn't changed since this session signed in - by them elsewhere,
+// an admin, or the incident-response reset (userSessionStamp())
+if (!hash_equals($session_stamp_current, (string) ($_SESSION['user_session_stamp'] ?? ''))) {
+    session_unset();
+    session_destroy();
+    redirect("/login.php");
+}
+
+// MFA required on this account and not set up yet: setting it up, or signing out, is all
+// this session may do - every other page, modal, AJAX call and POST goes back to the set
+// up page. Signing in only sends them there; this is what keeps them there, including when
+// an admin requires MFA, or resets it, on an agent who is already signed in.
+if ($session_user_config_force_mfa === 1 && trim((string) $session_token) === '' && !requestIsMfaSetup([
+    'agent/user/mfa_enforcement.php' => [[[], []]],
+    'agent/user/post.php' => [[[], ['csrf_token', 'enable_mfa', 'verify_code']], [['logout'], []]],
+])) {
+    redirect("/agent/user/mfa_enforcement.php");
+}
+
 // Load user client permissions (allow + deny lists)
 $user_client_access_sql = "SELECT client_id, permission_type FROM user_client_permissions WHERE user_id = $session_user_id";
 $user_client_access_result = mysqli_query($mysqli, $user_client_access_sql);
@@ -59,8 +91,8 @@ $client_access_array = []; // allow
 $client_deny_array = [];   // deny
 while ($row = mysqli_fetch_assoc($user_client_access_result)) {
     if ($row['permission_type'] === 'deny') {
-        $client_deny_array[] = (int) $row['client_id'];
+        $client_deny_array[] = intval($row['client_id']);
     } else {
-        $client_access_array[] = (int) $row['client_id'];
+        $client_access_array[] = intval($row['client_id']);
     }
 }

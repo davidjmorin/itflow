@@ -11,7 +11,6 @@ require_once "../config.php";
 // Set Timezone
 require_once "../includes/inc_set_timezone.php";
 require_once "../functions.php";
-require_once "../libs/totp/totp.php";
 
 
 /*
@@ -36,11 +35,11 @@ if (isset($_GET['stripe_create_pi'])) {
         LEFT JOIN clients ON invoice_client_id = client_id
         WHERE invoice_id = $invoice_id
         AND invoice_url_key = '$url_key'
-        AND invoice_status NOT IN ('Draft','Paid','Cancelled')
+        AND invoice_status NOT IN ('Draft','Paid','Cancelled','Non-Billable')
         LIMIT 1"
     );
     if (!$invoice_sql || mysqli_num_rows($invoice_sql) !== 1) {
-        exit("Invalid Invoice ID/SQL query");
+        exit(json_encode(['error' => 'This invoice is paid, or no longer open for payment']));
     }
 
     $row = mysqli_fetch_assoc($invoice_sql);
@@ -59,36 +58,72 @@ if (isset($_GET['stripe_create_pi'])) {
 
     $balance_to_pay = round($balance_to_pay, 2);
 
-    if (intval($balance_to_pay) == 0) {
-        exit("No balance outstanding");
+    // In whole cents - a balance under 1.00 can still be paid, and nothing owed (or overpaid) can't
+    if (intval(round($balance_to_pay * 100)) <= 0) {
+        exit(json_encode(['error' => 'Nothing is owed on this invoice']));
     }
 
     // Setup Stripe from payment_providers
-    $stripe_provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_private_key FROM payment_providers WHERE payment_provider_name = 'Stripe' LIMIT 1"));
+    $stripe_provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_private_key FROM payment_providers WHERE payment_provider_name = 'Stripe' AND payment_provider_active = 1 LIMIT 1"));
     if (!$stripe_provider) {
-        exit("Stripe not enabled / configured");
+        exit(json_encode(['error' => 'Paying online is not available just now']));
     }
+    // Under Stripe's limit (Admin > Payment Providers), as the invoice's Pay button
+    if (!billingOnlinePayAllowed($invoice_amount)) {
+        exit(json_encode(['error' => 'This invoice is over the limit for paying online - please get in touch to pay it another way']));
+    }
+    $stripe_provider_id = intval($stripe_provider['payment_provider_id']);
     $stripe_secret_key = $stripe_provider['payment_provider_private_key'];
 
     require_once '../includes/stripe_init.php';
 
-    $pi_description = "ITFlow: $client_name payment of $invoice_currency_code $balance_to_pay for $invoice_prefix$invoice_number";
+    // Get client's Stripe customer ID
+    $stripe_customer_query = mysqli_query($mysqli, "
+        SELECT payment_provider_client FROM client_payment_provider
+        WHERE client_id = $client_id AND payment_provider_id = $stripe_provider_id
+        LIMIT 1
+    ");
+    $stripe_customer = mysqli_fetch_assoc($stripe_customer_query);
+    $stripe_customer_id = $stripe_customer ? escapeSql($stripe_customer['payment_provider_client']) : null;
+
+    // The card fee, when the client pays it - as guest_pay_invoice_stripe.php showed it, and booked from itflow_fees on the way back
+    $balance_cents = intval(round($balance_to_pay * 100));
+    $fee_cents = billingCardFeeCents($balance_cents, billingCardFeeFor($client_id));
+    $pi_metadata = [
+        'itflow_client_id' => $client_id,
+        'itflow_client_name' => $client_name,
+        'itflow_invoice_number' => $invoice_prefix . $invoice_number,
+        'itflow_invoice_id' => $invoice_id,
+    ];
+    if ($fee_cents > 0) {
+        $pi_metadata['itflow_fees'] = "$invoice_id:$fee_cents";
+    }
+
+    $pi_description = "ITFlow: $client_name payment of $invoice_currency_code " . number_format(($balance_cents + $fee_cents) / 100, 2, '.', '')
+        . ($fee_cents > 0 ? ' (with a ' . number_format($fee_cents / 100, 2, '.', '') . ' card fee)' : '') . " for $invoice_prefix$invoice_number";
 
     try {
         \Stripe\Stripe::setApiKey($stripe_secret_key);
 
-        $paymentIntent = \Stripe\PaymentIntent::create([
-            'amount' => intval($balance_to_pay * 100), // Stripe expects cents
+        $pi_params = [
+            'amount' => $balance_cents + $fee_cents, // Stripe expects cents
             'currency' => $invoice_currency_code,
             'description' => $pi_description,
-            'metadata' => [
-                'itflow_client_id' => $client_id,
-                'itflow_client_name' => $client_name,
-                'itflow_invoice_number' => $invoice_prefix . $invoice_number,
-                'itflow_invoice_id' => $invoice_id,
-            ],
+            'metadata' => $pi_metadata,
             'payment_method_types' => ['card'],
-        ]);
+            'customer' => $stripe_customer_id,
+        ];
+        try {
+            $paymentIntent = \Stripe\PaymentIntent::create($pi_params);
+        } catch (\Stripe\Exception\InvalidRequestException $e) {
+            // A customer Stripe no longer has - forgotten (next time they are set up again), and this payment goes ahead without one
+            if (!$stripe_customer_id || !billingStripeCustomerGone($e)) {
+                throw $e;
+            }
+            billingStripeCustomerForget($client_id, $stripe_customer_id);
+            unset($pi_params['customer']);
+            $paymentIntent = \Stripe\PaymentIntent::create($pi_params);
+        }
 
         $output = [
             'clientSecret' => $paymentIntent->client_secret,
@@ -104,105 +139,3 @@ if (isset($_GET['stripe_create_pi'])) {
 
     exit;
 }
-
-/*
- * Returns the current TOTP code for a shared credential
- * Authenticated via the share ID + key, same as guest_view_item.php
- */
-if (isset($_GET['get_share_totp_token'])) {
-
-    header('Content-Type: application/json');
-
-    $item_id = intval($_GET['id']);
-    $item_key = escapeSql($_GET['key']);
-
-    // Deliberately no item_view_limit check here - the page view already consumed a view,
-    //  and blocking token refreshes would break rotation for limit-1 shares.
-    //  Active + expiry checks still apply, so revoking the share stops codes immediately.
-    $sql = mysqli_query($mysqli, "SELECT item_related_id, item_client_id FROM shared_items WHERE item_id = $item_id AND item_key = '$item_key' AND item_type = 'Credential' AND item_active = 1 AND item_expire_at > NOW() LIMIT 1");
-
-    if (!$sql || mysqli_num_rows($sql) !== 1) {
-        exit(json_encode(['error' => 'invalid']));
-    }
-
-    $row = mysqli_fetch_assoc($sql);
-    $credential_id = intval($row['item_related_id']);
-    $client_id = intval($row['item_client_id']);
-
-    $credential_sql = mysqli_query($mysqli, "SELECT credential_otp_secret FROM credentials WHERE credential_id = $credential_id AND credential_client_id = $client_id LIMIT 1");
-
-    if (!$credential_sql || mysqli_num_rows($credential_sql) !== 1) {
-        exit(json_encode(['error' => 'invalid']));
-    }
-
-    $totp_secret = mysqli_fetch_assoc($credential_sql)['credential_otp_secret'];
-
-    if (empty($totp_secret)) {
-        exit(json_encode(['error' => 'invalid']));
-    }
-
-    echo json_encode([
-        'token' => TokenAuth6238::getTokenCode(strtoupper($totp_secret)),
-        'expires_in' => 30 - (time() % 30)
-    ]);
-    exit;
-}
-
-if (isset($_GET['check_guest_company'])) {
-    header('Content-Type: application/json');
-
-    $email = trim($_GET['email'] ?? '');
-    $company = trim($_GET['company'] ?? '');
-
-    $matched = false;
-    $client_name = '';
-    $match_type = '';
-
-    if (!empty($email) && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $email_esc = mysqli_real_escape_string($mysqli, $email);
-        
-        $contact_sql = mysqli_query($mysqli, "SELECT clients.client_id, clients.client_name FROM contacts LEFT JOIN clients ON contacts.contact_client_id = clients.client_id WHERE contacts.contact_email = '$email_esc' AND contacts.contact_archived_at IS NULL AND clients.client_archived_at IS NULL LIMIT 1");
-        if ($contact_sql && mysqli_num_rows($contact_sql) === 1) {
-            $row = mysqli_fetch_assoc($contact_sql);
-            $matched = true;
-            $client_name = $row['client_name'];
-            $match_type = 'contact';
-        }
-
-        if (!$matched) {
-            $domain_parts = explode('@', $email);
-            $domain = end($domain_parts);
-            $domain_esc = mysqli_real_escape_string($mysqli, $domain);
-
-            $public_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'mail.com', 'zoho.com', 'proton.me', 'protonmail.com'];
-            if (!in_array(strtolower($domain), $public_providers)) {
-                $domain_sql = mysqli_query($mysqli, "SELECT clients.client_id, clients.client_name FROM domains LEFT JOIN clients ON domains.domain_client_id = clients.client_id WHERE domains.domain_name = '$domain_esc' AND domains.domain_archived_at IS NULL AND clients.client_archived_at IS NULL LIMIT 1");
-                if ($domain_sql && mysqli_num_rows($domain_sql) === 1) {
-                    $row = mysqli_fetch_assoc($domain_sql);
-                    $matched = true;
-                    $client_name = $row['client_name'];
-                    $match_type = 'domain';
-                }
-            }
-        }
-    }
-
-    if (!$matched && !empty($company) && strlen($company) >= 2) {
-        $company_esc = mysqli_real_escape_string($mysqli, $company);
-        $client_sql = mysqli_query($mysqli, "SELECT client_id, client_name FROM clients WHERE client_name LIKE '%$company_esc%' AND client_archived_at IS NULL LIMIT 1");
-        if ($client_sql && mysqli_num_rows($client_sql) === 1) {
-            $row = mysqli_fetch_assoc($client_sql);
-            $matched = true;
-            $client_name = $row['client_name'];
-            $match_type = 'name';
-        }
-    }
-
-    echo json_encode([
-        'matched' => $matched,
-        'client_name' => $client_name,
-        'match_type' => $match_type
-    ]);
-    exit;
-}
-

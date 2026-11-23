@@ -18,10 +18,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class='fa fa-fw fa-sticky-note mr-2'></i>Creating note: <strong><?= $asset_name ?></strong></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class='fas fa-fw fa-sticky-note me-2'></i>New Note <span class="fw-normal text-white-50 ms-1"><?= $asset_name ?></span></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -30,38 +28,26 @@ ob_start();
 
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Type</label>
+        <div class="mb-3">
+            <label class="form-label">Type</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-comment"></i></span>
-                </div>
-                <select class="form-control select2" name="type">
-                    <?php
-                    $sql_asset_note_types_select = mysqli_query($mysqli, "
-                        SELECT category_name FROM categories
-                        WHERE category_type = 'asset_note_type'
-                        AND category_archived_at IS NULL
-                        ORDER BY category_order ASC, category_name ASC
-                    ");
-                    while ($row = mysqli_fetch_assoc($sql_asset_note_types_select)) {
-                        $asset_note_type_select = escapeHtml($row['category_name']);
-                        ?>
-                        <option><?= $asset_note_type_select ?></option>
-                    <?php } ?>
+                    <span class="input-group-text"><i class="fas fa-fw fa-comment"></i></span>
+                <select class="form-select select2" name="type">
+                    <?= categoryOptionsHtml('asset_note_type') ?>
                 </select>
+                <?= categoryAddButtonHtml('asset_note_type') ?>
             </div>
         </div>
 
-        <div class="form-group">
+        <div class="mb-3">
             <textarea class="form-control" rows="6" name="note" placeholder="Notes, eg what was done, parts replaced, config changed, etc"></textarea>
         </div>
 
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="add_asset_note" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Create</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="add_asset_note" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Create</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

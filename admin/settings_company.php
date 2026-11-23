@@ -1,173 +1,104 @@
 <?php
+
+/*
+ * Admin > Settings > Company details - your company as it shows on invoices,
+ * quotes and emails: its name and tax ID, address, phone (with its country
+ * code, following the country picked), email, website and logo, and the
+ * client record that stands for it. Saved by edit_company; the logo is taken
+ * off by remove_company_logo (admin/post/settings_company.php). Its Offices
+ * section lists the other places you work from (functions/offices.php), each
+ * changed in its own window.
+ */
+
 require_once "includes/inc_all_admin.php";
 
+$company = settingsCurrent(['company_name', 'company_tax_id', 'company_address', 'company_city', 'company_state', 'company_zip', 'company_country',
+    'company_phone_country_code', 'company_phone', 'company_email', 'company_website', 'company_logo'], 'companies');
+$localization = settingsLocalizationArrays();
 
-$sql = mysqli_query($mysqli,"SELECT company_address, company_city, company_country, company_currency, company_email,
-    settings.company_id, company_locale, company_logo, company_name, company_phone,
-    company_phone_country_code, company_state, company_tax_id, company_website, company_zip FROM companies, settings WHERE companies.company_id = settings.company_id AND companies.company_id = 1");
+$countries = ['' => '- Country -'];
+foreach ($localization['countries'] as $country_name) {
+    $countries[$country_name] = [$country_name, ' data-iso2="' . escapeHtml($localization['country_iso2'][$country_name] ?? '') . '"'];
+}
 
-$row = mysqli_fetch_assoc($sql);
-$company_id = intval($row['company_id']);
-$company_name = escapeHtml($row['company_name']);
-$company_country = escapeHtml($row['company_country']);
-$company_address = escapeHtml($row['company_address']);
-$company_city = escapeHtml($row['company_city']);
-$company_state = escapeHtml($row['company_state']);
-$company_zip = escapeHtml($row['company_zip']);
-$company_phone_country_code = formatPhoneNumber($row['company_phone_country_code']);
-$company_phone = escapeHtml(formatPhoneNumber($row['company_phone'], $company_phone_country_code));
-$company_email = escapeHtml($row['company_email']);
-$company_website = escapeHtml($row['company_website']);
-$company_logo = escapeHtml($row['company_logo']);
-$company_locale = escapeHtml($row['company_locale']);
-$company_currency = escapeHtml($row['company_currency']);
-$company_tax_id = escapeHtml($row['company_tax_id']);
+$internal_clients = [0 => 'None'];
+$sql_internal_clients = mysqli_query($mysqli, "SELECT client_id, client_name, client_abbreviation FROM clients WHERE client_archived_at IS NULL OR client_id = " . intval($config_internal_client_id) . " ORDER BY client_name ASC");
+while ($row = mysqli_fetch_assoc($sql_internal_clients)) {
+    $internal_clients[intval($row['client_id'])] = [$row['client_name'], selectOptionClient($row['client_id'], $row['client_name'], $row['client_abbreviation'] ?? '')];
+}
 
-$company_initials = escapeHtml(initials($company_name));
+$logo = (string) ($company['company_logo'] ?? '');
+$logo_url = $logo !== '' && basename($logo) === $logo && is_file(dirname(__DIR__) . "/uploads/settings/$logo") ? "/uploads/settings/" . rawurlencode($logo) : '';
+
+// The phone, as it is shown - its number formatted for its country, its code apart
+$phone_code = (string) settingsValue('company_phone_country_code', $company['company_phone_country_code']);
+$phone = (string) settingsValue('company_phone', formatPhoneNumber((string) $company['company_phone'], $phone_code, false));
+
+echo settingsPageStart('company');
 
 ?>
 
-    <div class="card card-dark">
-        <div class="card-header">
-            <h3 class="card-title"><i class="fas fa-fw fa-briefcase mr-2"></i>Company Details</h3>
-        </div>
+<form action="post.php" method="post" enctype="multipart/form-data" autocomplete="off" data-settings-form>
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="card itflow-settings-card">
         <div class="card-body">
-            <form action="post.php" method="post" enctype="multipart/form-data" autocomplete="off">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
-                    <div class="row">
-                        <div class="col-md-3 text-center">
-                            <?php if ($company_logo) { ?>
-                                <img class="img-thumbnail" src="<?= "../uploads/settings/$company_logo" ?>">
-                                <a href="post.php?remove_company_logo&csrf_token=<?= $_SESSION['csrf_token'] ?>" class="btn btn-outline-danger btn-block">Remove Logo</a>
-                                <hr>
-                            <?php } ?>
-                            <div class="form-group">
-                                <label>Upload company logo</label>
-                                <input type="file" class="form-control-file" name="file" accept=".jpg, .jpeg, .png">
-                            </div>
-                        </div>
+            <?= settingsSectionStart('company', 'Your company', 'As it is named on invoices, quotes and the emails ITFlow sends.') ?>
+                <?= settingsInput('company_name', $company['company_name'], ['icon' => 'fa-building', 'required' => true, 'maxlength' => 200, 'placeholder' => 'Company name', 'autocomplete' => 'organization']) ?>
+                <?= settingsInput('company_tax_id', $company['company_tax_id'], ['icon' => 'fa-balance-scale', 'maxlength' => 200, 'placeholder' => 'Tax ID',
+                    'help' => 'Shown on invoices when Invoices and Billing says so.']) ?>
+            <?= settingsSectionEnd() ?>
 
-                        <div class="col-md-9">
-                            <div class="form-group">
-                                <label>Name <strong class="text-danger">*</strong></label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-building"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="name" placeholder="Company Name" maxlength="200" value="<?= $company_name ?>" required>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Address</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-map-marker-alt"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="address" placeholder="Street Address" maxlength="200" value="<?= $company_address ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>City</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-city"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="city" placeholder="City" maxlength="200" value="<?= $company_city ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>State / Province</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-flag"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="state" placeholder="State or Province" maxlength="200" value="<?= $company_state ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Postal Code</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fab fa-fw fa-usps"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="zip" placeholder="Zip or Postal Code" maxlength="200" value="<?= $company_zip ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Country</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-globe-americas"></i></span>
-                                    </div>
-                                    <select class="form-control select2" name="country">
-                                        <option value="">- Country -</option>
-                                        <?php foreach($countries_array as $country_name) { ?>
-                                            <option <?php if ($company_country == $country_name) { echo "selected"; } ?>><?= $country_name ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <label>Phone</label>
-                            <div class="form-row">
-                                <div class="col-md-9">
-                                    <div class="form-group">
-                                        <div class="input-group">
-                                            <div class="input-group-prepend">
-                                                <span class="input-group-text"><i class="fa fa-fw fa-phone"></i></span>
-                                            </div>
-                                            <input type="tel" class="form-control col-2" name="phone_country_code" value="<?= $company_phone_country_code ?>" placeholder="+" maxlength="4">
-                                            <input type="tel" class="form-control" name="phone" value="<?= $company_phone ?>" placeholder="Phone Number" maxlength="200">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Email</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-envelope"></i></span>
-                                    </div>
-                                    <input type="email" class="form-control" name="email" placeholder="Email address" maxlength="200" value="<?= $company_email ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Website</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-globe"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="website" placeholder="Website address" maxlength="200" value="<?= $company_website ?>">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Tax ID</label>
-                                <div class="input-group">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text"><i class="fa fa-fw fa-balance-scale"></i></span>
-                                    </div>
-                                    <input type="text" class="form-control" name="tax_id" value="<?= $company_tax_id ?>" placeholder="Tax ID" maxlength="200">
-                                </div>
-                            </div>
-
-                            <hr>
-
-                            <button type="submit" name="edit_company" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Save</button>
-                        </div>
-                    </div>
+            <?= settingsSectionStart('address', 'Address', 'Where your company is - on invoices, and the country phone numbers start from.') ?>
+                <?= settingsInput('company_address', $company['company_address'], ['icon' => 'fa-map-marker-alt', 'maxlength' => 200, 'placeholder' => 'Street address', 'autocomplete' => 'street-address']) ?>
+                <div class="row g-3 mt-0">
+                    <div class="col-md-5"><?= settingsInput('company_city', $company['company_city'], ['icon' => 'fa-city', 'maxlength' => 200, 'placeholder' => 'City', 'autocomplete' => 'address-level2']) ?></div>
+                    <div class="col-md-4"><?= settingsInput('company_state', $company['company_state'], ['icon' => 'fa-flag', 'maxlength' => 200, 'placeholder' => 'State or province', 'autocomplete' => 'address-level1']) ?></div>
+                    <div class="col-md-3"><?= settingsInput('company_zip', $company['company_zip'], ['icon' => 'fa-mail-bulk', 'maxlength' => 200, 'placeholder' => 'Postal code', 'autocomplete' => 'postal-code']) ?></div>
                 </div>
-            </form>
+                <div class="mt-3">
+                    <?= settingsSelect('company_country', (string) $company['company_country'], $countries, ['icon' => 'fa-globe-americas', 'search' => true]) ?>
+                </div>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSectionStart('contact', 'Contact', 'How clients reach you - on invoices and quotes, and in the client portal.') ?>
+                <?php
+                $phone_control = '<div class="input-group">'
+                    . '<span class="input-group-text"><i class="fas fa-fw fa-phone"></i></span>'
+                    . '<input type="hidden" name="company_phone_country_code" value="' . escapeHtml($phone_code) . '">'
+                    . '<input type="tel" class="form-control" id="settings_company_phone" name="company_phone" value="' . escapeHtml($phone) . '" placeholder="Phone number" maxlength="200" autocomplete="tel-national" data-itflow-phone="company_phone_country_code" data-itflow-phone-country-select="company_country">'
+                    . '</div>';
+                echo settingsField('company_phone', 'Phone', $phone_control, 'Its country code follows the country above until you pick another.');
+                ?>
+                <?= settingsInput('company_email', $company['company_email'], ['icon' => 'fa-envelope', 'type' => 'email', 'maxlength' => 200, 'placeholder' => 'info@company.com', 'autocomplete' => 'email']) ?>
+                <?= settingsInput('company_website', $company['company_website'], ['icon' => 'fa-globe', 'maxlength' => 200, 'placeholder' => 'company.com', 'autocomplete' => 'url',
+                    'help' => 'Kept without its https://.']) ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= officesSection() ?>
+
+            <?= settingsSectionStart('logo', 'Logo', 'On invoices, quotes and statements, the sign-in page, the sidebar and the client portal.') ?>
+                <?php
+                // Picked and cropped - trimmed of empty edges - in the Picture window (js/picture_field.js)
+                $logo_shows = $logo_url !== '' ? '<img class="itflow-picture-logo" src="' . escapeHtml($logo_url) . '" alt="Your logo">' : picturePhotoEmpty('Add your logo', 'fa-image');
+                echo settingsField('company_logo', '', pictureField('company_logo', '', $logo_shows, picturePhotoEmpty('Add your logo', 'fa-image'),
+                    ['title' => 'Logo', 'shapes' => 'free', 'box' => 'logo', 'max' => 1200, 'trim' => true, 'accept' => 'image/png,image/jpeg', 'class' => 'itflow-picture-logo', 'id' => 'settings_company_logo']),
+                    'Click it to ' . ($logo_url !== '' ? 'change it' : 'add one') . ' - a PNG or JPG. A wide one prints best, and a PNG keeps a see-through background.');
+                ?>
+                <?php if ($logo_url !== '') { ?>
+                    <a href="post.php?remove_company_logo&csrf_token=<?= $_SESSION['csrf_token'] ?>" class="btn btn-sm btn-outline-danger mt-2 confirm-link" data-settings-remove-logo><i class="fas fa-trash me-2"></i>Take the Logo Off</a>
+                <?php } ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSectionStart('internal', 'Your own client record', 'If you keep a client record for your own company - for internal tickets, documentation, assets and credentials - point it out here. Your company name in the sidebar then links straight to it.') ?>
+                <?= settingsSelect('config_internal_client_id', intval($config_internal_client_id), $internal_clients, ['icon' => 'fa-house-user', 'search' => true]) ?>
+            <?= settingsSectionEnd() ?>
+
+            <?= settingsSaveBar('edit_company') ?>
         </div>
     </div>
+</form>
 
 <?php
 require_once "../includes/footer.php";

@@ -1,19 +1,31 @@
 <!-- Main Sidebar Container -->
-<aside class="main-sidebar sidebar-dark-<?= escapeHtml($config_theme) ?> d-print-none">
-    <a class="brand-link pb-1 mt-1" href="/agent/<?= $config_start_page ?>">
-        <p class="h6">
-            <i class="nav-icon fas fa-arrow-left ml-3 mr-2"></i>
-            <span class="brand-text">
-                Back | <strong>Administration</strong>
-            </span>
-        </p>
-    </a>
+<aside class="app-sidebar shadow d-print-none" data-bs-theme="dark">
+    <div class="sidebar-brand">
+        <a class="brand-link" href="/agent/<?= escapeHtml($config_start_page) ?>">
+            <i class="fas fa-arrow-left me-2"></i>
+            <span class="brand-text h6 mb-0">Back | <strong>Administration</strong></span>
+        </a>
+    </div>
 
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar-wrapper">
         <!-- Sidebar Menu -->
         <nav>
-            <ul class="nav nav-pills nav-sidebar flex-column mt-2" data-widget="treeview" data-accordion="false">
+            <ul class="nav nav-pills sidebar-menu flex-column mt-2" data-lte-toggle="treeview" data-accordion="false">
+                <?php if (gettingStartedReady()) {
+                    $nav_getting_started = gettingStartedProgress(); ?>
+                    <li class="nav-item">
+                        <a href="/admin/getting_started.php" class="nav-link" data-nav-getting-started>
+                            <i class="nav-icon fas fa-flag-checkered"></i>
+                            <p>
+                                Get Started
+                                <?php if (!$nav_getting_started['finished']) { ?>
+                                    <span class="right badge rounded-pill text-light" title="Steps done or skipped"><?= number_format(intval($nav_getting_started['done'])) ?>/<?= $nav_getting_started['total'] ?></span>
+                                <?php } ?>
+                            </p>
+                        </a>
+                    </li>
+                <?php } ?>
                 <li class="nav-header">ACCESS</li>
                 <li class="nav-item">
                     <a href="/admin/users.php" class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == "users.php") {echo "active";} ?>">
@@ -42,7 +54,7 @@
                     </a>
                 </li>
 
-                <li class="nav-header">LISTS</li>
+                <li class="nav-header">LISTS & TEMPLATES</li>
                 <li class="nav-item">
                     <a href="/admin/tags.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'tags.php' ? 'active' : '') ?>">
                         <i class="nav-icon fas fa-tags"></i>
@@ -55,17 +67,31 @@
                         <p>Categories</p>
                     </a>
                 </li>
+                <?php if ($config_module_enable_itdoc) { ?>
+                    <li class="nav-item">
+                        <a href="/admin/asset_types.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'asset_types.php' ? 'active' : '') ?>">
+                            <i class="nav-icon fas fa-layer-group"></i>
+                            <p>Asset Types</p>
+                        </a>
+                    </li>
+                <?php } ?>
                 <?php if ($config_module_enable_accounting) { ?>
                     <li class="nav-item">
                         <a href="/admin/tax_rates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'tax_rates.php' ? 'active' : '') ?>">
                             <i class="nav-icon fas fa-balance-scale"></i>
-                            <p>Tax Rates</p>
+                            <p>Taxes</p>
                         </a>
                     </li>
                     <li class="nav-item">
                         <a href="/admin/payment_methods.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'payment_methods.php' ? 'active' : '') ?>">
                             <i class="nav-icon fas fa-hand-holding-usd"></i>
                             <p>Payment Methods</p>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/labor_costs.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'labor_costs.php' ? 'active' : '') ?>">
+                            <i class="nav-icon fas fa-user-tag"></i>
+                            <p>Labor Costs</p>
                         </a>
                     </li>
                 <?php } ?>
@@ -91,6 +117,14 @@
                         </a>
                     </li>
                 <?php } ?>
+                <li class="nav-item">
+                    <a href="/admin/agent_banners.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'agent_banners.php' ? 'active' : '') ?>">
+                        <i class="nav-icon fas fa-bullhorn"></i>
+                        <p>Agent Banners</p>
+                    </a>
+                </li>
+                <?php // Every kind of template, and canned responses, as tabs (adminNavGroups()) ?>
+                <?= adminNavGroupItemHtml('templates') ?>
 
 
                 <li class="nav-header">INTEGRATIONS</li>
@@ -105,9 +139,35 @@
                 <?php } ?>
                 <li class="nav-item">
                     <a href="/admin/ai_providers.php"
-                    class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['ai_providers.php', 'ai_models.php']) ? 'active' : '') ?>">
+                    class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['ai_providers.php', 'ai_models.php', 'ai_usage.php']) ? 'active' : '') ?>">
                         <i class="nav-icon fas fa-robot"></i>
                         <p>AI Providers</p>
+                    </a>
+                </li>
+                <?php // Its setup, and the texts sent and received once it's set up (adminNavGroups()) ?>
+                <?= adminNavGroupItemHtml('text') ?>
+                <?php // A provider's clients page is its family's - a network platform's sites are under Network Platforms
+                $nav_rmm_page = basename($_SERVER['PHP_SELF']);
+                $nav_rmm_family = $nav_rmm_page === 'rmm_clients.php' && function_exists('rmmFamily') ? rmmFamily(rmmProviderRow($_GET['provider_id'] ?? 0) ?? '') : ''; ?>
+                <li class="nav-item">
+                    <a href="/admin/rmm_providers.php"
+                    class="nav-link <?= ($nav_rmm_page === 'rmm_providers.php' || ($nav_rmm_page === 'rmm_clients.php' && $nav_rmm_family !== 'network') ? 'active' : '') ?>">
+                        <i class="nav-icon fas fa-laptop-medical"></i>
+                        <p>RMM Providers</p>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/admin/network_platforms.php"
+                    class="nav-link <?= ($nav_rmm_page === 'network_platforms.php' || ($nav_rmm_page === 'rmm_clients.php' && $nav_rmm_family === 'network') ? 'active' : '') ?>">
+                        <i class="nav-icon fas fa-network-wired"></i>
+                        <p>Network Platforms</p>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/admin/phone_systems.php"
+                    class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['phone_systems.php', 'phone_domains.php']) ? 'active' : '') ?>">
+                        <i class="nav-icon fas fa-phone-volume"></i>
+                        <p>Phone Systems</p>
                     </a>
                 </li>
                 <li class="nav-item">
@@ -117,49 +177,30 @@
                     </a>
                 </li>
 
-                <?php if ($config_module_enable_itdoc || $config_module_enable_ticketing) { ?>
-                    <li class="nav-header">TEMPLATES</li>
+                <!-- One ITFlow managing others (functions/managed.php) - each side only when config.php turns it on -->
+                <?php if (managerEnabled() || managedEnabled()) { ?>
+                    <li class="nav-header">MANAGEMENT</li>
                 <?php } ?>
-                <?php if ($config_module_enable_ticketing) { ?>
+
+                <?php if (managerEnabled()) { ?>
                     <li class="nav-item">
-                        <a href="/admin/project_templates.php" class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['project_templates.php', 'project_template.php']) ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-project-diagram"></i>
-                            <p>Project Templates</p>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a href="/admin/ticket_templates.php" class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['ticket_templates.php', 'ticket_template.php']) ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-life-ring"></i>
-                            <p>Ticket Templates</p>
-                        </a>
-                    </li>
-                <?php } ?>
-                <?php if ($config_module_enable_itdoc) { ?>
-                    <li class="nav-item">
-                        <a href="/admin/contract_templates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'contract_templates.php' ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-file-contract"></i>
+                        <a href="/admin/managed_instances.php" class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['managed_instances.php', 'managed_instance.php']) ? 'active' : '') ?>">
+                            <i class="nav-icon fas fa-network-wired"></i>
                             <p>
-                                <span href="#" class="fas fa-plus-circle right ajax-modal" data-modal-url="/admin/modals/contract_template/contract_template_add.php" data-modal-size="lg"></span>
-                                Contract Templates
+                                Managed Instances
+                                <?php $nav_managed_offline = managedOfflineCount(); ?>
+                                <?php if ($nav_managed_offline) { ?>
+                                    <span class="right badge rounded-pill text-bg-danger" title="Not checking in" data-nav-managed-offline><?= number_format(intval($nav_managed_offline)) ?></span>
+                                <?php } ?>
                             </p>
                         </a>
                     </li>
+                <?php } ?>
+                <?php if (managedEnabled()) { ?>
                     <li class="nav-item">
-                        <a href="/admin/vendor_templates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'vendor_templates.php' ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-building"></i>
-                            <p>Vendor Templates</p>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a href="/admin/software_templates.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'software_templates.php' ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-box-open"></i>
-                            <p>License Templates</p>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a href="/admin/document_templates.php" class="nav-link <?= (in_array(basename($_SERVER['PHP_SELF']), ['document_templates.php', 'document_template.php']) ? 'active' : '') ?>">
-                            <i class="nav-icon fas fa-file-alt"></i>
-                            <p>Document Templates</p>
+                        <a href="/admin/managed_by.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'managed_by.php' ? 'active' : '') ?>">
+                            <i class="nav-icon fas fa-handshake"></i>
+                            <p>Managed By</p>
                         </a>
                     </li>
                 <?php } ?>
@@ -175,21 +216,17 @@
                 <li class="nav-item">
                     <a href="/admin/mail_queue.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'mail_queue.php' ? 'active' : '') ?>">
                         <i class="nav-icon fas fa-inbox"></i>
-                        <p>Mail Queue</p>
+                        <p>
+                            Mail Queue
+                            <?php $nav_mail_failed = mailQueueSummary()['failed_week']; ?>
+                            <?php if ($nav_mail_failed) { ?>
+                                <span class="right badge rounded-pill text-bg-danger" title="Failed to send in the last week" data-nav-mail-failed><?= number_format(intval($nav_mail_failed)) ?></span>
+                            <?php } ?>
+                        </p>
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a href="/admin/audit_logs.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'audit_logs.php' ? 'active' : '') ?>">
-                        <i class="nav-icon fas fa-history"></i>
-                        <p>Audit Logs</p>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="/admin/app_logs.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'app_logs.php' ? 'active' : '') ?>">
-                        <i class="nav-icon fas fa-clipboard-list"></i>
-                        <p>App Logs</p>
-                    </a>
-                </li>
+                <?php // Audit logs, sign-ins and app logs, as tabs (adminNavGroups()) ?>
+                <?= adminNavGroupItemHtml('logs') ?>
                 <li class="nav-item">
                     <a href="/admin/backup.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'backup.php' ? 'active' : '') ?>">
                         <i class="nav-icon fas fa-cloud-upload-alt"></i>
@@ -215,8 +252,13 @@
                     </a>
                 </li>
 
-                <!-- SETTINGS Section -->
-                <li class="nav-item has-treeview mt-2 <?= (in_array(basename($_SERVER['PHP_SELF']), ['settings_company.php', 'settings_localization.php', 'settings_theme.php', 'settings_security.php', 'settings_mail.php', 'settings_notification.php', 'settings_smsgate.php', 'settings_default.php', 'settings_invoice.php', 'settings_quote.php', 'settings_online_payment.php', 'settings_online_payment_clients.php', 'settings_project.php', 'settings_ticket.php', 'settings_tbr.php', 'settings_ai.php', 'identity_providers.php', 'settings_telemetry.php', 'settings_module.php', 'client_merge.php']) ? 'menu-open' : '') ?>">
+                <!-- SETTINGS Section - the pages are listed in functions/settings.php, as the overview shows them -->
+                <?php
+                $settings_nav_pages = settingsPages();
+                $settings_nav_current = basename($_SERVER['PHP_SELF']);
+                $settings_nav_open = $settings_nav_current === 'settings.php' || in_array($settings_nav_current, array_merge(array_column($settings_nav_pages, 'url'), ['settings_smsgate.php', 'settings_tbr.php']), true);
+                ?>
+                <li class="nav-item mt-2 <?= $settings_nav_open ? 'menu-open' : '' ?>">
                     <a href="#" class="nav-link">
                         <p>
                             SETTINGS
@@ -225,145 +267,46 @@
                     </a>
                     <ul class="nav nav-treeview">
                         <li class="nav-item">
-                            <a href="/admin/settings_company.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_company.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fa fa-briefcase"></i>
-                                <p>Company Details</p>
+                            <a href="/admin/settings.php" class="nav-link <?= $settings_nav_current === 'settings.php' ? 'active' : '' ?>">
+                                <i class="nav-icon fas fa-sliders-h"></i>
+                                <p>Overview</p>
                             </a>
                         </li>
+                        <?php foreach ($settings_nav_pages as $settings_nav_page) {
+                            if (!settingsPageAvailable($settings_nav_page)) {
+                                continue;
+                            } ?>
+                            <li class="nav-item">
+                                <a href="/admin/<?= escapeHtml($settings_nav_page['url']) ?>" class="nav-link <?= $settings_nav_current === $settings_nav_page['url'] ? 'active' : '' ?>">
+                                    <i class="nav-icon fas <?= escapeHtml($settings_nav_page['icon']) ?>"></i>
+                                    <p><?= escapeHtml($settings_nav_page['title']) ?></p>
+                                </a>
+                            </li>
+                        <?php } ?>
                         <li class="nav-item">
-                            <a href="/admin/settings_localization.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_localization.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fa fa-globe"></i>
-                                <p>Localization</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_theme.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_theme.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fa fa-paint-brush"></i>
-                                <p>Theme</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_security.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_security.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fas fa-shield-alt"></i>
-                                <p>Security</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_mail.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_mail.php' ? 'active' : '') ?>">
-                                <i class="nav-icon far fa-envelope"></i>
-                                <p>Mail</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_notification.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_notification.php' ? 'active' : '') ?>">
-                                <i class="nav-icon far fa-bell"></i>
-                                <p>Notifications</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_smsgate.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_smsgate.php' ? 'active' : '') ?>">
+                            <a href="/admin/settings_smsgate.php" class="nav-link <?= $settings_nav_current === 'settings_smsgate.php' ? 'active' : '' ?>">
                                 <i class="nav-icon fas fa-sms"></i>
                                 <p>SMS Gate</p>
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a href="/admin/settings_default.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_default.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fas fa-cogs"></i>
-                                <p>Defaults</p>
-                            </a>
-                        </li>
-                        <?php if ($config_module_enable_accounting) { ?>
-                            <li class="nav-item">
-                                <a href="/admin/settings_quote.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_quote.php' ? 'active' : '') ?>">
-                                    <i class="nav-icon fas fa-comment-dollar"></i>
-                                    <p>Quote</p>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="/admin/settings_invoice.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_invoice.php' ? 'active' : '') ?>">
-                                    <i class="nav-icon fas fa-file-invoice"></i>
-                                    <p>Invoice</p>
-                                </a>
-                            </li>
-                        <?php } ?>
-                        <?php if ($config_module_enable_ticketing) { ?>
-                            <li class="nav-item">
-                                <a href="/admin/settings_project.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_project.php' ? 'active' : '') ?>">
-                                    <i class="nav-icon fas fa-project-diagram"></i>
-                                    <p>Project</p>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="/admin/settings_ticket.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_ticket.php' ? 'active' : '') ?>">
-                                    <i class="nav-icon fas fa-life-ring"></i>
-                                    <p>Ticket</p>
-                                </a>
-                            </li>
-                        <?php } ?>
-                        <!-- Currently the only integration is the client portal SSO -->
-                        <?php if ($config_client_portal_enable) { ?>
-                            <li class="nav-item">
-                                <a href="/admin/identity_providers.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'identity_providers.php' ? 'active' : '') ?>">
-                                    <i class="nav-icon fas fa-fingerprint"></i>
-                                    <p>Identity Provider</p>
-                                </a>
-                            </li>
-                        <?php } ?>
-                        <li class="nav-item">
-                            <a href="/admin/settings_telemetry.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_telemetry.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fas fa-satellite-dish"></i>
-                                <p>Telemetry</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_module.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_module.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fas fa-cube"></i>
-                                <p>Modules</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/settings_tbr.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'settings_tbr.php' ? 'active' : '') ?>">
+                            <a href="/admin/settings_tbr.php" class="nav-link <?= $settings_nav_current === 'settings_tbr.php' ? 'active' : '' ?>">
                                 <i class="nav-icon fas fa-chart-line"></i>
-                                <p>TBR Management</p>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin/client_merge.php" class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'client_merge.php' ? 'active' : '') ?>">
-                                <i class="nav-icon fas fa-code-branch"></i>
-                                <p>Merge Clients</p>
+                                <p>TBR Settings</p>
                             </a>
                         </li>
                     </ul>
                 </li>
 
                 <?php
-                $sql_custom_links = mysqli_query($mysqli, "SELECT custom_link_icon, custom_link_name, custom_link_new_tab, custom_link_uri FROM custom_links
-                    WHERE custom_link_location = 4 AND custom_link_archived_at IS NULL
-                    ORDER BY custom_link_order ASC, custom_link_name ASC"
-                );
-
-                while ($row = mysqli_fetch_assoc($sql_custom_links)) {
-                    $custom_link_name = escapeHtml($row['custom_link_name']);
-                    $custom_link_uri = escapeUrl($row['custom_link_uri']);
-                    $custom_link_icon = escapeHtml($row['custom_link_icon']);
-                    $custom_link_new_tab = intval($row['custom_link_new_tab']);
-                    if ($custom_link_new_tab == 1) {
-                        $target = "target='_blank' rel='noopener noreferrer'";
-                    } else {
-                        $target = "";
-                    }
-
-                    ?>
-
-                <li class="nav-item">
-                    <a href="<?= $custom_link_uri ?>" <?= $target ?> class="nav-link <?php if (basename($_SERVER["PHP_SELF"]) == basename($custom_link_uri)) { echo "active"; } ?>">
-                        <i class="fas fa-<?= $custom_link_icon ?> nav-icon"></i>
-                        <p><?= $custom_link_name ?></p>
-                        <i class="fas fa-angle-right nav-icon float-right"></i>
-                    </a>
-                </li>
-
-                <?php } ?>
+                // Your own links (Admin > Custom Links), under a heading of their own
+                $custom_links = customLinksFor(4);
+                if ($custom_links) { ?>
+                    <li class="nav-header">LINKS</li>
+                <?php }
+                foreach ($custom_links as $custom_link) {
+                    echo customLinkNavItemHtml($custom_link);
+                } ?>
 
             </ul>
         </nav>

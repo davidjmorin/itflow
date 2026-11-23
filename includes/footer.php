@@ -1,55 +1,141 @@
 <?php
-require_once "inc_confirm_modal.php";
 ?>
 
-<?php
-if (basename(dirname($_SERVER['REQUEST_URI'])) === 'admin') { ?>
-    <p class="text-right font-weight-light"><?= escapeHtml($session_company_name) ?>  <?= APP_VERSION ?> &nbsp; · &nbsp; <a target="_blank" href="https://docs.itflow.org">Docs</a> &nbsp; · &nbsp; <a target="_blank" href="https://forum.itflow.org">Forum</a> &nbsp; · &nbsp; <a target="_blank" href="https://services.itflow.org">Services</a></p>
-    <br>
-<?php } ?>
-<?php
-if (basename(dirname($_SERVER['REQUEST_URI'])) === 'guest') { ?>
-<p class="text-center">
-    <?php
-        echo escapeHtml($session_company_name);
-        echo '<br><small class="text-muted">Powered by ' . escapeHtml($session_company_name) . '</small>';
-    ?>
-</p>
+</div><!-- /.container-fluid -->
+</div> <!-- /.app-content -->
+</main> <!-- /.app-main -->
+
+<?php /* AdminLTE 4's .app-wrapper is a three row grid - header, main, footer -
+         and the footer row is already reserved (grid-template-rows:
+         min-content 1fr min-content). Sitting in that row is what pins this to
+         the bottom: the 1fr main row absorbs the leftover height, so on a short
+         page the bar lands on the bottom edge of the viewport instead of
+         floating directly under the content.
+
+         It has to be a direct child of .app-wrapper - inside .app-main it is
+         just content again. */ ?>
+<?php if (basename(dirname($_SERVER['REQUEST_URI'])) === 'admin') { ?>
+<footer class="app-footer py-2 d-flex align-items-center">
+    <div class="w-100 text-end fw-light">ITFlow <?= APP_VERSION ?> &nbsp; · &nbsp; <a target="_blank" rel="noopener noreferrer" href="https://docs.itflow.org">Docs</a> &nbsp; · &nbsp; <a target="_blank" rel="noopener noreferrer" href="https://forum.itflow.org">Forum</a> &nbsp; · &nbsp; <a target="_blank" rel="noopener noreferrer" href="https://services.itflow.org">Services</a></div>
+</footer>
 <?php } ?>
 
-</div><!-- /.container-fluid -->
-</div> <!-- /.content -->
-</div> <!-- /.content-wrapper -->
-</div> <!-- ./wrapper -->
+<?php /* The guest portal shares this file and the same .app-wrapper grid (its
+         own guest_header.php opens it), so its footer goes in the same row.
+         guest_header.php renders no .app-header and no .app-sidebar, which the
+         grid handles on its own - the sidebar column is `auto` and the header
+         row is min-content, so both collapse to zero and .app-main still takes
+         the 1fr. */ ?>
+<?php if (basename(dirname($_SERVER['REQUEST_URI'])) === 'guest') { ?>
+<footer class="app-footer py-2 text-center">
+    <?php
+        echo escapeHtml($session_company_name);
+        if (!$config_whitelabel_enabled) {
+            echo '<br><small class="text-body-secondary">Powered by ITFlow</small>';
+        }
+    ?>
+</footer>
+<?php } ?>
+
+</div> <!-- /.app-wrapper -->
 
 <!-- Set the browser window title to the clients name -->
 <script>document.title = <?= json_encode("$tab_title - $page_title") ?>;</script>
 
 <!-- REQUIRED SCRIPTS -->
 
-<!-- Bootstrap 4 -->
-<script src="/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+<?php /* The select picker goes FIRST, ahead of Bootstrap itself. Order is
+         load-bearing: until js/itflow_select.js runs, the browser is showing
+         the raw <select> controls it painted while parsing the body, so every
+         byte in front of it is time spent looking at the wrong widget. It
+         needs nothing else on the page, so nothing goes in front of it.
+         includes/header.php preloads it.
+
+         Bootstrap moving down is safe: it has always loaded in the footer, so
+         no markup above this point could ever have used the `bootstrap` global
+         at parse time. Every call site is inside an event handler or waits for
+         DOMContentLoaded - includes/inc_alert_feedback.php says so in its own
+         comment - and all of those still run well after this block. */ ?>
+<script src="<?= staticFileUrl('/js/itflow_select.js') ?>"></script>
+
+<?php /* Browser autofill and password managers kept out of agents' forms - they're about
+         clients, not the agent. Before anything else draws fields; the guest portal keeps them. */ ?>
+<?php if (basename(dirname($_SERVER['REQUEST_URI'])) !== 'guest') { ?>
+<script src="<?= staticFileUrl('/js/autofill_off.js') ?>"></script>
+<?php } ?>
+
+<!-- Bootstrap 5 -->
+<script src="<?= staticFileUrl('/libs/bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/bootstrap_defaults.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/http.js') ?>"></script>
 
 <!-- Custom js-->
-<script src="/libs/moment/moment.min.js"></script>
-<script src="/libs/chart.js/chart.umd.min.js"></script>
-<script src="/libs/tempusdominus-bootstrap-4/js/tempusdominus-bootstrap-4.min.js"></script>
-<script src="/libs/daterangepicker/daterangepicker.js"></script>
-<script src="/libs/select2/js/select2.min.js"></script>
-<script src="/libs/inputmask/jquery.inputmask.min.js"></script>
-<script src="/libs/tinymce/tinymce.min.js" referrerpolicy="origin"></script>
-<script src="/libs/Show-Hide-Passwords-Bootstrap-4/bootstrap-show-password.min.js"></script>
-<script src="/libs/clipboardjs/clipboard.min.js"></script>
-<script src="/js/keepalive.js"></script>
-<script src="/libs/DataTables/datatables.min.js"></script>
-<script src="/libs/intl-tel-input/js/intlTelInput.min.js"></script>
+<script src="<?= staticFileUrl('/libs/chart.js/chart.umd.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/libs/flatpickr/js/flatpickr.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/libs/tinymce/tinymce.min.js') ?>" referrerpolicy="origin"></script>
+<script src="<?= staticFileUrl('/js/tinymce_defaults.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/keepalive.js') ?>"></script>
+<script src="<?= staticFileUrl('/libs/intl-tel-input/js/intlTelInputWithUtils.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/phone_inputs.js') ?>"></script>
 
 <!-- AdminLTE App -->
-<script src="/libs/adminlte/js/adminlte.min.js"></script>
-<script src="/js/app.js"></script>
-<script src="/js/ajax_modal.js"></script>
-<script src="/js/confirm_modal.js"></script>
-<script src="/js/date_filter.js"></script>
+<script src="<?= staticFileUrl('/libs/adminlte/js/adminlte.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/libs/sweetalert2/js/sweetalert2.min.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/autocomplete.js') ?>"></script>
+<?php /* What the editors' Reword button needs - false when AI isn't set up or the role may not use it (aiClientConfig(), functions/ai.php) */ ?>
+<?php
+// A page that closed the database before its footer (admin/debug.php does) gets no Reword, rather than a fatal error
+try {
+    $itflow_ai_config = function_exists('aiClientConfig') ? aiClientConfig() : false;
+} catch (Throwable $e) {
+    $itflow_ai_config = false;
+}
+?>
+<script>window.itflowAi = <?= json_encode($itflow_ai_config) ?>;</script>
+<script src="<?= staticFileUrl('/js/app.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/picture_field.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/credentials.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/tag_picker.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/link_picker.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/tab_fold.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/otp_input.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/quick_pick.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/ajax_modal.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/confirm_modal.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/date_filter.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/list_filters.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/global_search.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/notifications.js') ?>"></script>
+<?php
+// Open tickets in the tab's title, and desktop notifications - for agents who can see tickets (agent/ajax.php ?ticket_pulse)
+try {
+    $itflow_pulse = !empty($session_user_id) && !empty($config_module_enable_ticketing) && basename(dirname($_SERVER['REQUEST_URI'])) !== 'guest'
+        && lookupUserPermission('module_support') >= 1;
+} catch (Throwable $e) {
+    $itflow_pulse = false;
+}
+if ($itflow_pulse) { ?>
+<script src="<?= staticFileUrl('/js/ticket_pulse.js') ?>" data-user="<?= intval($session_user_id) ?>"></script>
+<?php } ?>
+<?php if (!empty($session_user_id) && basename(dirname($_SERVER['REQUEST_URI'])) !== 'guest') { ?>
+<script src="<?= staticFileUrl('/js/client_card.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/quick_add.js') ?>"></script>
+<?php } ?>
+<script src="<?= staticFileUrl('/js/ticket_timers.js') ?>"></script>
+<?php
+// Calls on your desk phone pop up (functions/phone.php) - on agent pages, for agents who have set one
+try {
+    $itflow_phone_pop = !empty($session_user_id) && basename(dirname($_SERVER['SCRIPT_NAME'] ?? '')) === 'agent' && function_exists('phoneLineForUser')
+        && phoneLineForUser(intval($session_user_id)) !== '' && lookupUserPermission('module_support') >= 1;
+} catch (Throwable $e) {
+    $itflow_phone_pop = false;
+}
+if ($itflow_phone_pop) { ?>
+<script src="<?= staticFileUrl('/js/phone_pop.js') ?>" data-user="<?= intval($session_user_id) ?>"></script>
+<?php } ?>
+<?php if (basename(dirname($_SERVER['REQUEST_URI'])) === 'admin') { ?>
+<script src="<?= staticFileUrl('/js/settings.js') ?>"></script>
+<?php } ?>
 
 <?php if (!empty($config_google_places_api_key)) { ?>
 <!-- Google Places Address Autocomplete (Places API New) -->
@@ -65,4 +151,4 @@ if (basename(dirname($_SERVER['REQUEST_URI'])) === 'guest') { ?>
 
 //$time_end = microtime(true);
 //$execution_time = ($time_end - $time_start);
-//echo '<h2>Total Execution Time: '.number_format((float) $execution_time, 10) .' seconds</h2>';
+//echo '<h2>Total Execution Time: '.number_format(floatval($execution_time), 10) .' seconds</h2>';

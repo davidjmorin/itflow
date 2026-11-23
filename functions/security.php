@@ -6,12 +6,42 @@
 
 // Function to generate both crypto & URL safe random strings
 function randomString(int $length = 16): string {
-    $bytes = random_bytes((int) ceil($length * 3 / 4));
+    $bytes = random_bytes(intval(ceil($length * 3 / 4)));
     return substr(
         rtrim(strtr(base64_encode($bytes), '+/', '-_'), '='),
         0,
         $length
     );
+}
+
+// Generate a pronounceable password - readable enough to dictate down the phone, while
+// still carrying real entropy. Every syllable is one of 90 consonant-vowel pairs, so the
+// default three words of three syllables plus the two-digit suffix is roughly 65 bits.
+// The floors are deliberate: this feeds real user and contact logins, so a caller asking
+// for one short word must not walk away with a guessable password.
+function generateReadablePassword(int $word_count = 3, int $syllables_per_word = 3): string {
+
+    $consonants = 'bcdfghjklmnprstvwz';
+    $vowels = 'aeiou';
+
+    $word_count = max(2, $word_count);
+    $syllables_per_word = max(2, $syllables_per_word);
+
+    $words = [];
+
+    for ($word_index = 0; $word_index < $word_count; $word_index++) {
+
+        $word = '';
+
+        for ($syllable_index = 0; $syllable_index < $syllables_per_word; $syllable_index++) {
+            $word .= $consonants[random_int(0, strlen($consonants) - 1)];
+            $word .= $vowels[random_int(0, strlen($vowels) - 1)];
+        }
+
+        $words[] = ucfirst($word);
+    }
+
+    return implode('-', $words) . '-' . random_int(10, 99);
 }
 
 // Generate a cryptographically secure 32-char base32 secret for TOTP
@@ -49,7 +79,7 @@ function encryptUserSpecificKey($user_password) {
     $salt = randomString();
 
     // Get the session info.
-    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'];
+    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'] ?? '';
     $user_encryption_session_iv = base64_decode($_SESSION['user_encryption_session_iv'] ?? '');
     $user_encryption_session_key = base64_decode($_COOKIE['user_encryption_session_key'] ?? '');
 
@@ -103,8 +133,9 @@ function generateUserSessionKey($site_encryption_master_key) {
     if ($config_https_only) {
         setcookie("user_encryption_session_key", base64_encode($user_encryption_session_key), ['path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'None']);
     } else {
-        setcookie("user_encryption_session_key", base64_encode($user_encryption_session_key), 0, "/");
-        $_SESSION['alert_message'] = "Unencrypted connection flag set: Using non-secure cookies.";
+        // Not secure without HTTPS, but still out of reach of page scripts
+        setcookie("user_encryption_session_key", base64_encode($user_encryption_session_key), ['path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
+        flashAlert("Unencrypted connection flag set: Using non-secure cookies.", 'warning');
     }
 }
 
@@ -146,7 +177,7 @@ function decryptCredentialEntry($credential_password_ciphertext) {
     $credential_ciphertext = $salt = substr($credential_password_ciphertext, 16);
 
     // Get the user session info.
-    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'];
+    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'] ?? '';
     $user_encryption_session_iv =  base64_decode($_SESSION['user_encryption_session_iv'] ?? '');
     $user_encryption_session_key = base64_decode($_COOKIE['user_encryption_session_key'] ?? '');
 
@@ -162,7 +193,7 @@ function encryptCredentialEntry($credential_password_cleartext) {
     $iv = randomString();
 
     // Get the user session info.
-    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'];
+    $user_encryption_session_ciphertext = $_SESSION['user_encryption_session_ciphertext'] ?? '';
     $user_encryption_session_iv =  base64_decode($_SESSION['user_encryption_session_iv'] ?? '');
     $user_encryption_session_key = base64_decode($_COOKIE['user_encryption_session_key'] ?? '');
 
@@ -191,6 +222,16 @@ function apiDecryptCredentialEntry($credential_ciphertext, $api_key_decrypt_hash
 
     // Decrypt the credential password using the master key
     return openssl_decrypt($credential_ciphertext, 'aes-128-cbc', $site_encryption_master_key, 0, $credential_iv);
+}
+
+/**
+ * Does this decrypt password open the API key's copy of the master key? A
+ * wrong one decrypts to nothing (or rubbish), and a credential saved under
+ * that could never be read again.
+ */
+function apiDecryptPasswordOpens($api_key_decrypt_hash, #[\SensitiveParameter]$api_key_decrypt_password) {
+    $key = decryptUserSpecificKey((string) $api_key_decrypt_hash, (string) $api_key_decrypt_password);
+    return is_string($key) && $key !== '';
 }
 
 function apiEncryptCredentialEntry(#[\SensitiveParameter]$credential_cleartext, $api_key_decrypt_hash, #[\SensitiveParameter]$api_key_decrypt_password) {

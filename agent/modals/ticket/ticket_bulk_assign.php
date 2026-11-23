@@ -2,6 +2,8 @@
 
 require_once '../../../includes/modal_header.php';
 
+enforceUserPermission('module_support', 2);
+
 $ticket_ids = array_map('intval', $_GET['ticket_ids'] ?? []);
 
 $count = count($ticket_ids);
@@ -11,10 +13,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-user-check mr-2"></i>Assign Agent to <strong><?= $count ?></strong> Tickets</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-user-check me-2"></i>Assign Agent to <strong><?= $count ?></strong> ticket<?= $count === 1 ? '' : 's' ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -23,17 +23,15 @@ ob_start();
 
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Assign to</label>
+        <div class="mb-3">
+            <label class="form-label">Assign to</label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user-check"></i></span>
-                </div>
-                <select class="form-control select2" name="assign_to">
-                    <option value="0">Not Assigned</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-user-check"></i></span>
+                <select class="form-select select2" name="assign_to">
+                    <option value="0">- Unassigned -</option>
                     <?php
-                    $sql_users_select = mysqli_query($mysqli, "SELECT user_id, user_name FROM users
-                        WHERE user_type = 1
+                    $sql_users_select = mysqli_query($mysqli, "SELECT user_id, user_name, user_avatar FROM users
+                        WHERE user_type = 1" . serviceAccountsOutSql() . "
                         AND user_status = 1
                         AND user_archived_at IS NULL
                         ORDER BY user_name ASC"
@@ -43,7 +41,7 @@ ob_start();
                         $user_name_select = escapeHtml($row['user_name']);
 
                         ?>
-                        <option value="<?= $user_id_select ?>"><?= $user_name_select ?></option>
+                        <option value="<?= $user_id_select ?>"<?= selectOptionUser($row['user_id'], $row['user_name'], $row['user_avatar'] ?? '') ?>><?= $user_name_select ?></option>
                     <?php } ?>
                 </select>
             </div>
@@ -51,8 +49,8 @@ ob_start();
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="bulk_assign_ticket" class="btn btn-primary text-bold"><i class="fa fa-check mr-2"></i>Assign</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_assign_ticket" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Assign</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

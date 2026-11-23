@@ -16,10 +16,8 @@ ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fa fa-fw fa-user-check mr-2"></i>Assign Contact to <strong><?= $count ?></strong> Assets</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-user-check me-2"></i>Assign Contact to <strong><?= $count ?></strong> asset<?= $count === 1 ? '' : 's' ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -27,22 +25,20 @@ ob_start();
     <?php foreach ($asset_ids as $asset_id) { ?><input type="hidden" name="asset_ids[]" value="<?= $asset_id ?>"><?php } ?>
     <div class="modal-body">
 
-        <div class="form-group">
-            <label>Contact</label>
+        <div class="mb-3">
+            <label class="form-label">Contact <strong class="text-danger">*</strong></label>
             <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text"><i class="fa fa-fw fa-user"></i></span>
-                </div>
-                <select class="form-control select2" name="bulk_contact_id">
-                    <option value="">- Contact -</option>
+                    <span class="input-group-text"><i class="fas fa-fw fa-user"></i></span>
+                <select class="form-select select2" name="bulk_contact_id" required>
+                    <option value="">- Select a contact -</option>
                     <?php
 
-                    $sql = mysqli_query($mysqli, "SELECT contact_id, contact_name FROM contacts WHERE contact_archived_at IS NULL AND contact_client_id = $client_id ORDER BY contact_name ASC");
+                    $sql = mysqli_query($mysqli, "SELECT contact_id, contact_name, contact_client_id, contact_photo, contact_title FROM contacts WHERE contact_archived_at IS NULL AND contact_client_id = $client_id ORDER BY contact_name ASC");
                     while ($row = mysqli_fetch_assoc($sql)) {
                         $contact_id = intval($row['contact_id']);
                         $contact_name = escapeHtml($row['contact_name']);
                         ?>
-                        <option value="<?= $contact_id ?>"><?= $contact_name ?></option>
+                        <option value="<?= $contact_id ?>"<?= selectOptionContact($row['contact_client_id'] ?? 0, $row['contact_name'], $row['contact_photo'] ?? '', $row['contact_title'] ?? '', $row['contact_id'] ?? 0) ?>><?= $contact_name ?></option>
 
                     <?php } ?>
 
@@ -53,8 +49,8 @@ ob_start();
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="bulk_assign_asset_contact" class="btn btn-primary text-bold"><i class="fas fa-check mr-2"></i>Assign Contact</button>
-        <button type="button" class="btn btn-light" data-dismiss="modal"><i class="fa fa-times mr-2"></i>Cancel</button>
+        <button type="submit" name="bulk_assign_asset_contact" class="btn btn-primary fw-bold"><i class="fas fa-check me-2"></i>Assign Contact</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-times me-2"></i>Cancel</button>
     </div>
 </form>
 

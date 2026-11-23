@@ -14,6 +14,14 @@ if (isset($_POST['api_key_decrypt_password'])) {
     $api_key_decrypt_password = $_POST['api_key_decrypt_password'];
 }
 
+// A wrong one used to answer success with every username and password false
+if ($api_key_decrypt_password !== '' && !apiDecryptPasswordOpens($api_key_decrypt_hash, $api_key_decrypt_password)) {
+    $return_arr['success'] = "False";
+    $return_arr['message'] = "api_key_decrypt_password is not the one set for this API key.";
+    echo json_encode($return_arr);
+    exit();
+}
+
 // Specific credential/login via ID (single)
 if (isset($_GET['credential_id']) && !empty($api_key_decrypt_password)) {
 
@@ -44,6 +52,7 @@ if ($sql && mysqli_num_rows($sql) > 0) {
         $row['credential_wifi_passcode'] = !empty($row['credential_wifi_passcode']) ? apiDecryptCredentialEntry($row['credential_wifi_passcode'], $api_key_decrypt_hash, $api_key_decrypt_password) : '';
         $return_arr['data'][] = $row;
     }
+    $return_arr['data'] = tagApiAttach($return_arr['data'], 'credential');
 
     echo json_encode($return_arr);
     exit();
