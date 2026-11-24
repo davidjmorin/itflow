@@ -9,6 +9,9 @@ function triggerCustomAction($trigger, $entity) {
     if (function_exists('emailCapturing') && emailCapturing()) {
         return;
     }
+    if ($trigger === 'ticket_create' && function_exists('smsgateTicketNotify')) {
+        smsgateTicketNotify($entity);
+    }
     // ITFlow's own follow-up first: an invoice paid in full (invoicePaidFollowUp(), functions/billing.php)
     if ($trigger === 'invoice_pay' && function_exists('invoicePaidFollowUp')) {
         invoicePaidFollowUp($entity);

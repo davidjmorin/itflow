@@ -111,6 +111,8 @@ require_once __DIR__ . '/functions/billing_email.php';
 require_once __DIR__ . '/functions/billing_pay.php';
 require_once __DIR__ . '/functions/invoice_actions.php';
 require_once __DIR__ . '/functions/payment_provider.php';
+require_once __DIR__ . '/functions/payment_square.php';
+require_once __DIR__ . '/functions/payment_paypal.php';
 require_once __DIR__ . '/functions/tax.php';
 require_once __DIR__ . '/functions/expenses.php';
 require_once __DIR__ . '/functions/expense_import.php';
@@ -152,6 +154,7 @@ require_once __DIR__ . '/functions/smsgate.php';
 require_once __DIR__ . '/functions/passkey.php';
 require_once __DIR__ . '/functions/tbr.php';
 require_once __DIR__ . '/functions/meetings.php';
+require_once __DIR__ . '/functions/ticket_products.php';
 
 // The connection config.php opened takes the collation the tables have, so that a string the
 // server makes (CAST(x AS CHAR), say) matches them - functions/database_collation.php

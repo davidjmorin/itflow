@@ -21,7 +21,7 @@ $recurring = mysqli_query($mysqli, "SELECT recurring_invoice_id, recurring_invoi
     WHERE recurring_invoice_client_id = $session_client_id AND recurring_invoice_status = 1
     ORDER BY recurring_invoice_next_date ASC, recurring_invoice_id ASC");
 
-$cards_on = billingStripeProvider() !== null;
+$cards_on = !empty(billingCardProviders());
 $cards = [];
 foreach ($cards_on ? billingSavedCards($session_client_id) : [] as $card) {
     $cards[intval($card['saved_payment_id'])] = $card['card'];

@@ -2,6 +2,9 @@
 <script src="<?= staticFileUrl('/js/autocomplete.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/itflow_select.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/app.js') ?>"></script>
+<?php if (!empty($config_google_places_api_key)) { ?>
+<script src="<?= staticFileUrl('/js/address_autocomplete.js') ?>"></script>
+<?php } ?>
 
 <?php
     $content = ob_get_clean();

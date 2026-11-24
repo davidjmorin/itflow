@@ -859,14 +859,28 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
                             </div>
                     </div>
 
-                    <div class="input-group mb-3">
-                        <input type="password" class="form-control" placeholder="Password" name="password" required>
-                            <div class="input-group-text">
-                                <span class="fas fa-lock"></span>
-                            </div>
+                    <div id="passkey_detect_container" class="d-none mb-3">
+                        <div class="alert alert-info py-2 mb-2 text-center small">
+                            <i class="fas fa-fingerprint me-1"></i> Passkey detected for this account
+                        </div>
+                        <button type="button" class="btn btn-success w-100 mb-2" id="passkey_login_btn">
+                            <i class="fas fa-fingerprint me-2"></i>Sign In with Passkey
+                        </button>
+                        <div class="text-center">
+                            <a href="#" id="fallback_password_link" class="text-body-secondary small">Sign in with password instead</a>
+                        </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary w-100 mb-3" name="login">Sign In</button>
+                    <div id="password_container">
+                        <div class="input-group mb-3">
+                            <input type="password" class="form-control" placeholder="Password" name="password" id="login_password" required>
+                                <div class="input-group-text">
+                                    <span class="fas fa-lock"></span>
+                                </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 mb-3" name="login">Sign In</button>
+                    </div>
                 <?php endif; ?>
 
                 <?php if ($show_role_choice): ?>
@@ -884,6 +898,24 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
                 <?php endif; ?>
 
                 <?php if ($show_mfa_form): ?>
+                    <?php
+                    $mfa_agent_id = intval($_SESSION['pending_mfa_login']['agent_user_id'] ?? 0);
+                    $has_mfa_passkey = false;
+                    if ($mfa_agent_id > 0) {
+                        $pk_check = mysqli_query($mysqli, "SELECT passkey_id FROM user_passkeys WHERE passkey_user_id = $mfa_agent_id LIMIT 1");
+                        if ($pk_check && mysqli_num_rows($pk_check) > 0) {
+                            $has_mfa_passkey = true;
+                        }
+                    }
+                    ?>
+                    <?php if ($has_mfa_passkey): ?>
+                        <button type="button" class="btn btn-success w-100 mb-3" id="mfa_passkey_btn">
+                            <i class="fas fa-fingerprint me-2"></i>Verify with Passkey
+                        </button>
+                        <div class="d-flex align-items-center gap-2 my-3 small text-body-secondary">
+                            <hr class="flex-grow-1 my-0"><span>or use authenticator app</span><hr class="flex-grow-1 my-0">
+                        </div>
+                    <?php endif; ?>
                     <!-- STEP 3: MFA only - the code goes in six boxes and signs in on the last digit, so Remember comes first -->
                     <p class="small text-body-secondary mb-2">Enter the 6-digit code from your authenticator app.</p>
 
@@ -922,6 +954,11 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
                         </a>
                     </div>
                 <?php } ?>
+                <div class="mt-3">
+                    <a href="guest/guest_submit_ticket.php" class="btn btn-outline-primary w-100">
+                        <i class="fas fa-ticket-alt me-2"></i>Submit a Ticket (No Login)
+                    </a>
+                </div>
             <?php } ?>
 
             <?php if (kbPublicOn()) { ?>
@@ -936,15 +973,17 @@ $show_login_form = (!$show_role_choice && !$show_mfa_form);
 </div>
 
 <?php
-if (!$config_whitelabel_enabled) {
-    echo '<small class="text-body-secondary">Powered by ITFlow</small>';
-}
+
+    echo '<small class="text-body-secondary">Powered by Maple & Oakley</small>';
+
 ?>
 
 <script src="<?= staticFileUrl('/libs/bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
 <script src="<?= staticFileUrl('/libs/adminlte/js/adminlte.min.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/login_prevent_resubmit.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/otp_input.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/passkey.js') ?>"></script>
+<script src="<?= staticFileUrl('/js/login_passkey.js') ?>"></script>
 
 </body>
 </html>

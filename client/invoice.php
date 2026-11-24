@@ -38,7 +38,7 @@ $payments = invoicePayments($invoice_id);
 $state = portalInvoiceState($invoice, invoicePaid($invoice_id));
 $company = billingCompany();
 $owing = in_array($state['state'], ['open', 'overdue'], true) && invoiceCanPay($invoice, $state);
-$cards = billingStripeProvider() !== null;
+$cards = billingAnyOnlineProvider() !== null;
 $can_pay = $owing && $cards && billingOnlinePayAllowed($state['balance']);
 // The card fee on paying the balance by card, when the client pays one - autopay adds it too
 $fee_rates = $cards ? billingCardFeeFor($session_client_id) : null;

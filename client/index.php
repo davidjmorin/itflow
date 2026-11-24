@@ -117,7 +117,7 @@ if ($can_billing) {
         }
     }
 }
-$pay_href = $can_billing && billingStripeProvider() ? 'unpaid_invoices.php' : 'invoices.php';
+$pay_href = $can_billing && billingAnyOnlineProvider() ? 'unpaid_invoices.php' : 'invoices.php';
 
 // Open tickets, newest first
 $recent = mysqli_query($mysqli, "SELECT " . portalTicketColumnsSql() . ", contact_name FROM tickets

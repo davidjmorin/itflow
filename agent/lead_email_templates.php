@@ -165,5 +165,6 @@ enforceUserPermission('module_client');
 </div>
 
 <?php
+require_once __DIR__ . '/includes/custom_legacy_js.php';
 require_once "../includes/footer.php";
 ?>

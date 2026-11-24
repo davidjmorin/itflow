@@ -31,6 +31,112 @@
         return $('<div>').text(s == null ? '' : String(s)).html();
     }
 
+    function formatResponseHtml(raw) {
+        if (!raw) {
+            return '';
+        }
+        const s = String(raw);
+        if (/<\/?[a-z][\s\S]*>/i.test(s)) {
+            return s;
+        }
+        return esc(s).replace(/\r?\n/g, '<br>');
+    }
+
+    function stripHtml(html) {
+        return $('<div>').html(html || '').text();
+    }
+
+    function extractEditorHtml(el) {
+        if (!el) {
+            return '';
+        }
+        const plain = (el.textContent || '').replace(/\u00a0/g, ' ').trim();
+        if (plain === '' && !el.querySelector('img, hr')) {
+            return '';
+        }
+        return el.innerHTML;
+    }
+
+    function buildRteToolbarHtml() {
+        const textColors = ['#1e293b', '#64748b', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0d9488', '#2563eb', '#7c3aed', '#db2777'];
+        const hiliteColors = ['#fef08a', '#bbf7d0', '#bae6fd', '#fecdd3', '#e9d5ff', '#fed7aa', '#e2e8f0', '#f1f5f9'];
+
+        const textSwatches = textColors.map(function (c) {
+            return '<button type="button" class="mtg-rte-swatch" data-rte-cmd="foreColor" data-rte-val="' + c + '" style="background:' + c + ';" title="' + c + '"></button>';
+        }).join('');
+
+        const hiliteSwatches = hiliteColors.map(function (c) {
+            return '<button type="button" class="mtg-rte-swatch" data-rte-cmd="hiliteColor" data-rte-val="' + c + '" style="background:' + c + ';" title="' + c + '"></button>';
+        }).join('');
+
+        return '<div class="mtg-rte-toolbar">'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-btn-pill mtg-rte-dd-toggle" data-rte-dd="block" title="Text style"><span class="mtg-rte-block-label">Tt</span><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="formatBlock" data-rte-val="p">Normal text</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="formatBlock" data-rte-val="h1"><strong>Heading 1</strong></button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="formatBlock" data-rte-val="h2"><strong>Heading 2</strong></button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="formatBlock" data-rte-val="h3"><strong>Heading 3</strong></button>'
+            + '</div>'
+            + '</div>'
+            + '<span class="mtg-rte-sep"></span>'
+            + '<button type="button" class="mtg-rte-btn" data-rte-cmd="bold" title="Bold"><i class="fas fa-bold"></i></button>'
+            + '<button type="button" class="mtg-rte-btn" data-rte-cmd="italic" title="Italic"><i class="fas fa-italic"></i></button>'
+            + '<button type="button" class="mtg-rte-btn" data-rte-cmd="underline" title="Underline"><i class="fas fa-underline"></i></button>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="more" title="More formatting"><i class="fas fa-ellipsis-h"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="strikeThrough"><i class="fas fa-strikethrough fa-fw"></i>Strikethrough</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="inlineCode"><i class="fas fa-code fa-fw"></i>Inline code</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="removeFormat"><i class="fas fa-eraser fa-fw"></i>Clear formatting</button>'
+            + '</div>'
+            + '</div>'
+            + '<span class="mtg-rte-sep"></span>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="color" title="Text color"><span style="font-weight:700;text-decoration:underline;text-decoration-color:#0d9488;text-decoration-thickness:2px;">A</span><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<div class="mtg-rte-swatch-grid">' + textSwatches + '</div>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="foreColor" data-rte-val="inherit"><i class="fas fa-undo fa-fw"></i>Default color</button>'
+            + '</div>'
+            + '</div>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="hilite" title="Highlight color"><i class="fas fa-highlighter"></i><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<div class="mtg-rte-swatch-grid">' + hiliteSwatches + '</div>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="hiliteColor" data-rte-val="transparent"><i class="fas fa-ban fa-fw"></i>No highlight</button>'
+            + '</div>'
+            + '</div>'
+            + '<span class="mtg-rte-sep"></span>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="lists" title="Lists"><i class="fas fa-list-ul"></i><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="insertUnorderedList"><i class="fas fa-list-ul fa-fw"></i>Bulleted list</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="insertOrderedList"><i class="fas fa-list-ol fa-fw"></i>Numbered list</button>'
+            + '</div>'
+            + '</div>'
+            + '<span class="mtg-rte-sep"></span>'
+            + '<button type="button" class="mtg-rte-btn" data-rte-action="link" title="Insert link"><i class="fas fa-link"></i></button>'
+            + '<button type="button" class="mtg-rte-btn" data-rte-action="image" title="Insert image URL"><i class="far fa-image"></i></button>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="insert" title="Insert"><i class="fas fa-plus"></i><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="formatBlock" data-rte-val="blockquote"><i class="fas fa-quote-left fa-fw"></i>Blockquote</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="insertHorizontalRule"><i class="fas fa-minus fa-fw"></i>Horizontal rule</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="insertHTML" data-rte-val="&#9744; "><i class="far fa-check-square fa-fw"></i>Checklist item</button>'
+            + '</div>'
+            + '</div>'
+            + '<span class="mtg-rte-sep"></span>'
+            + '<div class="mtg-rte-dd">'
+            + '<button type="button" class="mtg-rte-btn mtg-rte-dd-toggle" data-rte-dd="align" title="Alignment"><i class="fas fa-align-left"></i><i class="fas fa-chevron-down fa-xs"></i></button>'
+            + '<div class="mtg-rte-menu">'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="justifyLeft"><i class="fas fa-align-left fa-fw"></i>Align left</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="justifyCenter"><i class="fas fa-align-center fa-fw"></i>Align center</button>'
+            + '<button type="button" class="mtg-rte-menu-item" data-rte-cmd="justifyRight"><i class="fas fa-align-right fa-fw"></i>Align right</button>'
+            + '</div>'
+            + '</div>'
+            + '</div>';
+    }
+
     function setSavePill(mode, label) {
         const el = $('#mtgSyncBadge');
         if (mode === 'saving') {
@@ -220,23 +326,27 @@
         attendees.forEach(function (u) {
             const r = respMap[String(u.user_id)] || { content: '' };
             const txt = r.content || '';
-            if (term && txt.toLowerCase().indexOf(term) === -1 && u.user_name.toLowerCase().indexOf(term) === -1) {
+            const plainTxt = stripHtml(txt).toLowerCase();
+            if (term && plainTxt.indexOf(term) === -1 && u.user_name.toLowerCase().indexOf(term) === -1) {
                 return;
             }
             const isMine = Number(u.user_id) === state.currentUserId;
             const editable = isMine || state.canEditAny;
             const key = aid + '_' + u.user_id;
 
+            let toolbarHtml = '';
             let bodyHtml = '';
             if (editable) {
-                bodyHtml = '<textarea class="mtg-bubble-input" rows="1" data-agenda-id="' + aid + '" data-user-id="' + u.user_id + '" data-resp-key="' + key + '" placeholder="' + (isMine ? 'Type your update...' : 'Facilitator / Admin edit...') + '">' + esc(txt) + '</textarea>';
+                toolbarHtml = buildRteToolbarHtml();
+                bodyHtml = '<div class="mtg-bubble-editor" contenteditable="true" data-agenda-id="' + aid + '" data-user-id="' + u.user_id + '" data-resp-key="' + key + '" data-synced-raw="' + esc(txt) + '" data-placeholder="' + (isMine ? 'Type your update...' : 'Facilitator / Admin edit...') + '">' + formatResponseHtml(txt) + '</div><div class="mtg-rte-link-bar"></div>';
             } else {
-                bodyHtml = '<div class="mtg-bubble-readonly" data-resp-key="' + key + '">' + (txt ? esc(txt) : '<span class="text-muted small">Waiting for ' + esc(u.user_name) + '...</span>') + '</div>';
+                bodyHtml = '<div class="mtg-bubble-readonly" data-resp-key="' + key + '" data-user-name="' + esc(u.user_name) + '" data-raw-content="' + esc(txt) + '">' + (txt ? formatResponseHtml(txt) : '<span class="text-muted small">Waiting for ' + esc(u.user_name) + '...</span>') + '</div>';
             }
 
             rowsHtml += '<div class="mtg-bubble-row">'
                 + avatarHtml(u, online)
                 + '<div class="mtg-bubble ' + (isMine ? 'mtg-bubble-mine' : '') + '" data-bubble-key="' + key + '">'
+                + toolbarHtml
                 + '<div class="mtg-bubble-author"><span>' + esc(u.user_name) + (isMine ? ' (You)' : '') + '</span><span>' + (r.updated_at ? esc(r.updated_at.substring(11, 16)) : '') + '</span></div>'
                 + bodyHtml
                 + '</div>'
@@ -426,9 +536,6 @@
         });
 
         container.html(html);
-        container.find('.mtg-bubble-input').each(function () {
-            autoGrow(this);
-        });
 
         if (activeSearchAid) {
             const sEl = container.find('.mtg-card-search[data-agenda-id="' + activeSearchAid + '"]');
@@ -459,22 +566,20 @@
                     return;
                 }
                 const el = $('[data-resp-key="' + key + '"]');
-                if (!el.length || document.activeElement === el[0]) {
+                if (!el.length || el.closest('.mtg-bubble').hasClass('is-focused') || document.activeElement === el[0] || el[0].contains(document.activeElement)) {
                     return;
                 }
                 const newVal = respMap[aid][uid].content || '';
-                if (el.is('textarea')) {
-                    if (el.val() !== newVal) {
-                        el.val(newVal);
-                        autoGrow(el[0]);
+                if (el.hasClass('mtg-bubble-editor')) {
+                    if ((el.attr('data-synced-raw') || '') !== newVal) {
+                        el.attr('data-synced-raw', newVal).html(formatResponseHtml(newVal));
                         el.closest('.mtg-bubble').addClass('mtg-flash');
                         setTimeout(function () { el.closest('.mtg-bubble').removeClass('mtg-flash'); }, 900);
                     }
                 } else {
-                    const currentTxt = el.text();
-                    const displayTxt = newVal || ('Waiting for user...');
-                    if (newVal && currentTxt !== newVal) {
-                        el.text(newVal);
+                    if ((el.attr('data-raw-content') || '') !== newVal) {
+                        const waitName = el.data('user-name') || 'user';
+                        el.attr('data-raw-content', newVal).html(newVal ? formatResponseHtml(newVal) : '<span class="text-muted small">Waiting for ' + esc(waitName) + '...</span>');
                         el.closest('.mtg-bubble').addClass('mtg-flash');
                         setTimeout(function () { el.closest('.mtg-bubble').removeClass('mtg-flash'); }, 900);
                     }
@@ -607,17 +712,119 @@
             }, 'json');
         });
 
-        $(document).on('input', '.mtg-bubble-input', function () {
-            autoGrow(this);
-            const el = $(this);
-            const aid = el.data('agenda-id');
-            const uid = el.data('user-id');
-            const key = el.data('resp-key');
+        function saveCurrentRange(editorEl) {
+            const sel = window.getSelection();
+            if (!sel || !sel.rangeCount) {
+                return null;
+            }
+            const range = sel.getRangeAt(0);
+            if (!editorEl.contains(range.commonAncestorContainer)) {
+                return null;
+            }
+            return range.cloneRange();
+        }
+
+        function restoreRange(editorEl, range) {
+            editorEl.focus();
+            const sel = window.getSelection();
+            if (!sel) {
+                return;
+            }
+            sel.removeAllRanges();
+            if (range) {
+                sel.addRange(range);
+            } else {
+                const r = document.createRange();
+                r.selectNodeContents(editorEl);
+                r.collapse(false);
+                sel.addRange(r);
+            }
+        }
+
+        function findActiveLink(bubbleEl) {
+            const editorEl = $(bubbleEl).find('.mtg-bubble-editor')[0];
+            const sel = window.getSelection();
+            if (!editorEl || !sel || !sel.rangeCount) {
+                return null;
+            }
+            let node = sel.anchorNode;
+            while (node && node !== editorEl) {
+                if (node.nodeType === 1 && node.tagName === 'A' && node.getAttribute('href')) {
+                    return node;
+                }
+                node = node.parentNode;
+            }
+            return null;
+        }
+
+        function updateRteLinkBar(bubbleEl) {
+            const $bubble = $(bubbleEl);
+            const $bar = $bubble.find('.mtg-rte-link-bar');
+            if (!$bar.length) {
+                return;
+            }
+            const linkEl = findActiveLink(bubbleEl);
+            if (!linkEl) {
+                $bar.removeClass('is-visible').empty();
+                return;
+            }
+            const href = linkEl.getAttribute('href') || '';
+            $bar.html(
+                '<i class="fas fa-link text-muted"></i>'
+                + '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" class="text-truncate" style="max-width:260px;">' + esc(href) + '</a>'
+                + '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" class="btn btn-xs btn-outline-secondary py-0 px-2">Open <i class="fas fa-external-link-alt fa-xs"></i></a>'
+                + '<button type="button" class="btn btn-xs btn-outline-danger py-0 px-2 mtg-rte-unlink-btn">Remove</button>'
+            ).addClass('is-visible');
+        }
+
+        function refreshRteToolbarState(bubbleEl) {
+            const $bubble = $(bubbleEl);
+            if (!$bubble.length) {
+                return;
+            }
+            ['bold', 'italic', 'underline'].forEach(function (cmd) {
+                let active = false;
+                try {
+                    active = document.queryCommandState(cmd);
+                } catch (err) {
+                    active = false;
+                }
+                $bubble.find('[data-rte-cmd="' + cmd + '"]').toggleClass('is-active', !!active);
+            });
+            let blockLabel = 'Tt';
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount) {
+                let node = sel.anchorNode;
+                const editorEl = $bubble.find('.mtg-bubble-editor')[0];
+                while (node && node !== editorEl) {
+                    if (node.nodeType === 1) {
+                        const tag = node.tagName.toUpperCase();
+                        if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
+                            blockLabel = tag;
+                            break;
+                        }
+                    }
+                    node = node.parentNode;
+                }
+            }
+            $bubble.find('.mtg-rte-block-label').text(blockLabel);
+            updateRteLinkBar(bubbleEl);
+        }
+
+        function scheduleResponseSave(editorEl, immediate) {
+            const $el = $(editorEl);
+            const aid = $el.data('agenda-id');
+            const uid = $el.data('user-id');
+            const key = $el.data('resp-key');
+            if (!key) {
+                return;
+            }
             state.pendingWrites[key] = true;
             setSavePill('saving', 'Saving...');
             clearTimeout(state.timers[key]);
-            state.timers[key] = setTimeout(function () {
-                const content = el.val();
+            const doPost = function () {
+                delete state.timers[key];
+                const content = extractEditorHtml(editorEl);
                 $.post('/agent/ajax_meetings.php', {
                     action: 'save_response',
                     series_id: state.seriesId,
@@ -629,16 +836,410 @@
                 }, function (res) {
                     delete state.pendingWrites[key];
                     if (res && res.ok) {
+                        const savedContent = res.content !== undefined ? res.content : content;
                         state.syncSeq = res.sync_seq;
                         state.data.responses[String(aid)] = state.data.responses[String(aid)] || {};
-                        state.data.responses[String(aid)][String(uid)] = { content: content, updated_at: res.saved_at };
+                        state.data.responses[String(aid)][String(uid)] = { content: savedContent, updated_at: res.saved_at };
+                        $el.attr('data-synced-raw', savedContent);
                         setSavePill('live', 'Saved');
                     }
                 }, 'json').fail(function () {
                     delete state.pendingWrites[key];
                     setSavePill('error', 'Save Failed');
                 });
-            }, 400);
+            };
+            if (immediate) {
+                doPost();
+            } else {
+                state.timers[key] = setTimeout(doPost, 400);
+            }
+        }
+
+        function closeFocusedBubbles(exceptBubbleEl) {
+            $('.mtg-bubble.is-focused').each(function () {
+                if (exceptBubbleEl && this === exceptBubbleEl) {
+                    return;
+                }
+                const $b = $(this);
+                const ed = $b.find('.mtg-bubble-editor')[0];
+                if (ed) {
+                    const key = $(ed).data('resp-key');
+                    if (key && state.timers[key]) {
+                        scheduleResponseSave(ed, true);
+                    }
+                }
+                $b.find('.mtg-rte-dd.open').removeClass('open');
+                $b.removeClass('is-focused');
+            });
+        }
+
+        $(document).on('focus', '.mtg-bubble-editor', function () {
+            const $bubble = $(this).closest('.mtg-bubble');
+            closeFocusedBubbles($bubble[0]);
+            $bubble.addClass('is-focused');
+            refreshRteToolbarState($bubble[0]);
+        });
+
+        $(document).on('focusin', function (e) {
+            if (!$(e.target).closest('.mtg-bubble.is-focused').length) {
+                $('.mtg-rte-dd.open').removeClass('open');
+                closeFocusedBubbles(null);
+            }
+        });
+
+        $(document).on('mousedown', function (e) {
+            const $target = $(e.target);
+            const $inFocused = $target.closest('.mtg-bubble.is-focused');
+            if (!$inFocused.length) {
+                $('.mtg-rte-dd.open').removeClass('open');
+                closeFocusedBubbles(null);
+                return;
+            }
+            if (!$target.closest('.mtg-rte-dd').length) {
+                $inFocused.find('.mtg-rte-dd.open').removeClass('open');
+            }
+        });
+
+        $(document).on('mousedown', '.mtg-rte-toolbar button, .mtg-rte-menu-item, .mtg-rte-swatch', function (e) {
+            e.preventDefault();
+        });
+
+        $(document).on('click', '.mtg-rte-dd-toggle', function (e) {
+            e.preventDefault();
+            const $dd = $(this).closest('.mtg-rte-dd');
+            const wasOpen = $dd.hasClass('open');
+            $dd.closest('.mtg-rte-toolbar').find('.mtg-rte-dd.open').removeClass('open');
+            if (!wasOpen) {
+                $dd.addClass('open');
+            }
+        });
+
+        function unwrapNode(el) {
+            const parent = el.parentNode;
+            if (!parent) {
+                return;
+            }
+            while (el.firstChild) {
+                parent.insertBefore(el.firstChild, el);
+            }
+            parent.removeChild(el);
+        }
+
+        function collectSelectedTextSlices(editorEl, range) {
+            const walker = document.createTreeWalker(editorEl, NodeFilter.SHOW_TEXT, null);
+            const rawNodes = [];
+            let node;
+            while ((node = walker.nextNode())) {
+                if (!node.nodeValue || !node.nodeValue.length) {
+                    continue;
+                }
+                if (typeof range.intersectsNode === 'function' ? range.intersectsNode(node) : true) {
+                    rawNodes.push(node);
+                }
+            }
+            const slices = [];
+            rawNodes.forEach(function (tNode) {
+                let start = 0;
+                let end = tNode.nodeValue.length;
+                if (tNode === range.startContainer) {
+                    start = range.startOffset;
+                }
+                if (tNode === range.endContainer) {
+                    end = range.endOffset;
+                }
+                if (end <= start) {
+                    return;
+                }
+                let target = tNode;
+                if (end < target.nodeValue.length) {
+                    target.splitText(end);
+                }
+                if (start > 0) {
+                    target = target.splitText(start);
+                }
+                slices.push(target);
+            });
+            return slices;
+        }
+
+        function splitAndClearAncestorStyle(tNode, editorEl, prop) {
+            let cur = tNode;
+            while (cur && cur !== editorEl) {
+                const parent = cur.parentNode;
+                if (!parent || parent === editorEl || parent.nodeType !== 1) {
+                    cur = parent;
+                    continue;
+                }
+                const isTargetSpan = parent.tagName === 'SPAN' && !!parent.style[prop];
+                const isTargetFont = prop === 'color' && parent.tagName === 'FONT';
+                if (!isTargetSpan && !isTargetFont) {
+                    cur = parent;
+                    continue;
+                }
+                const before = parent.cloneNode(false);
+                const after = parent.cloneNode(false);
+                while (cur.previousSibling) {
+                    before.insertBefore(cur.previousSibling, before.firstChild);
+                }
+                while (cur.nextSibling) {
+                    after.appendChild(cur.nextSibling);
+                }
+                let midNode = cur;
+                if (isTargetSpan) {
+                    const mid = parent.cloneNode(false);
+                    mid.style[prop] = '';
+                    if ((mid.getAttribute('style') || '').trim() !== '') {
+                        mid.appendChild(cur);
+                        midNode = mid;
+                    }
+                }
+                const grand = parent.parentNode;
+                if (grand) {
+                    if (before.childNodes.length) {
+                        grand.insertBefore(before, parent);
+                    }
+                    grand.insertBefore(midNode, parent);
+                    if (after.childNodes.length) {
+                        grand.insertBefore(after, parent);
+                    }
+                    grand.removeChild(parent);
+                }
+                cur = midNode;
+            }
+        }
+
+        function applyInlineStyle(editorEl, prop, val, clearVal) {
+            editorEl.style[prop] = '';
+            $(editorEl).find('div, p, h1, h2, h3, blockquote, li').each(function () {
+                this.style[prop] = '';
+            });
+            const sel = window.getSelection();
+            if (!sel || !sel.rangeCount) {
+                return;
+            }
+            const range = sel.getRangeAt(0);
+            if (!editorEl.contains(range.commonAncestorContainer)) {
+                return;
+            }
+            if (val === clearVal) {
+                if (range.collapsed) {
+                    let node = range.startContainer;
+                    while (node && node !== editorEl) {
+                        const next = node.parentNode;
+                        if (node.nodeType === 1) {
+                            if (prop === 'color' && node.tagName === 'FONT') {
+                                unwrapNode(node);
+                            } else if (node.tagName === 'SPAN' && node.style[prop]) {
+                                node.style[prop] = '';
+                                if ((node.getAttribute('style') || '').trim() === '') {
+                                    unwrapNode(node);
+                                }
+                            }
+                        }
+                        node = next;
+                    }
+                    return;
+                }
+                const clearSlices = collectSelectedTextSlices(editorEl, range);
+                clearSlices.forEach(function (tNode) {
+                    splitAndClearAncestorStyle(tNode, editorEl, prop);
+                });
+                return;
+            }
+            if (range.collapsed) {
+                let node = range.startContainer;
+                while (node && node !== editorEl) {
+                    if (node.nodeType === 1 && node.tagName === 'SPAN' && node.style[prop]) {
+                        node.style[prop] = val;
+                        break;
+                    }
+                    node = node.parentNode;
+                }
+                return;
+            }
+            const slices = collectSelectedTextSlices(editorEl, range);
+            if (!slices.length) {
+                return;
+            }
+            const wrapped = [];
+            slices.forEach(function (tNode) {
+                const parent = tNode.parentNode;
+                if (parent && parent !== editorEl && parent.tagName === 'SPAN' && parent.childNodes.length === 1) {
+                    parent.style[prop] = val;
+                    wrapped.push(tNode);
+                } else {
+                    const span = document.createElement('span');
+                    span.style[prop] = val;
+                    parent.insertBefore(span, tNode);
+                    span.appendChild(tNode);
+                    wrapped.push(tNode);
+                }
+            });
+            if (wrapped.length) {
+                const newRange = document.createRange();
+                newRange.setStart(wrapped[0], 0);
+                const last = wrapped[wrapped.length - 1];
+                newRange.setEnd(last, last.nodeValue.length);
+                sel.removeAllRanges();
+                sel.addRange(newRange);
+            }
+        }
+
+        $(document).on('click', '[data-rte-cmd]', function (e) {
+            e.preventDefault();
+            const $btn = $(this);
+            const $bubble = $btn.closest('.mtg-bubble');
+            const editorEl = $bubble.find('.mtg-bubble-editor')[0];
+            if (!editorEl) {
+                return;
+            }
+            editorEl.focus();
+            const cmd = $btn.data('rte-cmd');
+            const val = $btn.data('rte-val');
+            const useCss = (cmd === 'justifyLeft' || cmd === 'justifyCenter' || cmd === 'justifyRight');
+            try {
+                document.execCommand('styleWithCSS', false, useCss);
+            } catch (err) {}
+            if (cmd === 'formatBlock') {
+                document.execCommand('formatBlock', false, '<' + val + '>');
+            } else if (cmd === 'inlineCode') {
+                const sel = window.getSelection();
+                const selectedText = sel ? sel.toString() : '';
+                if (selectedText) {
+                    document.execCommand('insertHTML', false, '<code>' + esc(selectedText) + '</code>');
+                } else {
+                    document.execCommand('insertHTML', false, '<code>code</code>');
+                }
+            } else if (cmd === 'foreColor') {
+                applyInlineStyle(editorEl, 'color', val, 'inherit');
+            } else if (cmd === 'hiliteColor') {
+                applyInlineStyle(editorEl, 'backgroundColor', val, 'transparent');
+            } else {
+                document.execCommand(cmd, false, val !== undefined ? val : null);
+            }
+            $bubble.find('.mtg-rte-dd.open').removeClass('open');
+            refreshRteToolbarState($bubble[0]);
+            scheduleResponseSave(editorEl, false);
+        });
+
+        $(document).on('click', '[data-rte-action="link"]', function (e) {
+            e.preventDefault();
+            const $bubble = $(this).closest('.mtg-bubble');
+            const editorEl = $bubble.find('.mtg-bubble-editor')[0];
+            if (!editorEl) {
+                return;
+            }
+            $bubble.find('.mtg-rte-dd.open').removeClass('open');
+            const saved = saveCurrentRange(editorEl);
+            const rawUrl = window.prompt('Enter link URL (https://...):', 'https://');
+            if (rawUrl === null) {
+                restoreRange(editorEl, saved);
+                return;
+            }
+            let url = rawUrl.trim();
+            if (!url || /^(javascript|data|vbscript):/i.test(url)) {
+                restoreRange(editorEl, saved);
+                return;
+            }
+            if (!/^(https?:\/\/|mailto:)/i.test(url)) {
+                url = 'https://' + url;
+            }
+            restoreRange(editorEl, saved);
+            const sel = window.getSelection();
+            let range = (sel && sel.rangeCount) ? sel.getRangeAt(0) : null;
+            if (!range || !editorEl.contains(range.commonAncestorContainer)) {
+                range = document.createRange();
+                range.selectNodeContents(editorEl);
+                range.collapse(false);
+            }
+            const linkEl = document.createElement('a');
+            linkEl.href = url;
+            linkEl.target = '_blank';
+            linkEl.rel = 'noopener noreferrer';
+            if (!range.collapsed) {
+                linkEl.appendChild(range.extractContents());
+            } else {
+                linkEl.textContent = url;
+            }
+            range.insertNode(linkEl);
+            const afterNode = document.createTextNode(' ');
+            if (linkEl.parentNode) {
+                linkEl.parentNode.insertBefore(afterNode, linkEl.nextSibling);
+            }
+            if (sel) {
+                const caretRange = document.createRange();
+                caretRange.setStart(linkEl, linkEl.childNodes.length);
+                caretRange.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(caretRange);
+            }
+            updateRteLinkBar($bubble[0]);
+            scheduleResponseSave(editorEl, false);
+        });
+
+        $(document).on('mousedown', '.mtg-rte-unlink-btn', function (e) {
+            e.preventDefault();
+        });
+
+        $(document).on('click', '.mtg-rte-unlink-btn', function (e) {
+            e.preventDefault();
+            const $bubble = $(this).closest('.mtg-bubble');
+            const editorEl = $bubble.find('.mtg-bubble-editor')[0];
+            const linkEl = findActiveLink($bubble[0]);
+            if (editorEl && linkEl) {
+                unwrapNode(linkEl);
+                updateRteLinkBar($bubble[0]);
+                scheduleResponseSave(editorEl, false);
+            }
+        });
+
+        $(document).on('mousedown', '.mtg-bubble-editor a[href]', function (e) {
+            if (!$(this).closest('.mtg-bubble').hasClass('is-focused')) {
+                e.preventDefault();
+            }
+        });
+
+        $(document).on('click', '.mtg-bubble-editor a[href]', function (e) {
+            const $bubble = $(this).closest('.mtg-bubble');
+            if (!$bubble.hasClass('is-focused') || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.open(this.href, '_blank', 'noopener,noreferrer');
+            }
+        });
+
+        $(document).on('click', '[data-rte-action="image"]', function (e) {
+            e.preventDefault();
+            const $bubble = $(this).closest('.mtg-bubble');
+            const editorEl = $bubble.find('.mtg-bubble-editor')[0];
+            if (!editorEl) {
+                return;
+            }
+            $bubble.find('.mtg-rte-dd.open').removeClass('open');
+            const range = saveCurrentRange(editorEl);
+            const rawUrl = window.prompt('Enter image URL (https://...):', 'https://');
+            if (rawUrl === null) {
+                restoreRange(editorEl, range);
+                return;
+            }
+            const url = rawUrl.trim();
+            if (!/^https?:\/\//i.test(url)) {
+                return;
+            }
+            restoreRange(editorEl, range);
+            document.execCommand('insertHTML', false, '<img src="' + esc(url) + '" alt="">');
+            scheduleResponseSave(editorEl, false);
+        });
+
+        $(document).on('input', '.mtg-bubble-editor', function () {
+            if (this.innerHTML === '<br>') {
+                this.innerHTML = '';
+            }
+            scheduleResponseSave(this, false);
+        });
+
+        $(document).on('keyup mouseup', '.mtg-bubble-editor', function () {
+            refreshRteToolbarState($(this).closest('.mtg-bubble')[0]);
         });
 
         $(document).on('input', '.mtg-card-search', function () {

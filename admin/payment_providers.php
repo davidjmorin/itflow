@@ -31,7 +31,8 @@ if (!isset($sortable_columns[$sort])) {
     $sort = 'payment_provider_name';
 }
 
-$sql = mysqli_query($mysqli, "SELECT SQL_CALC_FOUND_ROWS payment_provider_id, payment_provider_name, payment_provider_description, payment_provider_private_key,
+$sql = mysqli_query($mysqli, "SELECT SQL_CALC_FOUND_ROWS payment_provider_id, payment_provider_name, payment_provider_description, payment_provider_public_key, payment_provider_private_key,
+        payment_provider_mode, payment_provider_extra,
         payment_provider_threshold, payment_provider_active, payment_provider_account, payment_provider_expense_vendor, payment_provider_expense_category,
         payment_provider_card_fee, payment_provider_card_fee_percent, payment_provider_card_fee_fixed,
         account_name, account_archived_at, vendor_name, category_name,
@@ -104,7 +105,7 @@ $csrf = $_SESSION['csrf_token'];
                 $name = (string) $row['payment_provider_name'];
                 $kind = paymentProviderKinds()[$name] ?? null;
                 $on = intval($row['payment_provider_active']) === 1;
-                $mode = paymentProviderMode($row['payment_provider_private_key']);
+                $mode = paymentProviderMode($row['payment_provider_private_key'], $row);
                 $edit_url = "modals/payment_provider/payment_provider_edit.php?id=$provider_id";
                 $cards = intval($row['saved_cards']);
                 $autopay = intval($row['autopay']);
@@ -219,7 +220,7 @@ $csrf = $_SESSION['csrf_token'];
     $empty_state = [
         'thing' => 'payment providers',
         'icon' => 'fa-credit-card',
-        'text' => 'Set up Stripe and clients can pay their invoices by card, save a card, and pay recurring invoices by autopay.',
+        'text' => 'Set up Stripe, Square, or PayPal so clients can pay their invoices online.',
         'actions' => $can_add ? [['label' => 'New Provider', 'modal' => $add_url]] : [],
     ];
     ?>

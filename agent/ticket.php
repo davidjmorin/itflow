@@ -1567,6 +1567,8 @@ if (isset($_GET['ticket_id'])) {
                     </div>
                 <?php } ?>
 
+                <?php require_once __DIR__ . '/includes/ticket_products_card.php'; ?>
+
                 <!-- Related tickets - linked with this one, any client's (functions/ticket_link.php) -->
                 <?php if ($related || $related_hidden) { ?>
                     <div class="card mb-3" data-related-tickets>

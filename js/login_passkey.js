@@ -9,6 +9,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let passkeyCheckedEmail = '';
     let manualPasswordMode = false;
+    let conditionalAbortController = null;
+    let conditionalRequestPromise = null;
+    let authInProgress = false;
+
+    async function abortConditionalAuth() {
+        if (conditionalAbortController) {
+            conditionalAbortController.abort();
+            conditionalAbortController = null;
+        }
+        if (conditionalRequestPromise) {
+            await Promise.race([
+                conditionalRequestPromise.catch(() => {}),
+                new Promise(resolve => setTimeout(resolve, 150))
+            ]);
+            conditionalRequestPromise = null;
+        }
+    }
 
     async function checkPasskey(email) {
         if (!email || email === passkeyCheckedEmail || manualPasswordMode) return;
@@ -68,14 +85,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function triggerPasskeyAuth(email) {
+        if (authInProgress) return;
+        authInProgress = true;
         const btn = mfaPasskeyBtn || passkeyBtn;
         let originalHtml = '';
         if (btn) {
             originalHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Verifying passkey...';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Verifying passkey...';
         }
+        let redirecting = false;
         try {
+            await abortConditionalAuth();
             const query = email ? ('&email=' + encodeURIComponent(email)) : '';
             const res = await fetch('login_passkey.php?action=get_login_args' + query);
             const data = await res.json();
@@ -101,13 +122,20 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!verifyData.success) {
                 throw new Error(verifyData.error || 'Passkey verification failed');
             }
+            redirecting = true;
             window.location.href = verifyData.redirect || '/';
         } catch (err) {
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = originalHtml || '<i class="fas fa-fingerprint mr-2"></i>Sign In with Passkey';
+                btn.innerHTML = originalHtml || '<i class="fas fa-fingerprint me-2"></i>Sign In with Passkey';
             }
-            alert(err.message || 'Passkey login failed.');
+            if (!err || err.name !== 'AbortError') {
+                alert((err && err.message) || 'Passkey login failed.');
+            }
+        } finally {
+            if (!redirecting) {
+                authInProgress = false;
+            }
         }
     }
 
@@ -123,38 +151,48 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (window.PublicKeyCredential && PublicKeyCredential.isConditionalMediationAvailable) {
+    if (!mfaPasskeyBtn && window.PublicKeyCredential && PublicKeyCredential.isConditionalMediationAvailable) {
         PublicKeyCredential.isConditionalMediationAvailable().then(available => {
-            if (available) {
-                fetch('login_passkey.php?action=get_login_args')
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.success && data.args) {
-                            recursiveBase64StrToArrayBuffer(data.args);
-                            data.args.mediation = 'conditional';
-                            navigator.credentials.get(data.args).then(cred => {
-                                if (cred) {
-                                    const payload = {
-                                        id: arrayBufferToBase64(cred.rawId),
-                                        clientDataJSON: arrayBufferToBase64(cred.response.clientDataJSON),
-                                        authenticatorData: arrayBufferToBase64(cred.response.authenticatorData),
-                                        signature: arrayBufferToBase64(cred.response.signature),
-                                        userHandle: cred.response.userHandle ? arrayBufferToBase64(cred.response.userHandle) : null
-                                    };
-                                    fetch('login_passkey.php?action=verify_login', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify(payload)
-                                    }).then(vr => vr.json()).then(vd => {
-                                        if (vd.success) {
-                                            window.location.href = vd.redirect || '/';
-                                        }
-                                    });
-                                }
-                            }).catch(() => {});
-                        }
-                    }).catch(() => {});
-            }
+            if (!available || authInProgress) return;
+            fetch('login_passkey.php?action=get_login_args')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success || !data.args || authInProgress) return;
+                    recursiveBase64StrToArrayBuffer(data.args);
+                    conditionalAbortController = new AbortController();
+                    data.args.mediation = 'conditional';
+                    data.args.signal = conditionalAbortController.signal;
+                    conditionalRequestPromise = navigator.credentials.get(data.args)
+                        .then(cred => {
+                            conditionalAbortController = null;
+                            conditionalRequestPromise = null;
+                            if (cred) {
+                                const payload = {
+                                    id: arrayBufferToBase64(cred.rawId),
+                                    clientDataJSON: arrayBufferToBase64(cred.response.clientDataJSON),
+                                    authenticatorData: arrayBufferToBase64(cred.response.authenticatorData),
+                                    signature: arrayBufferToBase64(cred.response.signature),
+                                    userHandle: cred.response.userHandle ? arrayBufferToBase64(cred.response.userHandle) : null
+                                };
+                                return fetch('login_passkey.php?action=verify_login', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload)
+                                }).then(vr => vr.json()).then(vd => {
+                                    if (vd.success) {
+                                        window.location.href = vd.redirect || '/';
+                                    }
+                                });
+                            }
+                        })
+                        .catch(err => {
+                            conditionalAbortController = null;
+                            conditionalRequestPromise = null;
+                            if (err && err.name !== 'AbortError') {
+                                return;
+                            }
+                        });
+                }).catch(() => {});
         }).catch(() => {});
     }
 });

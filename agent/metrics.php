@@ -336,6 +336,7 @@ $accessible_series = meetingListAccessibleSeries($session_user_id, $is_admin);
     </div>
 </div>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <script>
 (function() {
     const csrf = <?= json_encode($_SESSION['csrf_token']) ?>;

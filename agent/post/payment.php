@@ -291,8 +291,11 @@ if (isset($_POST['add_payment_stripe'])) {
 
     // Get Client Payment Details - a card of this invoice's client, with a provider that is turned on,
     // as the Charge Saved Card window lists them (agent/modals/payment/payment_saved_method_add.php)
-    $sql = mysqli_query($mysqli, "SELECT payment_provider_account, payment_provider_client, payment_provider_private_key,
-        payment_provider_public_key, saved_payment_description, saved_payment_provider_method FROM client_saved_payment_methods
+    $sql = mysqli_query($mysqli, "SELECT payment_providers.payment_provider_id, payment_providers.payment_provider_name,
+        payment_provider_account, payment_provider_client, payment_provider_private_key, payment_provider_public_key,
+        payment_provider_mode, payment_provider_extra, payment_provider_card_fee,
+        payment_provider_card_fee_percent, payment_provider_card_fee_fixed,
+        saved_payment_description, saved_payment_provider_method FROM client_saved_payment_methods
         JOIN payment_providers ON payment_providers.payment_provider_id = saved_payment_provider_id
         LEFT JOIN client_payment_provider ON client_payment_provider.client_id = saved_payment_client_id
             AND client_payment_provider.payment_provider_id = saved_payment_provider_id
@@ -303,24 +306,23 @@ if (isset($_POST['add_payment_stripe'])) {
         redirect();
     }
 
+    $provider_row = $row;
+    $provider_name = (string) $row['payment_provider_name'];
     $public_key = escapeSql($row['payment_provider_public_key']);
     $private_key = escapeSql($row['payment_provider_private_key']);
     $account_id = intval($row['payment_provider_account']);
-    $payment_provider_client = escapeSql($row['payment_provider_client']);
+    $payment_provider_client = escapeSql((string) ($row['payment_provider_client'] ?? ''));
     $saved_payment_method = escapeSql($row['saved_payment_provider_method']);
     $saved_payment_description = escapeSql($row['saved_payment_description']);
 
-    // Sanity checks
-    if (!$payment_provider_client || !$saved_payment_method) {
-        flashAlert("Stripe not enabled or no client card saved", 'error');
+    if (($provider_name === 'Stripe' && !$payment_provider_client) || !$saved_payment_method) {
+        flashAlert("Payment provider not enabled or no client card saved", 'error');
         redirect();
     } elseif (!preg_match('/^[a-f0-9]{32}$/', $pay_token)) {
         flashAlert("That window was out of date - open Charge Saved Card again", 'error');
         redirect();
     }
 
-    // One charge for an invoice at a time: a second Charge - a double click, or someone else on the
-    // same invoice - waits for the first, then reads the invoice again and finds it paid
     $pay_lock = "itflow_invoice_pay_$invoice_id";
     if (intval(mysqli_fetch_row(mysqli_query($mysqli, "SELECT GET_LOCK('$pay_lock', 30)"))[0] ?? 0) !== 1) {
         flashAlert("A payment for this invoice is already going through - check the invoice in a moment", 'error');
@@ -335,6 +337,69 @@ if (isset($_POST['add_payment_stripe'])) {
         redirect();
     }
 
+    if ($provider_name === 'Square') {
+        $cust = squareEnsureCustomer($provider_row, $client_id, $contact_name, $contact_email);
+        if (!$cust['ok']) {
+            mysqli_query($mysqli, "SELECT RELEASE_LOCK('$pay_lock')");
+            flashAlert(escapeHtml($cust['error']), 'error');
+            redirect();
+        }
+        $balance_to_pay = round($invoice_amount, 2);
+        $balance_cents = intval(round($balance_to_pay * 100));
+        $fee_cents = billingCardFeeCents($balance_cents, billingCardFeeFor($client_id, $provider_row));
+        $total_cents = $balance_cents + $fee_cents;
+        $charge = squareCreatePayment(
+            $provider_row,
+            stripslashes($saved_payment_method),
+            $total_cents,
+            $invoice_currency_code,
+            "itflow-agent-sq-$invoice_id-$pay_token",
+            [
+                'customer_id' => $cust['customer_id'],
+                'reference_id' => mb_substr($invoice_prefix . $invoice_number, 0, 40),
+                'note' => "ITFlow: $client_name payment for $invoice_prefix$invoice_number",
+            ]
+        );
+        if ($charge['ok']) {
+            $sq_id = escapeSql((string) $charge['payment']['id']);
+            $created_ts = !empty($charge['payment']['created_at']) ? strtotime((string) $charge['payment']['created_at']) : time();
+            $sq_date = date('Y-m-d', $created_ts ?: time());
+            $sq_amount_paid = floatval($total_cents / 100);
+            $sq_currency = strtoupper($invoice_currency_code);
+            $sq_livemode = squareProviderMode($provider_row) === 'live';
+
+            billingCardFeeAdd($invoice_id, $fee_cents / 100, $sq_date);
+            mysqli_query($mysqli, "INSERT INTO payments SET payment_date = '$sq_date', payment_amount = $sq_amount_paid, payment_currency_code = '$sq_currency', payment_account_id = $account_id, payment_method = 'Square', payment_reference = 'Square - $sq_id', payment_invoice_id = $invoice_id");
+            $invoice_status = updateInvoiceStatusFromPayments($invoice_id);
+            mysqli_query($mysqli, "SELECT RELEASE_LOCK('$pay_lock')");
+            mysqli_query($mysqli, "INSERT INTO history SET history_status = '$invoice_status', history_description = 'Online Payment added (agent)" . ($fee_cents > 0 ? ', with a ' . escapeSql(billingMoney($fee_cents / 100, $sq_currency)) . ' card fee' : '') . "', history_invoice_id = $invoice_id");
+
+            if (!empty($config_smtp_provider)) {
+                $receipt_to = billingPaymentSend($invoice_id, $sq_amount_paid, ['date' => $sq_date, 'method' => 'Card', 'reference' => "Square - $sq_id", 'how' => 'Card'], true);
+                if ($receipt_to) {
+                    logAudit("Invoice", "Payment", "Payment receipt for invoice $invoice_prefix$invoice_number queued to " . escapeSql(implode(', ', $receipt_to)), $client_id, $invoice_id);
+                }
+            }
+
+            $extended_log_desc = !$sq_livemode ? '(DEV MODE)' : '';
+            appNotify("Invoice Paid", "Invoice $invoice_prefix$invoice_number automatically paid", "/agent/invoice.php?invoice_id=$invoice_id", $client_id);
+            $fee_text = $fee_cents > 0 ? ' (with a ' . billingMoney($fee_cents / 100, $invoice_currency_code) . ' card fee)' : '';
+            logAudit("Invoice", "Payment", "$session_name initiated Square payment amount of " . billingMoney($sq_amount_paid, $invoice_currency_code) . "$fee_text added to invoice $invoice_prefix$invoice_number - $sq_id $extended_log_desc", $client_id, $invoice_id);
+            triggerCustomAction('invoice_pay', $invoice_id);
+
+            flashAlert("Payment amount <strong>" . billingMoney($sq_amount_paid, $invoice_currency_code) . "</strong>$fee_text added");
+            redirect();
+        } else {
+            mysqli_query($mysqli, "SELECT RELEASE_LOCK('$pay_lock')");
+            $err_msg = escapeSql($charge['error'] ?: 'Square charge failed');
+            logApp("Square", "error", "Agent charge failed for invoice ID $invoice_id: " . $charge['error']);
+            mysqli_query($mysqli, "INSERT INTO history SET history_status = 'Payment failed', history_description = 'Square pay failed: $err_msg', history_invoice_id = $invoice_id");
+            logAudit("Invoice", "Payment", "Failed online payment of invoice $invoice_prefix$invoice_number due to Square error: $err_msg", $client_id, $invoice_id);
+            flashAlert("Payment failed: " . escapeHtml($charge['error']), 'error');
+            redirect();
+        }
+    }
+
     // Initialize Stripe
     require_once __DIR__ . '/../../includes/stripe_init.php';
     $stripe = new \Stripe\StripeClient($private_key);
@@ -342,7 +407,7 @@ if (isset($_POST['add_payment_stripe'])) {
     $balance_to_pay = round($invoice_amount, 2);
     // The card fee, when the client pays it - as the Charge Saved Card window showed it (functions/billing_pay.php)
     $balance_cents = intval(round($balance_to_pay * 100));
-    $fee_cents = billingCardFeeCents($balance_cents, billingCardFeeFor($client_id));
+    $fee_cents = billingCardFeeCents($balance_cents, billingCardFeeFor($client_id, $provider_row));
     $pi_metadata = [
         'itflow_client_id' => $client_id,
         'itflow_client_name' => $client_name,
@@ -703,6 +768,120 @@ if (isset($_GET['refund_payment_stripe'])) {
 
     redirect();
 
+}
+
+if (isset($_GET['refund_payment_square'])) {
+
+    validateCSRFToken();
+
+    enforceBillingMoney('delete');
+
+    $payment_id = intval($_GET['refund_payment_square']);
+
+    $sql = mysqli_query($mysqli, "SELECT invoice_client_id, invoice_number, invoice_prefix, invoice_currency_code, payment_invoice_id, payment_amount, payment_currency_code, payment_reference
+        FROM payments
+        LEFT JOIN invoices ON payment_invoice_id = invoice_id
+        WHERE payment_id = $payment_id AND payment_method = 'Square'
+        LIMIT 1");
+    $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That payment no longer exists.', 'error');
+        redirect();
+    }
+
+    $invoice_id = intval($row['payment_invoice_id']);
+    $invoice_prefix = escapeSql($row['invoice_prefix']);
+    $invoice_number = intval($row['invoice_number']);
+    $client_id = intval($row['invoice_client_id']);
+    $currency = strtoupper((string) ($row['payment_currency_code'] ?: $row['invoice_currency_code']));
+
+    enforceClientAccess();
+
+    if (!reconcileCheckDelete('payment', $payment_id, $error)) {
+        flashAlert(escapeHtml($error), 'error');
+        redirect();
+    }
+
+    $sq_payment_id = trim(str_replace('Square - ', '', (string) $row['payment_reference']));
+    $refund_cents = intval(round(floatval($row['payment_amount']) * 100));
+    $sq_provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT * FROM payment_providers WHERE payment_provider_name = 'Square' LIMIT 1"));
+    if (!$sq_provider || $sq_payment_id === '') {
+        flashAlert('Square is not configured or transaction reference is missing.', 'error');
+        redirect();
+    }
+
+    $refund = squareRefundPayment($sq_provider, $sq_payment_id, $refund_cents, $currency, "itflow-refund-$payment_id-" . date('YmdHis'));
+    if (!$refund['ok']) {
+        logApp("Square", "error", "Exception during refund for invoice ID $invoice_id: " . $refund['error']);
+        flashAlert("Square refund failed: " . escapeHtml($refund['error']), 'error');
+        redirect();
+    }
+
+    mysqli_query($mysqli, "DELETE FROM payments WHERE payment_id = $payment_id");
+    $invoice_status = updateInvoiceStatusFromPayments($invoice_id);
+    $sq_id_sql = escapeSql($sq_payment_id);
+    mysqli_query($mysqli, "INSERT INTO history SET history_status = '$invoice_status', history_description = 'Payment $sq_id_sql deleted and refunded in Square', history_invoice_id = $invoice_id");
+    logAudit("Invoice", "Edit", "$session_name refunded and deleted Square payment $sq_id_sql on Invoice $invoice_prefix$invoice_number", $client_id, $invoice_id);
+
+    flashAlert("Payment deleted and refunded in Square", 'error');
+    redirect();
+}
+
+if (isset($_GET['refund_payment_paypal'])) {
+
+    validateCSRFToken();
+
+    enforceBillingMoney('delete');
+
+    $payment_id = intval($_GET['refund_payment_paypal']);
+
+    $sql = mysqli_query($mysqli, "SELECT invoice_client_id, invoice_number, invoice_prefix, invoice_currency_code, payment_invoice_id, payment_amount, payment_currency_code, payment_reference
+        FROM payments
+        LEFT JOIN invoices ON payment_invoice_id = invoice_id
+        WHERE payment_id = $payment_id AND payment_method = 'PayPal'
+        LIMIT 1");
+    $row = mysqli_fetch_assoc($sql);
+    if (!$row) {
+        flashAlert('That payment no longer exists.', 'error');
+        redirect();
+    }
+
+    $invoice_id = intval($row['payment_invoice_id']);
+    $invoice_prefix = escapeSql($row['invoice_prefix']);
+    $invoice_number = intval($row['invoice_number']);
+    $client_id = intval($row['invoice_client_id']);
+    $currency = strtoupper((string) ($row['payment_currency_code'] ?: $row['invoice_currency_code']));
+
+    enforceClientAccess();
+
+    if (!reconcileCheckDelete('payment', $payment_id, $error)) {
+        flashAlert(escapeHtml($error), 'error');
+        redirect();
+    }
+
+    $pp_capture_id = trim(str_replace('PayPal - ', '', (string) $row['payment_reference']));
+    $refund_cents = intval(round(floatval($row['payment_amount']) * 100));
+    $pp_provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT * FROM payment_providers WHERE payment_provider_name = 'PayPal' LIMIT 1"));
+    if (!$pp_provider || $pp_capture_id === '') {
+        flashAlert('PayPal is not configured or transaction reference is missing.', 'error');
+        redirect();
+    }
+
+    $refund = paypalRefundCapture($pp_provider, $pp_capture_id, $refund_cents, $currency);
+    if (!$refund['ok']) {
+        logApp("PayPal", "error", "Exception during refund for invoice ID $invoice_id: " . $refund['error']);
+        flashAlert("PayPal refund failed: " . escapeHtml($refund['error']), 'error');
+        redirect();
+    }
+
+    mysqli_query($mysqli, "DELETE FROM payments WHERE payment_id = $payment_id");
+    $invoice_status = updateInvoiceStatusFromPayments($invoice_id);
+    $pp_id_sql = escapeSql($pp_capture_id);
+    mysqli_query($mysqli, "INSERT INTO history SET history_status = '$invoice_status', history_description = 'Payment $pp_id_sql deleted and refunded in PayPal', history_invoice_id = $invoice_id");
+    logAudit("Invoice", "Edit", "$session_name refunded and deleted PayPal payment $pp_id_sql on Invoice $invoice_prefix$invoice_number", $client_id, $invoice_id);
+
+    flashAlert("Payment deleted and refunded in PayPal", 'error');
+    redirect();
 }
 
 /* Email a payment's receipt to the client's billing contacts again - from its quick look. */

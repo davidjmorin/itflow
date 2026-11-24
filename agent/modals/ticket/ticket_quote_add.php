@@ -165,55 +165,61 @@ ob_start();
             </div>
             <!-- End row 2 -->
 
-            <div class="mb-3">
-                <label class="form-label">Item <strong class="text-danger">*</strong></label>
-                <div class="input-group">
+            <?php $tp_labor_section_id = 'quoteLaborSection'; $tp_labor_switch_id = 'quoteIncludeLaborSwitch'; require __DIR__ . '/../../includes/ticket_products_billing_picker.php'; ?>
+
+            <div id="quoteLaborSection">
+                <div class="mb-3">
+                    <label class="form-label">Item <strong class="text-danger">*</strong></label>
+                    <div class="input-group">
                         <span class="input-group-text"><i class="fas fa-fw fa-box"></i></span>
-                    <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" required>
+                        <input type="text" class="form-control" name="item_name" placeholder="Item" maxlength="200" required>
+                    </div>
                 </div>
 
                 <?php $description = "Ticket: {$ticket_prefix}{$ticket_number} - $ticket_subject\n"; ?>
 
-            <div class="mb-3">
-                <label class="form-label">Item description</label>
-                <div class="input-group">
-                    <textarea class="form-control" rows="10" name="item_description"><?= trim($description) ?></textarea>
+                <div class="mb-3">
+                    <label class="form-label">Item description</label>
+                    <div class="input-group">
+                        <textarea class="form-control" rows="10" name="item_description"><?= trim($description) ?></textarea>
+                    </div>
                 </div>
 
-            <div class="row g-2">
-                <div class="col">
-                    <div class="mb-3">
-                        <label class="form-label">QTY <strong class="text-danger">*</strong></label>
-                        <div class="input-group">
+                <div class="row g-2">
+                    <div class="col">
+                        <div class="mb-3">
+                            <label class="form-label">QTY <strong class="text-danger">*</strong></label>
+                            <div class="input-group">
                                 <span class="input-group-text"><i class="fas fa-fw fa-balance-scale"></i></span>
-                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" required>
+                                <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="qty" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col">
+                        <div class="mb-3">
+                            <label class="form-label">Price <strong class="text-danger">*</strong></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-fw fa-dollar-sign"></i></span>
+                                <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
+                            </div>
+                            <div class="form-text">
+                                <?= escapeHtml(ucfirst($client_rate_info['note'])) ?> is <strong><?= billingMoney($client_rate, $session_company_currency); ?></strong> an hour
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="col">
-                    <div class="mb-3">
-                        <label class="form-label">Price <strong class="text-danger">*</strong></label>
-                        <div class="input-group">
-                                <span class="input-group-text"><i class="fas fa-fw fa-dollar-sign"></i></span>
-                            <input type="text" class="form-control" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]{0,2}" name="price" value="<?= number_format($client_rate, 2, '.', '') ?>" required>
-                        </div>
-                        <div class="form-text">
-                            <?= escapeHtml(ucfirst($client_rate_info['note'])) ?> is <strong><?= billingMoney($client_rate, $session_company_currency); ?></strong> an hour
-                        </div>
+                <div class="mb-3">
+                    <label class="form-label">Tax <strong class="text-danger">*</strong></label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="fas fa-fw fa-piggy-bank"></i></span>
+                        <select class="form-select select2" name="tax_id" required>
+                            <?= taxSelectOptions(taxDefaultFor($client_id, 'time')) ?>
+                        </select>
                     </div>
                 </div>
             </div>
-
-            <div class="mb-3">
-                <label class="form-label">Tax <strong class="text-danger">*</strong></label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-fw fa-piggy-bank"></i></span>
-                    <select class="form-select select2" name="tax_id" required>
-                        <?= taxSelectOptions(taxDefaultFor($client_id, 'time')) ?>
-                    </select>
-                </div>
-            <?php } ?>
 
         </div>
 
@@ -226,19 +232,6 @@ ob_start();
             </button>
         </div>
     </form>
-
-    <script>
-    (function () {
-        function syncQuoteLaborVisibility() {
-            var enabled = $('#quoteIncludeLaborSwitch').is(':checked');
-            var $section = $('#quoteLaborSection');
-            $section.toggleClass('d-none', !enabled);
-            $section.find('input, textarea, select').prop('disabled', !enabled);
-        }
-        $('#quoteIncludeLaborSwitch').on('change', syncQuoteLaborVisibility);
-        syncQuoteLaborVisibility();
-    })();
-    </script>
 
 <?php
 require_once '../../../includes/modal_footer.php';

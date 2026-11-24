@@ -139,3 +139,5 @@ if (isset($_GET['stripe_create_pi'])) {
 
     exit;
 }
+
+require_once __DIR__ . '/guest_check_company.php';

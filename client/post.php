@@ -1089,47 +1089,369 @@ if (isset($_POST['portal_pay'])) {
     $method = (string) ($_POST['method'] ?? 'new');
     $back = 'unpaid_invoices.php' . ($invoice_ids ? '?' . http_build_query(['select' => implode(',', $invoice_ids)]) : '');
 
-    if (!billingStripeProvider()) {
-        flashAlert('Card payments are not set up', 'error');
+    if (!billingAnyOnlineProvider()) {
+        flashAlert('Online payments are not set up', 'error');
         redirect('invoices.php');
     }
 
-    $selection = billingPaySelection($session_client_id, $invoice_ids, $error);
+    if ($method === 'new' || strpos($method, 'new:') === 0) {
+        $chosen_name = strpos($method, 'new:') === 0 ? substr($method, 4) : '';
+        $chosen_provider = $chosen_name !== '' ? billingProviderByName($chosen_name) : billingAnyOnlineProvider();
+        if (!$chosen_provider) {
+            flashAlert('That payment method is not available', 'error');
+            redirect($back);
+        }
+        $selection = billingPaySelection($session_client_id, $invoice_ids, $error, $chosen_provider);
+        if (!$selection) {
+            flashAlert(escapeHtml($error), 'error');
+            redirect($back);
+        }
+        $_SESSION['portal_checkout'] = [
+            'ids' => array_keys($selection['cents']),
+            'provider' => (string) $chosen_provider['payment_provider_name'],
+            'pi' => $_SESSION['portal_checkout']['pi'] ?? '',
+        ];
+        redirect('pay.php');
+    }
+
+    $saved_id = intval($method);
+    $saved_card_row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT saved_payment_provider_id FROM client_saved_payment_methods WHERE saved_payment_id = $saved_id AND saved_payment_client_id = $session_client_id LIMIT 1"));
+    $saved_provider = $saved_card_row ? billingProviderById($saved_card_row['saved_payment_provider_id']) : null;
+    if (!$saved_provider) {
+        flashAlert('That saved card is no longer available', 'error');
+        redirect($back);
+    }
+
+    $selection = billingPaySelection($session_client_id, $invoice_ids, $error, $saved_provider);
     if (!$selection) {
         flashAlert(escapeHtml($error), 'error');
         redirect($back);
     }
 
-    if ($method === 'new') {
-        $_SESSION['portal_checkout'] = ['ids' => array_keys($selection['cents']), 'pi' => $_SESSION['portal_checkout']['pi'] ?? ''];
-        redirect('pay.php');
-    }
-
-    // A saved card, charged now - the form's token keeps a double click to one charge
     $token = (string) ($_POST['pay_token'] ?? '');
     if (!preg_match('/^[a-f0-9]{32}$/', $token)) {
         flashAlert('That page was out of date - check the invoices and try again', 'error');
         redirect($back);
     }
     $contact_name = (string) ($contact['contact_name'] ?? '');
-    $charge = billingStripeChargeSaved($selection, $session_client_id, intval($method), $token, ['name' => $contact_name]);
+    $charge = billingChargeSavedCard($selection, $session_client_id, $saved_id, $token, ['name' => $contact_name, 'how' => 'Saved card', 'via' => 'in the client portal']);
     if (!$charge['ok']) {
         flashAlert(escapeHtml($charge['error']), 'error');
         redirect($back);
     }
 
-    $booked = billingStripeBook($charge['pi'], $session_client_id, ['name' => $contact_name, 'how' => 'Saved card', 'via' => 'in the client portal']);
+    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($selection['charge'], $selection['currency'])) . '</strong> went through');
+    redirect('receipt.php?id=' . $charge['payment_id']);
+
+}
+
+if (isset($_GET['portal_square_pay'])) {
+
+    header('Content-Type: application/json; charset=utf-8');
+    validateCSRFToken();
+    enforceContactCan('accounting');
+
+    $provider = billingProviderByName('Square');
+    $checkout = $_SESSION['portal_checkout'] ?? null;
+    $pay_token = (string) ($_POST['pay_token'] ?? '');
+    $source_id = trim((string) ($_POST['source_id'] ?? ''));
+    $verification_token = trim((string) ($_POST['verification_token'] ?? ''));
+
+    if (!$provider || !$checkout || empty($checkout['ids']) || empty($checkout['token']) || !hash_equals((string) $checkout['token'], $pay_token)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Checkout session expired. Please reload and try again.']);
+        exit;
+    }
+    if ($source_id === '') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Please enter valid card details.']);
+        exit;
+    }
+
+    $selection = billingPaySelection($session_client_id, (array) $checkout['ids'], $error, $provider);
+    if (!$selection) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $error ?: 'Selected invoices are no longer open.']);
+        exit;
+    }
+
+    $total_cents = array_sum($selection['cents']) + array_sum($selection['fees'] ?? []);
+    $numbers = implode(', ', $selection['numbers']);
+    $opts = [
+        'reference_id' => mb_substr($numbers, 0, 40),
+        'note' => "ITFlow: $session_client_name payment for $numbers",
+    ];
+    if ($verification_token !== '') {
+        $opts['verification_token'] = $verification_token;
+    }
+    if (!empty($session_contact_email)) {
+        $opts['buyer_email_address'] = $session_contact_email;
+    }
+    $cust = squareEnsureCustomer($provider, $session_client_id, $session_contact_name, $session_contact_email);
+    if ($cust['ok']) {
+        $opts['customer_id'] = $cust['customer_id'];
+    }
+
+    $charge = squareCreatePayment($provider, $source_id, $total_cents, $selection['currency'], 'itflow-portal-sq-' . $pay_token, $opts);
+    if (!$charge['ok']) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $charge['error'] ?: 'Square payment could not be completed.']);
+        exit;
+    }
+
+    $sq_id = (string) $charge['payment']['id'];
+    $created = !empty($charge['payment']['created_at']) ? strtotime((string) $charge['payment']['created_at']) : time();
+    $booked = billingBookOnlinePayment(
+        'Square',
+        $provider,
+        $sq_id,
+        $session_client_id,
+        $selection['cents'],
+        $selection['fees'] ?? [],
+        $selection['currency'],
+        date('Y-m-d', $created ?: time()),
+        squareProviderMode($provider) === 'live',
+        ['name' => (string) ($contact['contact_name'] ?? ''), 'how' => 'Online card', 'via' => 'in the client portal']
+    );
     if (!$booked['ok']) {
-        $pi_id = escapeSql((string) $charge['pi']->id);
-        logApp("Stripe", "error", "Saved card payment $pi_id for client $session_client_id went through but could not be booked: " . $booked['error']);
-        appNotify("Invoice Payment", "A card payment of " . escapeSql(billingMoney($selection['charge'], $selection['currency'])) . " from " . escapeSql($session_client_name) . " went through in the client portal but could not be recorded - $pi_id", "/agent/invoices.php?client_id=$session_client_id", $session_client_id);
-        flashAlert('Your card was charged, but we could not record the payment here - we have been told and will put it right', 'error');
+        logApp('Square', 'error', "Portal payment $sq_id for client $session_client_id succeeded but could not be booked: " . $booked['error']);
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Your card was charged, but we could not record the payment automatically.']);
+        exit;
+    }
+
+    unset($_SESSION['portal_checkout']);
+    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($selection['charge'], $selection['currency'])) . '</strong> went through');
+    echo json_encode(['ok' => true, 'redirect' => 'receipt.php?id=' . $booked['payment_id']]);
+    exit;
+}
+
+if (isset($_GET['square_save_card'])) {
+
+    header('Content-Type: application/json; charset=utf-8');
+    validateCSRFToken();
+    enforceContactCan('accounting');
+
+    $provider = billingProviderByName('Square');
+    $source_id = trim((string) ($_POST['source_id'] ?? ''));
+    if (!$provider) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Square card saving is not configured.']);
+        exit;
+    }
+    $saved = squareSaveCard($provider, $session_client_id, $source_id, $session_contact_name);
+    if (!$saved['ok']) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $saved['error'] ?: 'Could not save card.']);
+        exit;
+    }
+
+    if (billingEmailReady()) {
+        billingMailCardSaved(
+            stripslashes($session_contact_email),
+            stripslashes($session_contact_name),
+            stripslashes((string) $session_client_name),
+            (string) $saved['brand'],
+            (string) $saved['last4'],
+            intval($saved['exp_month']),
+            intval($saved['exp_year'])
+        );
+    }
+
+    logAudit("Square", "Create", "$session_contact_name saved payment method (" . escapeSql($saved['description']) . ") (Card: " . escapeSql($saved['card_id']) . ")", $session_client_id);
+    flashAlert("Payment method saved - thank you");
+    echo json_encode(['ok' => true, 'redirect' => 'saved_payment_methods.php']);
+    exit;
+}
+
+if (isset($_GET['portal_paypal_create'])) {
+
+    header('Content-Type: application/json; charset=utf-8');
+    validateCSRFToken();
+    enforceContactCan('accounting');
+
+    $provider = billingProviderByName('PayPal');
+    $checkout = $_SESSION['portal_checkout'] ?? null;
+    $pay_token = (string) ($_POST['pay_token'] ?? '');
+    if (!$provider || !$checkout || empty($checkout['ids']) || empty($checkout['token']) || !hash_equals((string) $checkout['token'], $pay_token)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Checkout session expired. Please reload and try again.']);
+        exit;
+    }
+
+    $selection = billingPaySelection($session_client_id, (array) $checkout['ids'], $error, $provider);
+    if (!$selection) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $error ?: 'Selected invoices are no longer open.']);
+        exit;
+    }
+
+    $total_cents = array_sum($selection['cents']) + array_sum($selection['fees'] ?? []);
+    $numbers = implode(', ', $selection['numbers']);
+    $order = paypalCreateOrder(
+        $provider,
+        $total_cents,
+        $selection['currency'],
+        "Invoices: $numbers",
+        json_encode(['client_id' => $session_client_id, 'split' => $selection['cents'], 'fees' => $selection['fees'] ?? []]),
+        mb_substr('portal-' . $session_client_id . '-' . implode('-', array_keys($selection['cents'])), 0, 256)
+    );
+    if (!$order['ok']) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $order['error']]);
+        exit;
+    }
+
+    $_SESSION['portal_paypal_order'][$order['order_id']] = [
+        'client_id' => $session_client_id,
+        'cents' => $selection['cents'],
+        'fees' => $selection['fees'] ?? [],
+        'total_cents' => $total_cents,
+        'currency' => $selection['currency'],
+        'charge' => $selection['charge'],
+    ];
+    echo json_encode(['ok' => true, 'id' => $order['order_id']]);
+    exit;
+}
+
+if (isset($_GET['portal_paypal_capture'])) {
+
+    header('Content-Type: application/json; charset=utf-8');
+    validateCSRFToken();
+    enforceContactCan('accounting');
+
+    $provider = billingProviderByName('PayPal');
+    $order_id = trim((string) ($_POST['order_id'] ?? ''));
+    $meta = $_SESSION['portal_paypal_order'][$order_id] ?? null;
+    if (!$provider || !$meta || intval($meta['client_id']) !== $session_client_id) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'PayPal order session not found.']);
+        exit;
+    }
+
+    $cap = paypalCaptureOrder($provider, $order_id);
+    if (!$cap['ok']) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => $cap['error']]);
+        exit;
+    }
+    if (intval($cap['amount_cents']) !== intval($meta['total_cents']) || strtoupper($cap['currency']) !== strtoupper($meta['currency'])) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Captured PayPal amount mismatch.']);
+        exit;
+    }
+
+    $booked = billingBookOnlinePayment(
+        'PayPal',
+        $provider,
+        $cap['capture_id'],
+        $session_client_id,
+        $meta['cents'],
+        $meta['fees'],
+        $meta['currency'],
+        $cap['date'],
+        paypalProviderMode($provider) === 'live',
+        ['name' => (string) ($contact['contact_name'] ?? ''), 'how' => 'PayPal', 'via' => 'in the client portal']
+    );
+    if (!$booked['ok']) {
+        logApp('PayPal', 'error', "Portal capture {$cap['capture_id']} succeeded but could not be booked: " . $booked['error']);
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Payment succeeded at PayPal but could not be recorded automatically.']);
+        exit;
+    }
+
+    unset($_SESSION['portal_paypal_order'][$order_id], $_SESSION['portal_checkout']);
+    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($meta['charge'], $meta['currency'])) . '</strong> went through');
+    echo json_encode(['ok' => true, 'redirect' => 'receipt.php?id=' . $booked['payment_id']]);
+    exit;
+}
+
+if (isset($_GET['portal_paypal_redirect'])) {
+
+    validateCSRFToken();
+    portalBillingGate();
+
+    $provider = billingProviderByName('PayPal');
+    $checkout = $_SESSION['portal_checkout'] ?? null;
+    if (!$provider || !$checkout || empty($checkout['ids'])) {
+        flashAlert('PayPal checkout is not available', 'error');
+        redirect('unpaid_invoices.php');
+    }
+    $selection = billingPaySelection($session_client_id, (array) $checkout['ids'], $error, $provider);
+    if (!$selection) {
+        flashAlert(escapeHtml($error), 'error');
+        redirect('unpaid_invoices.php');
+    }
+    $total_cents = array_sum($selection['cents']) + array_sum($selection['fees'] ?? []);
+    $numbers = implode(', ', $selection['numbers']);
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? $config_base_url;
+    $return_url = "$scheme://$host/client/post.php?portal_paypal_return=1";
+    $cancel_url = "$scheme://$host/client/pay.php";
+    $order = paypalCreateOrder(
+        $provider,
+        $total_cents,
+        $selection['currency'],
+        "Invoices: $numbers",
+        json_encode(['client_id' => $session_client_id, 'split' => $selection['cents'], 'fees' => $selection['fees'] ?? []]),
+        mb_substr('portal-' . $session_client_id, 0, 256),
+        $return_url,
+        $cancel_url
+    );
+    if (!$order['ok'] || $order['approve_url'] === '') {
+        flashAlert(escapeHtml($order['error'] ?: 'Could not start PayPal checkout'), 'error');
+        redirect('pay.php');
+    }
+    $_SESSION['portal_paypal_order'][$order['order_id']] = [
+        'client_id' => $session_client_id,
+        'cents' => $selection['cents'],
+        'fees' => $selection['fees'] ?? [],
+        'total_cents' => $total_cents,
+        'currency' => $selection['currency'],
+        'charge' => $selection['charge'],
+    ];
+    header('Location: ' . $order['approve_url']);
+    exit;
+}
+
+if (isset($_GET['portal_paypal_return'])) {
+
+    portalBillingGate();
+
+    $provider = billingProviderByName('PayPal');
+    $order_id = trim((string) ($_GET['token'] ?? ''));
+    $meta = $_SESSION['portal_paypal_order'][$order_id] ?? null;
+    if (!$provider || !$meta || intval($meta['client_id']) !== $session_client_id) {
+        flashAlert('That PayPal payment could not be found', 'error');
         redirect('invoices.php');
     }
 
-    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($selection['charge'], $selection['currency'])) . '</strong> went through');
-    redirect('receipt.php?id=' . $booked['payment_id']);
+    $cap = paypalCaptureOrder($provider, $order_id);
+    if (!$cap['ok'] || intval($cap['amount_cents']) !== intval($meta['total_cents']) || strtoupper($cap['currency']) !== strtoupper($meta['currency'])) {
+        flashAlert(escapeHtml($cap['error'] ?: 'PayPal payment could not be completed'), 'error');
+        redirect('pay.php');
+    }
 
+    $booked = billingBookOnlinePayment(
+        'PayPal',
+        $provider,
+        $cap['capture_id'],
+        $session_client_id,
+        $meta['cents'],
+        $meta['fees'],
+        $meta['currency'],
+        $cap['date'],
+        paypalProviderMode($provider) === 'live',
+        ['name' => (string) ($contact['contact_name'] ?? ''), 'how' => 'PayPal', 'via' => 'in the client portal']
+    );
+    if (!$booked['ok']) {
+        flashAlert('Your PayPal payment completed, but could not be recorded automatically', 'error');
+        redirect('invoices.php');
+    }
+
+    unset($_SESSION['portal_paypal_order'][$order_id], $_SESSION['portal_checkout']);
+    flashAlert('Thank you - your payment of <strong>' . escapeHtml(billingMoney($meta['charge'], $meta['currency'])) . '</strong> went through');
+    redirect('receipt.php?id=' . $booked['payment_id']);
 }
 
 if (isset($_GET['portal_pay_return'])) {
@@ -1499,96 +1821,28 @@ if (isset($_GET['delete_saved_payment'])) {
 
     $saved_payment_id = intval($_GET['delete_saved_payment']);
 
-    // Get Stripe provider info
-    $stripe_provider_result = mysqli_query($mysqli, "
-        SELECT payment_provider_id, payment_provider_private_key FROM payment_providers
-        WHERE payment_provider_name = 'Stripe'
-        AND payment_provider_active = 1
-        LIMIT 1
-    ");
-    $stripe_provider = mysqli_fetch_assoc($stripe_provider_result);
+    $owned = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT cs.saved_payment_id, cs.saved_payment_description, cs.saved_payment_provider_method, pp.payment_provider_name
+        FROM client_saved_payment_methods cs
+        LEFT JOIN payment_providers pp ON pp.payment_provider_id = cs.saved_payment_provider_id
+        WHERE cs.saved_payment_id = $saved_payment_id AND cs.saved_payment_client_id = $session_client_id
+        LIMIT 1"));
 
-    if (!$stripe_provider) {
-        flashAlert('Card payments are not set up', 'error');
-        redirect("saved_payment_methods.php");
-    }
-
-    $stripe_provider_id = intval($stripe_provider['payment_provider_id']);
-    $stripe_secret_key = escapeHtml($stripe_provider['payment_provider_private_key']);
-
-    if (empty($stripe_secret_key)) {
-        flashAlert('Card payments are not set up', 'error');
-        redirect("saved_payment_methods.php");
-    }
-
-    $saved_payment_result = mysqli_query($mysqli, "
-        SELECT saved_payment_id, saved_payment_description, saved_payment_provider_method
-        FROM client_saved_payment_methods
-        WHERE saved_payment_id = $saved_payment_id
-        AND saved_payment_client_id = $session_client_id
-        AND saved_payment_provider_id = $stripe_provider_id
-        LIMIT 1
-    ");
-
-    $saved_payment = mysqli_fetch_assoc($saved_payment_result);
-
-    if (!$saved_payment) {
+    if (!$owned) {
         flashAlert("That payment method isn't here", 'error');
         redirect("saved_payment_methods.php");
     }
 
-    $payment_method_id = escapeSql($saved_payment['saved_payment_provider_method']);
-
-    $saved_payment_id = intval($saved_payment['saved_payment_id']);
-    $saved_payment_description = escapeHtml($saved_payment['saved_payment_description']);
-
-    try {
-        // Initialize Stripe
-        require_once '../includes/stripe_init.php';
-        $stripe = new \Stripe\StripeClient($stripe_secret_key);
-
-        // Detach the payment method from Stripe
-        $stripe->paymentMethods->detach($payment_method_id, []);
-
-    } catch (Exception $e) {
-        $error = $e->getMessage();
-
-        error_log("Stripe error while removing payment method $payment_method_id: $error");
-
-        logApp("Stripe", "error", "Exception removing payment method $payment_method_id: $error");
-
-        flashAlert("Your payment method could not be removed just now - try again", 'error');
-
+    $remove_err = '';
+    $removed = paymentCardRemove($saved_payment_id, $session_contact_name, $remove_err);
+    if (!$removed) {
+        flashAlert(escapeHtml($remove_err ?: 'That card could not be removed'), 'error');
         redirect("saved_payment_methods.php");
-
     }
 
-    // Remove saved payment method from local DB
-    mysqli_query($mysqli, "
-        DELETE FROM client_saved_payment_methods
-        WHERE saved_payment_id = $saved_payment_id
-    ");
+    $prov_label = (string) ($owned['payment_provider_name'] ?: 'Payment');
+    logAudit($prov_label, "Delete", "$session_contact_name deleted $prov_label payment method " . escapeSql($owned['saved_payment_description']) . " (PM: " . escapeSql($owned['saved_payment_provider_method']) . ")", $session_client_id);
 
-    // Remove any auto-pay records using this payment method
-    $recurring_invoices = mysqli_query($mysqli, "
-        SELECT recurring_invoice_id
-        FROM recurring_invoices
-        WHERE recurring_invoice_client_id = $session_client_id
-    ");
-
-    while ($row = mysqli_fetch_assoc($recurring_invoices)) {
-        $recurring_invoice_id = intval($row['recurring_invoice_id']);
-
-        mysqli_query($mysqli, "
-            DELETE FROM recurring_payments
-            WHERE recurring_payment_recurring_invoice_id = $recurring_invoice_id
-            AND recurring_payment_saved_payment_id = $saved_payment_id
-        ");
-    }
-
-    logAudit("Stripe", "Delete", "$session_contact_name deleted Stripe payment method $saved_payment_description (PM: $payment_method_id)", $session_client_id);
-
-    flashAlert("Payment method $saved_payment_description removed");
+    flashAlert("Payment method " . escapeHtml($removed['label']) . " removed");
 
     redirect("saved_payment_methods.php");
 }

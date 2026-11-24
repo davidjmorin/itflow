@@ -25,11 +25,14 @@ ob_start();
 // that takes a card sets $portal_stripe first: the same policy, with
 // Stripe's script, frames and API let in - Stripe's own list, from
 // docs.stripe.com/security/guide (Stripe.js, Checkout and Link)
-if (!empty($portal_stripe)) {
-    header("Content-Security-Policy: default-src 'self'; img-src 'self' data: https://*.stripe.com https://*.link.com; "
-        . "script-src 'self' https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com; "
-        . "frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://link.com https://*.link.com; "
-        . "connect-src 'self' https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com");
+if (!empty($portal_stripe) || !empty($portal_payment)) {
+    header("Content-Security-Policy: default-src 'self'; "
+        . "img-src 'self' data: https://*.stripe.com https://*.link.com https://*.paypal.com https://*.paypalobjects.com https://*.squarecdn.com https://*.squareup.com; "
+        . "style-src 'self' 'unsafe-inline' https://web.squarecdn.com https://sandbox.web.squarecdn.com https://*.squarecdn.com https://*.paypalobjects.com; "
+        . "font-src 'self' data: https://square-fonts-production-f.squarecdn.com https://d1g145x70srn7h.cloudfront.net https://*.squarecdn.com; "
+        . "script-src 'self' https://js.stripe.com https://*.js.stripe.com https://checkout.stripe.com https://web.squarecdn.com https://sandbox.web.squarecdn.com https://*.squarecdn.com https://www.paypal.com https://www.sandbox.paypal.com https://*.paypalobjects.com; "
+        . "frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://link.com https://*.link.com https://web.squarecdn.com https://sandbox.web.squarecdn.com https://pci-connect.squareup.com https://pci-connect.squareupsandbox.com https://connect.squareup.com https://connect.squareupsandbox.com https://www.paypal.com https://www.sandbox.paypal.com; "
+        . "connect-src 'self' https://api.stripe.com https://checkout.stripe.com https://link.com https://*.link.com https://pci-connect.squareup.com https://pci-connect.squareupsandbox.com https://connect.squareup.com https://connect.squareupsandbox.com https://www.paypal.com https://www.sandbox.paypal.com https://api-m.paypal.com https://api-m.sandbox.paypal.com");
 } else {
     foreach (headers_list() as $portal_header) {
         if (stripos($portal_header, 'Content-Security-Policy:') === 0) {

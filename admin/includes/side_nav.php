@@ -157,6 +157,13 @@
                     </a>
                 </li>
                 <li class="nav-item">
+                    <a href="/admin/custom/nable_rmm.php"
+                    class="nav-link <?= (basename($_SERVER['PHP_SELF']) === 'nable_rmm.php' ? 'active' : '') ?>">
+                        <i class="nav-icon fas fa-sync-alt"></i>
+                        <p>N-Able RMM Sync</p>
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a href="/admin/network_platforms.php"
                     class="nav-link <?= ($nav_rmm_page === 'network_platforms.php' || ($nav_rmm_page === 'rmm_clients.php' && $nav_rmm_family === 'network') ? 'active' : '') ?>">
                         <i class="nav-icon fas fa-network-wired"></i>
@@ -256,7 +263,7 @@
                 <?php
                 $settings_nav_pages = settingsPages();
                 $settings_nav_current = basename($_SERVER['PHP_SELF']);
-                $settings_nav_open = $settings_nav_current === 'settings.php' || in_array($settings_nav_current, array_merge(array_column($settings_nav_pages, 'url'), ['settings_smsgate.php', 'settings_tbr.php']), true);
+                $settings_nav_open = $settings_nav_current === 'settings.php' || in_array($settings_nav_current, array_merge(array_column($settings_nav_pages, 'url'), ['settings_smsgate.php', 'settings_tbr.php', 'client_merge.php']), true);
                 ?>
                 <li class="nav-item mt-2 <?= $settings_nav_open ? 'menu-open' : '' ?>">
                     <a href="#" class="nav-link">
@@ -293,6 +300,12 @@
                             <a href="/admin/settings_tbr.php" class="nav-link <?= $settings_nav_current === 'settings_tbr.php' ? 'active' : '' ?>">
                                 <i class="nav-icon fas fa-chart-line"></i>
                                 <p>TBR Settings</p>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/admin/client_merge.php" class="nav-link <?= $settings_nav_current === 'client_merge.php' ? 'active' : '' ?>">
+                                <i class="nav-icon fas fa-object-group"></i>
+                                <p>Client Merge</p>
                             </a>
                         </li>
                     </ul>

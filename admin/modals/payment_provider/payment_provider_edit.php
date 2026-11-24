@@ -29,7 +29,9 @@ $free_kinds = array_diff_key($kinds, $taken);
 
 $name = $row ? (string) $row['payment_provider_name'] : (string) (array_key_first($free_kinds) ?? array_key_first($kinds));
 $kind = $kinds[$name] ?? reset($kinds);
-$mode = $row ? paymentProviderMode($row['payment_provider_private_key']) : '';
+$mode = $row ? paymentProviderMode($row['payment_provider_private_key'], $row) : '';
+$extra = $row ? (json_decode((string) ($row['payment_provider_extra'] ?? ''), true) ?: []) : [];
+$location_id = (string) ($extra['location_id'] ?? '');
 $account_id = intval($row['payment_provider_account'] ?? 0);
 $vendor_id = intval($row['payment_provider_expense_vendor'] ?? 0);
 $category_id = intval($row['payment_provider_expense_category'] ?? 0);
@@ -71,14 +73,14 @@ ob_start();
     </h5>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
-<form action="post.php" method="post" autocomplete="off" novalidate data-payment-provider-form>
+<form action="post.php" method="post" autocomplete="off" novalidate data-payment-provider-form data-provider-kinds="<?= escapeHtml(json_encode($kinds)) ?>">
     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
     <input type="hidden" name="provider_id" value="<?= $provider_id ?>">
 
     <div class="modal-body">
 
         <?php if (!$row && !$free_kinds) { ?>
-            <div class="alert alert-info py-2 small mb-3"><i class="fas fa-fw fa-info-circle me-1"></i><?= escapeHtml(implode(' and ', array_keys($kinds))) ?> is set up already - it is the only provider ITFlow takes payments through.</div>
+            <div class="alert alert-info py-2 small mb-3"><i class="fas fa-fw fa-info-circle me-1"></i>All supported payment providers (<?= escapeHtml(implode(', ', array_keys($kinds))) ?>) are set up already.</div>
         <?php } ?>
 
         <?php if (!$row) { ?>
@@ -114,10 +116,22 @@ ob_start();
         </div>
 
         <h6 class="fw-semibold mt-4 mb-1">Keys</h6>
-        <p class="small text-body-secondary mb-2">From <a href="<?= escapeHtml($kind['keys_url']) ?>" target="_blank" rel="noopener noreferrer"><?= escapeHtml($name) ?>'s Developers &gt; API keys <i class="fas fa-external-link-alt fa-xs"></i></a> - both live, or both test while you try it out.</p>
+        <p class="small text-body-secondary mb-2">From <a href="<?= escapeHtml($kind['keys_url']) ?>" target="_blank" rel="noopener noreferrer" data-provider-keys-link><span data-provider-name-label><?= escapeHtml($name) ?></span>'s <span data-provider-keys-text><?= escapeHtml($kind['keys_text'] ?? 'Developers > API keys') ?></span> <i class="fas fa-external-link-alt fa-xs"></i></a>.</p>
+
+        <div class="mb-3 <?= empty($kind['has_mode']) ? 'd-none' : '' ?>" data-provider-mode-wrap>
+            <label class="form-label" for="paymentProviderMode">Environment</label>
+            <div class="input-group has-validation">
+                <span class="input-group-text"><i class="fas fa-fw fa-sliders-h"></i></span>
+                <select class="form-select" name="mode" id="paymentProviderMode">
+                    <option value="live" <?= $mode !== 'test' ? 'selected' : '' ?>>Live (Production)</option>
+                    <option value="test" <?= $mode === 'test' ? 'selected' : '' ?>>Test (Sandbox)</option>
+                </select>
+            </div>
+            <?= $error_for('mode') ?>
+        </div>
 
         <div class="mb-3">
-            <label class="form-label" for="paymentProviderPublicKey">Publishable key <strong class="text-danger">*</strong></label>
+            <label class="form-label" for="paymentProviderPublicKey"><span data-provider-public-label><?= escapeHtml($kind['public_label'] ?? 'Publishable key') ?></span> <strong class="text-danger">*</strong></label>
             <div class="input-group has-validation">
                 <span class="input-group-text"><i class="fas fa-fw fa-eye"></i></span>
                 <input type="text" class="form-control font-monospace" name="public_key" id="paymentProviderPublicKey" maxlength="250" spellcheck="false" placeholder="<?= escapeHtml($kind['public_example']) ?>" value="<?= escapeHtml($row['payment_provider_public_key'] ?? '') ?>">
@@ -126,14 +140,24 @@ ob_start();
         </div>
 
         <div class="mb-3">
-            <label class="form-label" for="paymentProviderSecretKey">Secret key <?= $row ? '' : '<strong class="text-danger">*</strong>' ?></label>
+            <label class="form-label" for="paymentProviderSecretKey"><span data-provider-secret-label><?= escapeHtml($kind['secret_label'] ?? 'Secret key') ?></span> <?= $row ? '' : '<strong class="text-danger">*</strong>' ?></label>
             <div class="input-group has-validation">
                 <span class="input-group-text"><i class="fas fa-fw fa-key"></i></span>
                 <input type="password" class="form-control font-monospace" name="private_key" id="paymentProviderSecretKey" maxlength="250" spellcheck="false" autocomplete="new-password"
+                    data-has-saved="<?= $row && trim((string) $row['payment_provider_private_key']) !== '' ? '1' : '0' ?>"
                     placeholder="<?= $row && trim((string) $row['payment_provider_private_key']) !== '' ? 'Saved - type a new one to replace it' : escapeHtml($kind['secret_example']) ?>">
             </div>
             <?= $error_for('private_key') ?>
-            <div class="form-text">A restricted key (rk_...) does too, with write access to payment intents, customers, setup intents and payment methods, and read on the account.</div>
+            <div class="form-text" data-provider-secret-help><?= escapeHtml($kind['secret_help'] ?? '') ?></div>
+        </div>
+
+        <div class="mb-3 <?= empty($kind['has_location']) ? 'd-none' : '' ?>" data-provider-location-wrap>
+            <label class="form-label" for="paymentProviderLocationId">Location ID</label>
+            <div class="input-group has-validation">
+                <span class="input-group-text"><i class="fas fa-fw fa-map-marker-alt"></i></span>
+                <input type="text" class="form-control font-monospace" name="location_id" id="paymentProviderLocationId" maxlength="64" spellcheck="false" placeholder="Leave blank to auto-detect primary location" value="<?= escapeHtml($location_id) ?>">
+            </div>
+            <?= $error_for('location_id') ?>
         </div>
 
         <div class="alert alert-success py-2 small d-none" data-provider-account></div>
@@ -266,7 +290,59 @@ ob_start();
     var cardFee = form.querySelector('[data-provider-card-fee]');
     var save = form.querySelector('[data-provider-save]');
     var accountNote = form.querySelector('[data-provider-account]');
+    var providerSelect = form.querySelector('#paymentProviderName');
+    var modeWrap = form.querySelector('[data-provider-mode-wrap]');
+    var locationWrap = form.querySelector('[data-provider-location-wrap]');
+    var kindsMap = {};
+    try {
+        kindsMap = JSON.parse(form.getAttribute('data-provider-kinds') || '{}');
+    } catch (e) {
+        kindsMap = {};
+    }
     var checked = false;
+
+    function syncProviderFields() {
+        if (!providerSelect) {
+            return;
+        }
+        var kind = kindsMap[providerSelect.value];
+        if (!kind) {
+            return;
+        }
+        var nameLabel = form.querySelector('[data-provider-name-label]');
+        var keysLink = form.querySelector('[data-provider-keys-link]');
+        var keysText = form.querySelector('[data-provider-keys-text]');
+        var pubLabel = form.querySelector('[data-provider-public-label]');
+        var secLabel = form.querySelector('[data-provider-secret-label]');
+        var secHelp = form.querySelector('[data-provider-secret-help]');
+        var pubInput = form.querySelector('#paymentProviderPublicKey');
+        var secInput = form.querySelector('#paymentProviderSecretKey');
+        if (nameLabel) nameLabel.textContent = providerSelect.value;
+        if (keysLink && kind.keys_url) keysLink.setAttribute('href', kind.keys_url);
+        if (keysText && kind.keys_text) keysText.textContent = kind.keys_text;
+        if (pubLabel && kind.public_label) pubLabel.textContent = kind.public_label;
+        if (secLabel && kind.secret_label) secLabel.textContent = kind.secret_label;
+        if (secHelp) secHelp.textContent = kind.secret_help || '';
+        if (pubInput && kind.public_example) pubInput.setAttribute('placeholder', kind.public_example);
+        if (secInput && kind.secret_example && secInput.getAttribute('data-has-saved') !== '1') {
+            secInput.setAttribute('placeholder', kind.secret_example);
+        }
+        if (modeWrap) {
+            modeWrap.classList.toggle('d-none', !kind.has_mode);
+            modeWrap.querySelectorAll('select').forEach(function (el) { el.disabled = !kind.has_mode; });
+        }
+        if (locationWrap) {
+            locationWrap.classList.toggle('d-none', !kind.has_location);
+            locationWrap.querySelectorAll('input').forEach(function (el) { el.disabled = !kind.has_location; });
+        }
+    }
+    if (providerSelect) {
+        providerSelect.addEventListener('change', syncProviderFields);
+        if (window.jQuery) {
+            window.jQuery(providerSelect).on('change', syncProviderFields);
+        }
+        syncProviderFields();
+    }
 
     // A disabled select isn't sent, and its picker follows it
     function showFees() {

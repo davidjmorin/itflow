@@ -375,5 +375,6 @@ $mrr_display = floatval($lead['lead_estimated_mrr']) > 0 ? numfmt_format_currenc
 </div>
 
 <?php
+require_once __DIR__ . '/includes/custom_legacy_js.php';
 require_once "../includes/footer.php";
 ?>

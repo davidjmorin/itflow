@@ -308,9 +308,9 @@ $title = $article ? $article['kb_article_title'] . ' | ' : '';
 <footer class="itflow-portal-footer mt-auto">
     <div class="container d-flex flex-wrap justify-content-between gap-2">
         <span><?= escapeHtml($company_name) ?></span>
-        <?php if (!$config_whitelabel_enabled) { ?>
-            <span>Powered by ITFlow</span>
-        <?php } ?>
+
+            <span>Powered by Maple & Oakley</span>
+>
     </div>
 </footer>
 

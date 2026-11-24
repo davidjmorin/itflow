@@ -81,7 +81,7 @@ if ($sql_tp) {
     }
 }
 
-$has_logged_time = !empty($ticket_total_reply_time) && $ticket_total_reply_time !== '00:00:00';
+$has_logged_time = intval($row['seconds'] ?? 0) > 0;
 $include_labor_default = $has_logged_time || empty($ticket_products);
 
 ob_start();
@@ -174,54 +174,59 @@ ob_start();
                     </datalist>
                 </div>
             </div>
-            <div class="col-12">
-                <label class="form-label">Line <strong class="text-danger">*</strong></label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-fw fa-cube"></i></span>
-                    <input type="text" class="form-control" name="item_name" maxlength="200" value="<?= escapeHtml($rules['item_name']) ?>" required>
-                </div>
-            </div>
-            <div class="col-12">
-                <label class="form-label">Description</label>
-                <div class="input-group">
-                    <span class="input-group-text align-items-start pt-2"><i class="fas fa-fw fa-align-left"></i></span>
-                    <textarea class="form-control" name="item_description" rows="<?= $ai_describe ? 3 : 2 ?>" data-ticket-invoice-description><?= escapeHtml(billingTimeDescription($row)) ?></textarea>
-                    <?php if ($ai_describe) { ?>
-                        <button type="button" class="btn btn-outline-secondary" data-ticket-invoice-ai title="Say what was done, from the replies and notes - for the client"><i class="fas fa-fw fa-magic"></i><span class="d-none d-sm-inline ms-1">Write It</span></button>
-                    <?php } ?>
-                </div>
-                <?php if ($ai_describe) { ?>
-                    <div class="form-text" data-ticket-invoice-ai-said>Write it - AI says what was done, from the replies and notes, for the client to read.</div>
-                <?php } ?>
-            </div>
-            <div class="col-sm-4">
-                <label class="form-label">Hours <strong class="text-danger">*</strong></label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-fw fa-clock"></i></span>
-                    <input type="text" class="form-control text-end" name="qty" inputmode="decimal" value="<?= billingQuantity($row['hours']) ?>" required data-ticket-invoice-hours>
-                </div>
-                <div class="form-text">Rounded <?= escapeHtml(billingTimeRulesText($rules)) ?>.</div>
-            </div>
-            <div class="col-sm-4">
-                <label class="form-label">Rate <strong class="text-danger">*</strong></label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-fw fa-dollar-sign"></i></span>
-                    <input type="text" class="form-control text-end" name="price" inputmode="decimal" value="<?= number_format($row['rate'], 2, '.', '') ?>" required data-ticket-invoice-rate>
-                </div>
-                <div class="form-text" data-ticket-invoice-rate-note><?= $row['rate'] > 0 || !$row['default_rate'] ? ($row['default_rate'] ? 'The default rate - no contract in force sets one.' : escapeHtml(ucfirst($row['rate_note'])) . '.') : 'No rate - no contract in force sets one, and there is no default.' ?></div>
-            </div>
-            <div class="col-sm-4">
-                <label class="form-label">Tax</label>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-fw fa-percent"></i></span>
-                    <select class="form-select select2" name="tax_id" data-ticket-invoice-tax>
-                        <?= taxOptionsHtml($taxes, taxDefaultFor($client_id, 'time')) ?>
-                    </select>
+            <?php $tp_labor_section_id = 'invoiceLaborSection'; $tp_labor_switch_id = 'invoiceIncludeLaborSwitch'; require __DIR__ . '/../../includes/ticket_products_billing_picker.php'; ?>
+            <div class="col-12" id="invoiceLaborSection">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">Line <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-fw fa-cube"></i></span>
+                            <input type="text" class="form-control" name="item_name" maxlength="200" value="<?= escapeHtml($rules['item_name']) ?>" required>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Description</label>
+                        <div class="input-group">
+                            <span class="input-group-text align-items-start pt-2"><i class="fas fa-fw fa-align-left"></i></span>
+                            <textarea class="form-control" name="item_description" rows="<?= $ai_describe ? 3 : 2 ?>" data-ticket-invoice-description><?= escapeHtml(billingTimeDescription($row)) ?></textarea>
+                            <?php if ($ai_describe) { ?>
+                                <button type="button" class="btn btn-outline-secondary" data-ticket-invoice-ai title="Say what was done, from the replies and notes - for the client"><i class="fas fa-fw fa-magic"></i><span class="d-none d-sm-inline ms-1">Write It</span></button>
+                            <?php } ?>
+                        </div>
+                        <?php if ($ai_describe) { ?>
+                            <div class="form-text" data-ticket-invoice-ai-said>Write it - AI says what was done, from the replies and notes, for the client to read.</div>
+                        <?php } ?>
+                    </div>
+                    <div class="col-sm-4">
+                        <label class="form-label">Hours <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-fw fa-clock"></i></span>
+                            <input type="text" class="form-control text-end" name="qty" inputmode="decimal" value="<?= billingQuantity($row['hours']) ?>" required data-ticket-invoice-hours>
+                        </div>
+                        <div class="form-text">Rounded <?= escapeHtml(billingTimeRulesText($rules)) ?>.</div>
+                    </div>
+                    <div class="col-sm-4">
+                        <label class="form-label">Rate <strong class="text-danger">*</strong></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-fw fa-dollar-sign"></i></span>
+                            <input type="text" class="form-control text-end" name="price" inputmode="decimal" value="<?= number_format($row['rate'], 2, '.', '') ?>" required data-ticket-invoice-rate>
+                        </div>
+                        <div class="form-text" data-ticket-invoice-rate-note><?= $row['rate'] > 0 || !$row['default_rate'] ? ($row['default_rate'] ? 'The default rate - no contract in force sets one.' : escapeHtml(ucfirst($row['rate_note'])) . '.') : 'No rate - no contract in force sets one, and there is no default.' ?></div>
+                    </div>
+                    <div class="col-sm-4">
+                        <label class="form-label">Tax</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-fw fa-percent"></i></span>
+                            <select class="form-select select2" name="tax_id" data-ticket-invoice-tax>
+                                <?= taxOptionsHtml($taxes, taxDefaultFor($client_id, 'time')) ?>
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
         <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
-            <span class="text-body-secondary">The line comes to</span>
+            <span class="text-body-secondary">Total to bill</span>
             <span class="fs-5 fw-semibold itflow-money" data-ticket-invoice-total></span>
         </div>
     </div>
@@ -258,15 +263,26 @@ ob_start();
             });
         });
         label.textContent = making ? 'Make Invoice' : 'Add to Invoice';
-        var h = number(hours.value);
-        var r = number(rate.value);
-        if (isNaN(h) || isNaN(r)) {
-            total.textContent = 'Not a number';
-            return;
+        var laborSwitch = form.querySelector('#invoiceIncludeLaborSwitch');
+        var laborEnabled = !laborSwitch || laborSwitch.checked;
+        var amount = 0;
+        if (laborEnabled) {
+            var h = number(hours.value);
+            var r = number(rate.value);
+            if (isNaN(h) || isNaN(r)) {
+                total.textContent = 'Not a number';
+                return;
+            }
+            var option = tax.options[tax.selectedIndex];
+            amount = Math.round(h * r * 100) / 100;
+            amount += Math.round(amount * Number(option ? option.getAttribute('data-percent') || 0 : 0)) / 100;
         }
-        var option = tax.options[tax.selectedIndex];
-        var amount = Math.round(h * r * 100) / 100;
-        amount += Math.round(amount * Number(option ? option.getAttribute('data-percent') || 0 : 0)) / 100;
+        form.querySelectorAll('input[name="ticket_product_ids[]"]:checked').forEach(function (chk) {
+            var tpVal = Number(chk.getAttribute('data-tp-total') || 0);
+            if (!isNaN(tpVal)) {
+                amount += tpVal;
+            }
+        });
         try {
             total.textContent = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'USD' }).format(amount);
         } catch (e) {

@@ -44,10 +44,19 @@
 <script src="<?= staticFileUrl('/js/keepalive.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/portal.js') ?>"></script>
 
-<?php if (!empty($portal_stripe)) { ?>
-    <!-- Taking a card - Stripe's own script, then the portal's use of it -->
-    <script src="https://js.stripe.com/v3/"></script>
-    <script src="<?= staticFileUrl('/js/portal_stripe.js') ?>"></script>
+<?php if (!empty($portal_load_stripe) || (!isset($portal_load_stripe) && !empty($portal_stripe))) { ?>
+    <script data-cfasync="false" src="https://js.stripe.com/v3/"></script>
+    <script data-cfasync="false" src="<?= staticFileUrl('/js/portal_stripe.js') ?>"></script>
+<?php } ?>
+
+<?php if (!empty($portal_load_square) && ($portal_sq_provider = billingProviderByName('Square'))) { ?>
+    <script data-cfasync="false" src="<?= escapeHtml(squareWebSdkUrl(squareProviderMode($portal_sq_provider))) ?>"></script>
+    <script data-cfasync="false" src="<?= staticFileUrl('/js/portal_square.js') ?>"></script>
+<?php } ?>
+
+<?php if (!empty($portal_load_paypal) && ($portal_pp_provider = billingProviderByName('PayPal'))) { ?>
+    <script data-cfasync="false" src="<?= escapeHtml(paypalJsSdkBase(paypalProviderMode($portal_pp_provider)) . '?client-id=' . rawurlencode($portal_pp_provider['payment_provider_public_key']) . '&currency=' . rawurlencode($portal_paypal_currency ?? 'USD') . '&intent=capture') ?>"></script>
+    <script data-cfasync="false" src="<?= staticFileUrl('/js/portal_paypal.js') ?>"></script>
 <?php } ?>
 
 </body>

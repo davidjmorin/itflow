@@ -1867,6 +1867,25 @@ if (isset($_POST['add_invoice_from_ticket'])) {
         redirect();
     }
 
+    $include_labor = isset($_POST['include_labor']) ? intval($_POST['include_labor']) : 1;
+    $selected_tp_ids = ticketProductsParseSelectedIds($_POST['ticket_product_ids'] ?? []);
+
+    if ($include_labor === 0 && !empty($selected_tp_ids)) {
+        $error = null;
+        $tp_result = ticketProductsInvoiceOnly($mysqli, $ticket_id, $selected_tp_ids, [
+            'invoice_id' => intval($_POST['invoice_id'] ?? 0),
+            'date' => (string) ($_POST['date'] ?? ''),
+            'category_id' => intval($_POST['category'] ?? 0),
+            'scope' => (string) ($_POST['scope'] ?? ''),
+        ], $error);
+        if (!$tp_result) {
+            flashAlert(escapeHtml($error), 'error');
+            redirect();
+        }
+        flashAlert('<strong>' . escapeHtml(ticketReference($row)) . '</strong> products billed on <strong>' . escapeHtml($tp_result['number']) . '</strong>');
+        redirect("invoice.php?invoice_id={$tp_result['invoice_id']}");
+    }
+
     $result = billingTimeInvoice($client_id, [$ticket_id => (string) ($_POST['qty'] ?? '')], [
         'invoice_id' => intval($_POST['invoice_id'] ?? 0),
         'date' => (string) ($_POST['date'] ?? ''),
@@ -1882,6 +1901,10 @@ if (isset($_POST['add_invoice_from_ticket'])) {
     if (!$result) {
         flashAlert(escapeHtml($error), 'error');
         redirect();
+    }
+
+    if (!empty($selected_tp_ids)) {
+        ticketProductsAttachToInvoice($mysqli, $ticket_id, intval($result['invoice_id']), $selected_tp_ids);
     }
 
     flashAlert('<strong>' . escapeHtml(ticketReference($row)) . '</strong> billed on <strong>' . escapeHtml($result['number']) . '</strong> - ' . billingQuantity($result['hours']) . ' h'
@@ -1913,24 +1936,34 @@ if (isset($_POST['add_quote_from_ticket'])) {
     $qty = floatval($_POST['qty'] ?? 0);
     $price = floatval($_POST['price'] ?? 0);
     $tax_id = intval($_POST['tax_id'] ?? 0);
+    $include_labor = isset($_POST['include_labor']) ? intval($_POST['include_labor']) : 1;
+    $selected_tp_ids = ticketProductsParseSelectedIds($_POST['ticket_product_ids'] ?? []);
+    $add_labor_line = ($include_labor === 1) && ($qty > 0 || empty($selected_tp_ids));
 
-    // Totals - at the rate's parts, each to the cent
+    if (!$add_labor_line && empty($selected_tp_ids)) {
+        flashAlert("Please include support labor or select at least one ticket product to quote", 'error');
+        redirect();
+    }
+
     if ($tax_id && !taxRow($tax_id)) {
         $tax_id = 0;
     }
-    [$subtotal, $tax_amount, $total] = billingLineTax($qty, $price, $tax_id);
+    [$subtotal, $tax_amount, $total] = $add_labor_line ? billingLineTax($qty, $price, $tax_id) : [0.0, 0.0, 0.0];
 
-    // Atomically increment and get the new quote number
     mysqli_query($mysqli, "UPDATE settings SET config_quote_next_number = LAST_INSERT_ID(config_quote_next_number), config_quote_next_number = config_quote_next_number + 1 WHERE company_id = 1");
     $quote_number = mysqli_insert_id($mysqli);
 
-    // A key for the client's guest link to it
     $quote_url_key = randomString(32);
 
     mysqli_query($mysqli, "INSERT INTO quotes SET quote_prefix = '$config_quote_prefix', quote_number = $quote_number, quote_scope = '$scope', quote_date = '$date', quote_expire = '$expire', quote_amount = $total, quote_currency_code = '$session_company_currency', quote_category_id = $category, quote_status = 'Draft', quote_url_key = '$quote_url_key', quote_client_id = $client_id");
     $quote_id = mysqli_insert_id($mysqli);
 
-    mysqli_query($mysqli, "INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = 1, item_tax_id = $tax_id, item_quote_id = $quote_id");
+    if ($add_labor_line) {
+        mysqli_query($mysqli, "INSERT INTO quote_items SET item_name = '$item_name', item_description = '$item_description', item_quantity = $qty, item_price = $price, item_subtotal = $subtotal, item_tax = $tax_amount, item_total = $total, item_order = 1, item_tax_id = $tax_id, item_quote_id = $quote_id");
+    }
+    if (!empty($selected_tp_ids)) {
+        ticketProductsAttachToQuote($mysqli, $ticket_id, $quote_id, $selected_tp_ids);
+    }
     billingRecalc('quote', $quote_id);
 
     // Add internal note to ticket, and link to quote in database

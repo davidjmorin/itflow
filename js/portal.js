@@ -231,12 +231,12 @@
             }
         }
 
-        function cardFee(cents) {
-            var keep = 10000 - feePercent;
-            if (!feeOn || cents <= 0 || keep <= 0) {
+        function cardFeeFor(cents, fp, ff, enabled) {
+            var keep = 10000 - fp;
+            if (!enabled || cents <= 0 || keep <= 0) {
                 return 0;
             }
-            return Math.max(0, Math.floor(((cents + feeFixed) * 10000 + keep - 1) / keep) - cents);
+            return Math.max(0, Math.floor(((cents + ff) * 10000 + keep - 1) / keep) - cents);
         }
 
         function update() {
@@ -252,17 +252,36 @@
                     row.classList.toggle('is-selected', box.checked);
                 }
             });
-            var fee = cardFee(cents);
-            var amount = money.format((cents + fee) / 100);
             var method = form.querySelector('input[name=method]:checked');
-            var over = limit > 0 && cents >= limit;
+            var activeLimit = limit;
+            var activeFeeOn = feeOn;
+            var activeFeePercent = feePercent;
+            var activeFeeFixed = feeFixed;
+            if (method && method.hasAttribute('data-method-limit')) {
+                activeLimit = parseInt(method.getAttribute('data-method-limit') || '0', 10);
+                var mfp = parseInt(method.getAttribute('data-method-fee-percent') || '-1', 10);
+                var mff = parseInt(method.getAttribute('data-method-fee-fixed') || '0', 10);
+                activeFeeOn = mfp >= 0 && (mfp > 0 || mff > 0);
+                activeFeePercent = Math.max(0, mfp);
+                activeFeeFixed = Math.max(0, mff);
+            }
+            var fee = cardFeeFor(cents, activeFeePercent, activeFeeFixed, activeFeeOn);
+            var amount = money.format((cents + fee) / 100);
+            var over = activeLimit > 0 && cents >= activeLimit;
             var tooMany = max > 0 && count > max;
-            text('[data-pay-subtotal]', money.format(cents / 100));
-            text('[data-pay-fee]', money.format(fee / 100));
-            text('[data-pay-total]', amount);
-            text('[data-pay-count]', count + (count === 1 ? ' invoice' : ' invoices'));
+            var isNewMethod = method && (method.value === 'new' || method.value.indexOf('new:') === 0);
+            var feeBox = form.querySelector('[data-pay-fee-breakdown]');
+            var simpleBox = form.querySelector('[data-pay-simple-breakdown]');
+            if (feeBox && simpleBox) {
+                feeBox.hidden = !activeFeeOn;
+                simpleBox.hidden = activeFeeOn;
+            }
+            form.querySelectorAll('[data-pay-subtotal]').forEach(function (el) { el.textContent = money.format(cents / 100); });
+            form.querySelectorAll('[data-pay-fee]').forEach(function (el) { el.textContent = money.format(fee / 100); });
+            form.querySelectorAll('[data-pay-total]').forEach(function (el) { el.textContent = amount; });
+            form.querySelectorAll('[data-pay-count]').forEach(function (el) { el.textContent = count + (count === 1 ? ' invoice' : ' invoices'); });
             text('[data-pay-label]', !count ? 'Tick an invoice to pay' : (tooMany ? 'Pay up to ' + max + ' invoices at a time'
-                : (method && method.value === 'new' ? 'Continue to pay ' : 'Pay ') + amount));
+                : (isNewMethod ? 'Continue to pay ' : 'Pay ') + amount));
             var note = form.querySelector('[data-pay-limit-note]');
             if (note) {
                 note.hidden = !over;

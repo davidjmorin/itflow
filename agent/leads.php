@@ -34,7 +34,16 @@ if ($filter_user !== null) {
 
 $where_sql = implode(' AND ', $where_clauses);
 
-$stat_active = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT(lead_id) AS cnt, SUM(lead_estimated_mrr) AS total_mrr, SUM(lead_estimated_seats) AS total_seats FROM leads WHERE lead_status = 'Open' AND lead_archived_at IS NULL"));
+$stat_active = mysqli_fetch_assoc(mysqli_query($mysqli, "
+    SELECT COUNT(l.lead_id) AS cnt,
+           COALESCE(SUM(l.lead_estimated_mrr), 0) AS total_mrr,
+           COALESCE(SUM(l.lead_estimated_seats), 0) AS total_seats
+    FROM leads l
+    LEFT JOIN lead_stages ls ON l.lead_stage_id = ls.lead_stage_id
+    WHERE l.lead_status = 'Open'
+      AND l.lead_archived_at IS NULL
+      AND COALESCE(ls.lead_stage_is_lost, 0) = 0
+"));
 $stat_converted = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT COUNT(lead_id) AS cnt FROM leads WHERE lead_status = 'Converted' AND lead_archived_at IS NULL"));
 
 $stages_res = mysqli_query($mysqli, "SELECT * FROM lead_stages WHERE lead_stage_active = 1 ORDER BY lead_stage_order ASC");
@@ -45,65 +54,57 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
 
 ?>
 
-<link rel="stylesheet" href="css/leads.css">
+<link rel="stylesheet" href="css/leads.css?v=<?= filemtime(__DIR__ . '/css/leads.css') ?>">
 
-<div class="row">
+<div class="row g-3 mb-3">
     <div class="col-lg-3 col-6">
-        <div class="small-box bg-info">
+        <div class="small-box text-bg-info mb-0">
             <div class="inner">
-                <h3><?= intval($stat_active['cnt'] ?? 0) ?></h3>
+                <h3 id="lead-stat-active-cnt"><?= intval($stat_active['cnt'] ?? 0) ?></h3>
                 <p>Active Pipeline Leads</p>
             </div>
-            <div class="icon">
-                <i class="fas fa-funnel-dollar"></i>
-            </div>
+            <i class="small-box-icon fas fa-funnel-dollar"></i>
         </div>
     </div>
     <div class="col-lg-3 col-6">
-        <div class="small-box bg-success">
+        <div class="small-box text-bg-success mb-0">
             <div class="inner">
-                <h3><?= numfmt_format_currency($currency_format, floatval($stat_active['total_mrr'] ?? 0), $session_company_currency) ?></h3>
+                <h3 id="lead-stat-active-mrr"><?= numfmt_format_currency($currency_format, floatval($stat_active['total_mrr'] ?? 0), $session_company_currency) ?></h3>
                 <p>Pipeline Monthly Recurring (MRR)</p>
             </div>
-            <div class="icon">
-                <i class="fas fa-chart-line"></i>
-            </div>
+            <i class="small-box-icon fas fa-chart-line"></i>
         </div>
     </div>
     <div class="col-lg-3 col-6">
-        <div class="small-box bg-warning">
+        <div class="small-box text-bg-warning mb-0">
             <div class="inner">
-                <h3><?= intval($stat_active['total_seats'] ?? 0) ?></h3>
+                <h3 id="lead-stat-active-seats"><?= intval($stat_active['total_seats'] ?? 0) ?></h3>
                 <p>Potential Endpoints / Seats</p>
             </div>
-            <div class="icon">
-                <i class="fas fa-laptop"></i>
-            </div>
+            <i class="small-box-icon fas fa-laptop"></i>
         </div>
     </div>
     <div class="col-lg-3 col-6">
-        <div class="small-box bg-primary">
+        <div class="small-box text-bg-primary mb-0">
             <div class="inner">
                 <h3><?= intval($stat_converted['cnt'] ?? 0) ?></h3>
-                <p>Won & Converted Clients</p>
+                <p>Won &amp; Converted Clients</p>
             </div>
-            <div class="icon">
-                <i class="fas fa-user-check"></i>
-            </div>
+            <i class="small-box-icon fas fa-user-check"></i>
         </div>
     </div>
 </div>
 
-<div class="card card-dark">
-    <div class="card-header py-2">
-        <h3 class="card-title mt-2"><i class="fas fa-fw fa-funnel-dollar mr-2"></i>Sales Leads</h3>
-        <div class="card-tools">
-            <a href="lead_email_templates.php" class="btn btn-outline-light btn-sm mr-2">
-                <i class="fas fa-envelope-open-text mr-1"></i>Email Templates
+<div class="card card-dark mb-3">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+        <h3 class="card-title mb-0"><i class="fas fa-fw fa-funnel-dollar me-2"></i>Sales Leads</h3>
+        <div class="d-flex align-items-center gap-2 ms-auto">
+            <a href="lead_email_templates.php" class="btn btn-outline-light btn-sm">
+                <i class="fas fa-envelope-open-text me-1"></i>Email Templates
             </a>
             <?php if (lookupUserPermission("module_client") >= 2) { ?>
                 <button type="button" class="btn btn-primary btn-sm ajax-modal" data-modal-url="modals/lead/lead_add.php" data-modal-size="lg">
-                    <i class="fas fa-plus mr-1"></i>New Lead
+                    <i class="fas fa-plus me-1"></i>New Lead
                 </button>
             <?php } ?>
         </div>
@@ -111,33 +112,31 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
     <div class="card-body p-3">
         <form method="get" class="mb-3">
             <input type="hidden" name="view" value="<?= escapeHtml($view) ?>">
-            <div class="form-row align-items-center">
-                <div class="col-md-3 my-1">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-3">
                     <div class="input-group">
                         <input type="text" class="form-control" name="q" value="<?= escapeHtml($query_search) ?>" placeholder="Search company, contact, email...">
-                        <div class="input-group-append">
-                            <button class="btn btn-secondary" type="submit"><i class="fas fa-search"></i></button>
-                        </div>
+                        <button class="btn btn-secondary" type="submit"><i class="fas fa-search"></i></button>
                     </div>
                 </div>
-                <div class="col-md-2 my-1">
-                    <select class="form-control" name="stage_id" onchange="this.form.submit()">
+                <div class="col-md-2">
+                    <select class="form-select" name="stage_id" onchange="this.form.submit()">
                         <option value="">- All Stages -</option>
                         <?php foreach ($stages as $s_id => $st) { ?>
                             <option value="<?= $s_id ?>" <?= $filter_stage === $s_id ? 'selected' : '' ?>><?= escapeHtml($st['lead_stage_name']) ?></option>
                         <?php } ?>
                     </select>
                 </div>
-                <div class="col-md-2 my-1">
-                    <select class="form-control" name="status" onchange="this.form.submit()">
+                <div class="col-md-2">
+                    <select class="form-select" name="status" onchange="this.form.submit()">
                         <option value="Open" <?= $filter_status === 'Open' ? 'selected' : '' ?>>Open Leads</option>
                         <option value="Converted" <?= $filter_status === 'Converted' ? 'selected' : '' ?>>Converted</option>
                         <option value="Lost" <?= $filter_status === 'Lost' ? 'selected' : '' ?>>Lost / Disqualified</option>
                         <option value="All" <?= $filter_status === 'All' ? 'selected' : '' ?>>All Statuses</option>
                     </select>
                 </div>
-                <div class="col-md-2 my-1">
-                    <select class="form-control" name="user_id" onchange="this.form.submit()">
+                <div class="col-md-2">
+                    <select class="form-select" name="user_id" onchange="this.form.submit()">
                         <option value="">- All Agents -</option>
                         <?php
                         $agents_query = mysqli_query($mysqli, "SELECT user_id, user_name FROM users WHERE user_status = 1 AND user_archived_at IS NULL ORDER BY user_name ASC");
@@ -150,13 +149,13 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                         ?>
                     </select>
                 </div>
-                <div class="col-md-3 my-1 text-md-right">
+                <div class="col-md-3 text-md-end">
                     <div class="btn-group">
                         <a href="?<?= http_build_query(array_merge($_GET, ['view' => 'kanban'])) ?>" class="btn btn-sm <?= $view === 'kanban' ? 'btn-primary' : 'btn-outline-secondary' ?>">
-                            <i class="fas fa-columns mr-1"></i>Board
+                            <i class="fas fa-columns me-1"></i>Board
                         </a>
                         <a href="?<?= http_build_query(array_merge($_GET, ['view' => 'list'])) ?>" class="btn btn-sm <?= $view === 'list' ? 'btn-primary' : 'btn-outline-secondary' ?>">
-                            <i class="fas fa-list mr-1"></i>List
+                            <i class="fas fa-list me-1"></i>List
                         </a>
                     </div>
                 </div>
@@ -173,7 +172,7 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                     <div class="lead-kanban-column" data-stage-id="<?= $stage_id ?>">
                         <div class="lead-kanban-header text-white" style="background-color: <?= $stage_color ?>;">
                             <span><?= escapeHtml($st['lead_stage_name']) ?></span>
-                            <span class="badge badge-light lead-stage-count"><?= $stage_lead_count ?></span>
+                            <span class="badge text-bg-light lead-stage-count"><?= $stage_lead_count ?></span>
                         </div>
                         <div class="lead-kanban-stage-list" data-stage-id="<?= $stage_id ?>">
                             <?php while ($lead = mysqli_fetch_assoc($stage_leads_sql)) {
@@ -182,17 +181,17 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                             ?>
                                 <div class="lead-card" data-lead-id="<?= $l_id ?>" style="border-left-color: <?= $stage_color ?>;">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <a href="lead.php?lead_id=<?= $l_id ?>" class="lead-card-title text-dark">
+                                        <a href="lead.php?lead_id=<?= $l_id ?>" class="lead-card-title text-body text-decoration-none">
                                             <?= escapeHtml($lead['lead_name']) ?>
                                         </a>
-                                        <div class="dropdown dropleft">
-                                            <button class="btn btn-link btn-sm text-secondary p-0" data-toggle="dropdown">
+                                        <div class="dropdown dropstart">
+                                            <button class="btn btn-link btn-sm text-secondary p-0" data-bs-toggle="dropdown">
                                                 <i class="fas fa-ellipsis-v"></i>
                                             </button>
                                             <div class="dropdown-menu">
-                                                <a class="dropdown-item" href="lead.php?lead_id=<?= $l_id ?>"><i class="fas fa-eye mr-2"></i>View Lead</a>
+                                                <a class="dropdown-item" href="lead.php?lead_id=<?= $l_id ?>"><i class="fas fa-eye me-2"></i>View Lead</a>
                                                 <?php if ($lead['lead_status'] === 'Open') { ?>
-                                                    <a class="dropdown-item text-success ajax-modal" href="#" data-modal-url="modals/lead/lead_convert.php?lead_id=<?= $l_id ?>" data-modal-size="lg"><i class="fas fa-user-check mr-2"></i>Convert to Client</a>
+                                                    <a class="dropdown-item text-success ajax-modal" href="#" data-modal-url="modals/lead/lead_convert.php?lead_id=<?= $l_id ?>" data-modal-size="lg"><i class="fas fa-user-check me-2"></i>Convert to Client</a>
                                                 <?php } ?>
                                             </div>
                                         </div>
@@ -200,7 +199,7 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
 
                                     <?php if (!empty($lead['lead_contact_name'])) { ?>
                                         <div class="lead-card-contact">
-                                            <i class="fas fa-user mr-1"></i><?= escapeHtml($lead['lead_contact_name']) ?>
+                                            <i class="fas fa-user me-1"></i><?= escapeHtml($lead['lead_contact_name']) ?>
                                             <?php if (!empty($lead['lead_contact_title'])) { ?>
                                                 <span class="text-muted">(<?= escapeHtml($lead['lead_contact_title']) ?>)</span>
                                             <?php } ?>
@@ -209,29 +208,29 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
 
                                     <div class="lead-card-badges">
                                         <?php if ($mrr_display) { ?>
-                                            <span class="badge badge-success"><i class="fas fa-dollar-sign mr-1"></i><?= $mrr_display ?>/mo</span>
+                                            <span class="badge text-bg-success"><i class="fas fa-dollar-sign me-1"></i><?= $mrr_display ?>/mo</span>
                                         <?php } ?>
                                         <?php if (intval($lead['lead_estimated_seats']) > 0) { ?>
-                                            <span class="badge badge-info"><i class="fas fa-laptop mr-1"></i><?= intval($lead['lead_estimated_seats']) ?> seats</span>
+                                            <span class="badge text-bg-info"><i class="fas fa-laptop me-1"></i><?= intval($lead['lead_estimated_seats']) ?> seats</span>
                                         <?php } ?>
                                         <?php if (!empty($lead['lead_source'])) { ?>
-                                            <span class="badge badge-secondary"><?= escapeHtml($lead['lead_source']) ?></span>
+                                            <span class="badge text-bg-secondary"><?= escapeHtml($lead['lead_source']) ?></span>
                                         <?php } ?>
                                     </div>
 
                                     <?php if (!empty($lead['lead_next_follow_up'])) {
                                         $follow_due = strtotime($lead['lead_next_follow_up']) < strtotime('today');
                                     ?>
-                                        <div class="mb-2 font-weight-bold" style="font-size: 0.8rem;">
+                                        <div class="mb-2 fw-bold" style="font-size: 0.8rem;">
                                             <span class="<?= $follow_due ? 'text-danger' : 'text-primary' ?>">
-                                                <i class="far fa-calendar-alt mr-1"></i>Follow-up: <?= escapeHtml($lead['lead_next_follow_up']) ?>
+                                                <i class="far fa-calendar-alt me-1"></i>Follow-up: <?= escapeHtml($lead['lead_next_follow_up']) ?>
                                             </span>
                                         </div>
                                     <?php } ?>
 
                                     <div class="lead-card-footer">
                                         <span>
-                                            <i class="fas fa-user-circle mr-1"></i><?= escapeHtml($lead['user_name'] ?: 'Unassigned') ?>
+                                            <i class="fas fa-user-circle me-1"></i><?= escapeHtml($lead['user_name'] ?: 'Unassigned') ?>
                                         </span>
                                         <span><?= timeAgo($lead['lead_created_at']) ?></span>
                                     </div>
@@ -255,7 +254,7 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                             <th>Assigned Agent</th>
                             <th>Next Follow-up</th>
                             <th>Created</th>
-                            <th class="text-right">Actions</th>
+                            <th class="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -269,10 +268,10 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                             $stage_bg = escapeHtml($row['lead_stage_color'] ?: '#6c757d');
                         ?>
                             <tr>
-                                <td class="font-weight-bold">
+                                <td class="fw-bold">
                                     <a href="lead.php?lead_id=<?= $l_id ?>"><?= escapeHtml($row['lead_name']) ?></a>
                                     <?php if (!empty($row['lead_website'])) { ?>
-                                        <br><small class="text-muted"><i class="fas fa-globe mr-1"></i><?= escapeHtml($row['lead_website']) ?></small>
+                                        <br><small class="text-muted"><i class="fas fa-globe me-1"></i><?= escapeHtml($row['lead_website']) ?></small>
                                     <?php } ?>
                                 </td>
                                 <td>
@@ -288,11 +287,11 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                                 </td>
                                 <td>
                                     <?php if ($row['lead_status'] === 'Converted') { ?>
-                                        <span class="badge badge-success">Converted</span>
+                                        <span class="badge text-bg-success">Converted</span>
                                     <?php } elseif ($row['lead_status'] === 'Lost') { ?>
-                                        <span class="badge badge-danger">Lost</span>
+                                        <span class="badge text-bg-danger">Lost</span>
                                     <?php } else { ?>
-                                        <span class="badge badge-info">Open</span>
+                                        <span class="badge text-bg-info">Open</span>
                                     <?php } ?>
                                 </td>
                                 <td><?= floatval($row['lead_estimated_mrr']) > 0 ? numfmt_format_currency($currency_format, floatval($row['lead_estimated_mrr']), $session_company_currency) : '-' ?></td>
@@ -300,7 +299,7 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
                                 <td><?= escapeHtml($row['user_name'] ?: 'Unassigned') ?></td>
                                 <td><?= escapeHtml($row['lead_next_follow_up'] ?: '-') ?></td>
                                 <td><?= escapeHtml(date('Y-m-d', strtotime($row['lead_created_at']))) ?></td>
-                                <td class="text-right">
+                                <td class="text-end">
                                     <a href="lead.php?lead_id=<?= $l_id ?>" class="btn btn-sm btn-light"><i class="fas fa-eye"></i></a>
                                 </td>
                             </tr>
@@ -312,8 +311,10 @@ while ($st = mysqli_fetch_assoc($stages_res)) {
     </div>
 </div>
 
-<script src="../libs/SortableJS/Sortable.min.js"></script>
-<script src="js/leads_kanban.js"></script>
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
+<script data-cfasync="false">window.LEADS_CSRF = <?= json_encode($_SESSION['csrf_token']) ?>;</script>
+<script data-cfasync="false" src="../libs/SortableJS/Sortable.min.js"></script>
+<script data-cfasync="false" src="js/leads_kanban.js?v=<?= filemtime(__DIR__ . '/js/leads_kanban.js') ?>"></script>
 
 <?php
 require_once "../includes/footer.php";

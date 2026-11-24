@@ -573,4 +573,5 @@ if (!$is_client_mode) {
 </div>
 <?php } ?>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <?php require_once "../includes/footer.php";

@@ -1,27 +1,19 @@
 <?php
-/*
- * Client Portal
- * Cards & autopay - the cards saved with Stripe (each saying which
- * recurring invoices it pays), adding one in Stripe's own form, and autopay:
- * which card, if any, pays each recurring invoice on its due date.
- *
- * The cards are read from what was saved with them (billingSavedCards()) -
- * the page doesn't ask Stripe about each one every time it opens.
- *
- * SCOPING: every query is keyed to $session_client_id; the handlers in
- * post.php (create_stripe_customer, create_stripe_checkout, stripe_save_card,
- * delete_saved_payment, set_recurring_payment) check the same.
- */
 
-$portal_stripe = true; // Stripe's script, for adding a card - see includes/header.php
+$portal_payment = true;
 
 require_once "includes/inc_all.php";
 
 portalBillingGate();
 
-$provider = billingStripeProvider();
+$card_providers = billingCardProviders();
+$stripe_provider = $card_providers['Stripe'] ?? null;
+$square_provider = $card_providers['Square'] ?? null;
 
-if (!$provider) { ?>
+$portal_load_stripe = $stripe_provider !== null;
+$portal_load_square = $square_provider !== null;
+
+if (!$card_providers) { ?>
     <div class="itflow-portal-page-head">
         <div>
             <h1>Cards &amp; Autopay</h1>
@@ -35,7 +27,8 @@ if (!$provider) { ?>
     exit;
 }
 
-$customer = billingStripeCustomer($session_client_id);
+$stripe_customer = $stripe_provider ? billingStripeCustomer($session_client_id) : '';
+$square_location_id = $square_provider ? squareResolveLocationId($square_provider) : '';
 $cards = billingSavedCards($session_client_id);
 $usable = array_values(array_filter($cards, function ($card) {
     return !$card['card']['expired'];
@@ -47,10 +40,11 @@ $recurring = mysqli_query($mysqli, "SELECT recurring_invoice_id, recurring_invoi
     WHERE recurring_invoice_client_id = $session_client_id AND recurring_invoice_status = 1
     ORDER BY recurring_invoice_next_date ASC, recurring_invoice_id ASC");
 $company = billingCompany();
-$autostart = isset($_GET['add']) && $customer !== '';
-// The card fee, when the client pays one - said where they agree to charges and turn on autopay
-$fee_rates = billingCardFeeFor($session_client_id);
+$autostart = isset($_GET['add']) && $stripe_customer !== '';
+$default_card_provider = $stripe_provider ?: $square_provider;
+$fee_rates = billingCardFeeFor($session_client_id, $default_card_provider);
 $fee_terms = $fee_rates ? ' Each card payment has a card fee added: ' . billingCardFeeTerms($fee_rates) . '.' : '';
+$multi_card_providers = $stripe_provider && $square_provider;
 ?>
 
 <div class="itflow-portal-page-head">
@@ -75,7 +69,7 @@ $fee_terms = $fee_rates ? ' Each card payment has a card fee added: ' . billingC
                         <li class="itflow-portal-todo">
                             <span class="itflow-portal-card-brand" aria-hidden="true"><i class="<?= escapeHtml($c['icon']) ?>"></i></span>
                             <span class="itflow-portal-todo-main">
-                                <div><?= escapeHtml($c['label']) ?></div>
+                                <div><?= escapeHtml($c['label']) ?><?= $multi_card_providers ? ' <span class="badge rounded-pill text-bg-light border fw-normal ms-1">' . escapeHtml($card['payment_provider_name']) . '</span>' : '' ?></div>
                                 <div>
                                     <?php if ($c['expired']) { ?>
                                         <span class="text-danger-emphasis">Expired <?= escapeHtml($c['exp']) ?></span>
@@ -96,20 +90,40 @@ $fee_terms = $fee_rates ? ' Each card payment has a card fee added: ' . billingC
                 </ul>
             <?php } ?>
             <div class="itflow-portal-panel-body border-top">
-                <?php if ($customer !== '') { ?>
-                    <button type="button" class="btn btn-outline-primary" data-stripe-add-card<?= $autostart ? ' hidden' : '' ?>><i class="fas fa-plus me-2"></i>Add a Card</button>
-                    <div data-stripe-add-card-holder data-stripe-key="<?= escapeHtml($provider['payment_provider_public_key']) ?>"<?= $autostart ? ' data-autostart' : '' ?> hidden>
-                        <p class="small text-body-secondary">By saving a card you agree <?= escapeHtml($company['company_name'] ?? 'we') ?> may charge it for invoices you pay with it, and for the recurring invoices you set to autopay.<?= escapeHtml($fee_terms) ?></p>
-                        <div class="text-body-secondary small" data-stripe-loading><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Loading Stripe...</div>
-                        <div class="alert alert-warning small mb-0" data-stripe-unavailable hidden>Stripe's form did not load - check your connection and reload the page.</div>
-                        <div id="checkout"></div>
+                <?php if ($stripe_provider) { ?>
+                    <?php if ($stripe_customer !== '') { ?>
+                        <button type="button" class="btn btn-outline-primary me-2 mb-2" data-stripe-add-card<?= $autostart ? ' hidden' : '' ?>><i class="fas fa-plus me-2"></i>Add a Card<?= $multi_card_providers ? ' (Stripe)' : '' ?></button>
+                        <div data-stripe-add-card-holder data-stripe-key="<?= escapeHtml($stripe_provider['payment_provider_public_key']) ?>"<?= $autostart ? ' data-autostart' : '' ?> hidden>
+                            <p class="small text-body-secondary">By saving a card you agree <?= escapeHtml($company['company_name'] ?? 'we') ?> may charge it for invoices you pay with it, and for the recurring invoices you set to autopay.<?= escapeHtml($fee_terms) ?></p>
+                            <div class="text-body-secondary small" data-stripe-loading><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Loading Stripe...</div>
+                            <div class="alert alert-warning small mb-0" data-stripe-unavailable hidden>Stripe's form did not load - check your connection and reload the page.</div>
+                            <div id="checkout"></div>
+                        </div>
+                    <?php } else { ?>
+                        <form action="post.php" method="post" class="<?= $square_provider ? 'mb-3' : '' ?>" data-portal-once>
+                            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                            <p class="small text-body-secondary">By saving a card you agree <?= escapeHtml($company['company_name'] ?? 'we') ?> may charge it for invoices you pay with it, and for the recurring invoices you set to autopay.<?= escapeHtml($fee_terms) ?> Stripe keeps the card details, under its privacy policy and terms.</p>
+                            <button type="submit" class="btn btn-outline-primary" name="create_stripe_customer"><i class="fas fa-plus me-2"></i>Add a Card<?= $multi_card_providers ? ' (Stripe)' : '' ?></button>
+                        </form>
+                    <?php } ?>
+                <?php } ?>
+
+                <?php if ($square_provider && $square_location_id !== '') { ?>
+                    <button type="button" class="btn btn-outline-primary mb-2" data-square-add-card><i class="fas fa-plus me-2"></i>Add a Card<?= $multi_card_providers ? ' (Square)' : '' ?></button>
+                    <div data-square-save-card
+                        data-square-app-id="<?= escapeHtml($square_provider['payment_provider_public_key']) ?>"
+                        data-square-location-id="<?= escapeHtml($square_location_id) ?>"
+                        data-csrf-token="<?= escapeHtml($_SESSION['csrf_token']) ?>"
+                        hidden>
+                        <p class="small text-body-secondary">By saving a card you agree <?= escapeHtml($company['company_name'] ?? 'we') ?> may charge it for invoices you pay with it, and for the recurring invoices you set to autopay.<?= escapeHtml($fee_terms) ?> Square keeps your card details securely.</p>
+                        <div class="text-body-secondary small mb-2" data-square-loading><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Loading Square...</div>
+                        <div class="alert alert-warning small mb-2" data-square-unavailable hidden>Square's card form did not load - check your connection and reload the page.</div>
+                        <div id="square-save-card-container" class="mb-2"></div>
+                        <div class="alert alert-danger small mb-2" data-square-error hidden></div>
+                        <button type="button" class="btn btn-primary" data-square-save-btn disabled>
+                            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true" data-square-busy hidden></span><i class="fas fa-save me-2" data-square-idle></i>Save Card
+                        </button>
                     </div>
-                <?php } else { ?>
-                    <form action="post.php" method="post" data-portal-once>
-                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-                        <p class="small text-body-secondary">By saving a card you agree <?= escapeHtml($company['company_name'] ?? 'we') ?> may charge it for invoices you pay with it, and for the recurring invoices you set to autopay.<?= escapeHtml($fee_terms) ?> Stripe keeps the card details, under its privacy policy and terms.</p>
-                        <button type="submit" class="btn btn-outline-primary" name="create_stripe_customer"><i class="fas fa-plus me-2"></i>Add a Card</button>
-                    </form>
                 <?php } ?>
             </div>
         </section>

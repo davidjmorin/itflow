@@ -20,7 +20,7 @@ portalBillingGate();
 $with_paid = ($_GET['view'] ?? '') === 'year';
 $statement = billingStatement($session_client_id, $with_paid ? date('Y-m-d', strtotime('-12 months')) : '', '', $with_paid);
 $currency = $statement['currency'];
-$cards = billingStripeProvider() !== null;
+$cards = billingAnyOnlineProvider() !== null;
 $money = function ($amount) use ($currency) {
     return escapeHtml(billingMoney($amount, $currency));
 };

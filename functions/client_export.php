@@ -1181,11 +1181,10 @@ function clientExportPdf($client_id, $options) {
     $pdf->SetFont('dejavusans', '', 8.5);
     $pdf->SetTextColor(73, 80, 87);
     $pdf->MultiCell($width, 4.5, implode("\n", $contact_lines), 0, 'L', false, 1);
-    if (!$config_whitelabel_enabled) {
+
         $pdf->SetFont('dejavusans', '', 7);
         $pdf->SetTextColor(173, 181, 189);
-        $pdf->Cell($width, 4, 'Powered by ITFlow', 0, 1, 'R');
-    }
+        $pdf->Cell($width, 4, 'Powered by Maple & Oakley', 0, 1, 'R');
 
     /*
      * Overview

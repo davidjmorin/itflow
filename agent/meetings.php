@@ -129,4 +129,5 @@ if ($q_filter !== '') {
     </div>
 </div>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <?php require_once "../includes/footer.php";

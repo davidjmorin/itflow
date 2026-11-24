@@ -121,14 +121,19 @@ if ($taxes_sql) {
     }
 }
 
+$asset_type_names = function_exists('assetTypes')
+    ? array_keys(assetTypes())
+    : (is_array($asset_types_array ?? null) ? array_keys($asset_types_array) : ['Other']);
+if (empty($asset_type_names)) {
+    $asset_type_names = ['Other'];
+}
+
 ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-box-open mr-2"></i>Add Product / Charge to <?= $ticket_prefix . $ticket_number ?></h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-box-open me-2"></i>Add Product / Charge to <?= $ticket_prefix . $ticket_number ?></h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -138,22 +143,22 @@ ob_start();
     <input type="hidden" name="inventory_item_id" id="tp_inventory_item_id" value="0">
 
     <div class="modal-body">
-        <div class="card card-outline card-secondary mb-3">
+        <div class="card mb-3">
             <div class="card-header py-2">
-                <div class="d-flex flex-wrap justify-content-between align-items-center">
-                    <ul class="nav nav-pills nav-sm" role="tablist">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <ul class="nav nav-pills" role="tablist">
                         <li class="nav-item">
-                            <a class="nav-link active py-1 px-2" data-toggle="pill" href="#tp-tab-serialized" role="tab">
-                                <i class="fas fa-barcode mr-1"></i>In-Stock Serialized (<?= count($serialized_units) ?>)
+                            <a class="nav-link active py-1 px-2 small" data-bs-toggle="pill" href="#tp-tab-serialized" role="tab">
+                                <i class="fas fa-barcode me-1"></i>In-Stock Serialized (<?= count($serialized_units) ?>)
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link py-1 px-2" data-toggle="pill" href="#tp-tab-catalog" role="tab">
-                                <i class="fas fa-boxes mr-1"></i>Products &amp; Catalog (<?= count($catalog_products) ?>)
+                            <a class="nav-link py-1 px-2 small" data-bs-toggle="pill" href="#tp-tab-catalog" role="tab">
+                                <i class="fas fa-boxes me-1"></i>Products &amp; Catalog (<?= count($catalog_products) ?>)
                             </a>
                         </li>
                     </ul>
-                    <div class="mt-2 mt-sm-0" style="min-width: 240px;">
+                    <div style="min-width: 240px;">
                         <input type="text" class="form-control form-control-sm" id="tp_picker_search" placeholder="Search product, SKU, serial, MAC...">
                     </div>
                 </div>
@@ -163,32 +168,32 @@ ob_start();
                     <div class="tab-pane fade show active" id="tp-tab-serialized" role="tabpanel">
                         <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
                             <table class="table table-sm table-hover mb-0">
-                                <thead class="thead-light">
+                                <thead>
                                     <tr>
                                         <th>Product</th>
                                         <th>Serial / MAC</th>
                                         <th>Location</th>
-                                        <th class="text-right">Price</th>
+                                        <th class="text-end">Price</th>
                                         <th class="text-center">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (empty($serialized_units)) { ?>
-                                        <tr><td colspan="5" class="text-center text-muted py-3">No serialized items currently in stock.</td></tr>
+                                        <tr><td colspan="5" class="text-center text-body-secondary py-3">No serialized items currently in stock.</td></tr>
                                     <?php } else { ?>
                                         <?php foreach ($serialized_units as $u) { ?>
                                             <tr class="tp-picker-row" data-search="<?= escapeHtml(strtolower($u['name'] . ' ' . $u['code'] . ' ' . $u['serial'] . ' ' . $u['mac'] . ' ' . $u['location'])) ?>">
-                                                <td class="align-middle font-weight-bold"><?= escapeHtml($u['name']) ?></td>
+                                                <td class="align-middle fw-bold"><?= escapeHtml($u['name']) ?></td>
                                                 <td class="align-middle">
-                                                    <span class="badge badge-info">S/N: <?= escapeHtml($u['serial']) ?></span>
+                                                    <span class="badge text-bg-info">S/N: <?= escapeHtml($u['serial']) ?></span>
                                                     <?php if ($u['mac'] !== '') { ?>
-                                                        <small class="text-muted d-block">MAC: <?= escapeHtml($u['mac']) ?></small>
+                                                        <small class="text-body-secondary d-block">MAC: <?= escapeHtml($u['mac']) ?></small>
                                                     <?php } ?>
                                                 </td>
-                                                <td class="align-middle text-muted small"><?= escapeHtml($u['location'] ?: '-') ?></td>
-                                                <td class="align-middle text-right font-weight-bold"><?= numfmt_format_currency($currency_format, floatval($u['price']), $session_company_currency) ?></td>
+                                                <td class="align-middle text-body-secondary small"><?= escapeHtml($u['location'] ?: '-') ?></td>
+                                                <td class="align-middle text-end fw-bold"><?= numfmt_format_currency($currency_format, floatval($u['price']), $session_company_currency) ?></td>
                                                 <td class="align-middle text-center">
-                                                    <button type="button" class="btn btn-xs btn-primary tp-select-unit"
+                                                    <button type="button" class="btn btn-sm btn-primary tp-select-unit"
                                                         data-product-id="<?= $u['product_id'] ?>"
                                                         data-item-id="<?= $u['item_id'] ?>"
                                                         data-name="<?= escapeHtml($u['name']) ?>"
@@ -197,7 +202,7 @@ ob_start();
                                                         data-price="<?= escapeHtml($u['price']) ?>"
                                                         data-tax-id="<?= $u['tax_id'] ?>"
                                                         data-asset-type="<?= escapeHtml($u['asset_type']) ?>">
-                                                        <i class="fas fa-check mr-1"></i>Select
+                                                        <i class="fas fa-check me-1"></i>Select
                                                     </button>
                                                 </td>
                                             </tr>
@@ -211,54 +216,54 @@ ob_start();
                     <div class="tab-pane fade" id="tp-tab-catalog" role="tabpanel">
                         <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
                             <table class="table table-sm table-hover mb-0">
-                                <thead class="thead-light">
+                                <thead>
                                     <tr>
                                         <th>Product / SKU</th>
                                         <th>Type</th>
                                         <th>Stock</th>
-                                        <th class="text-right">Price</th>
+                                        <th class="text-end">Price</th>
                                         <th class="text-center">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (empty($catalog_products)) { ?>
-                                        <tr><td colspan="5" class="text-center text-muted py-3">No catalog products found.</td></tr>
+                                        <tr><td colspan="5" class="text-center text-body-secondary py-3">No catalog products found.</td></tr>
                                     <?php } else { ?>
                                         <?php foreach ($catalog_products as $p) { ?>
                                             <tr class="tp-picker-row" data-search="<?= escapeHtml(strtolower($p['name'] . ' ' . $p['code'] . ' ' . $p['category'] . ' ' . $p['description'])) ?>">
                                                 <td class="align-middle">
-                                                    <div class="font-weight-bold"><?= escapeHtml($p['name']) ?></div>
+                                                    <div class="fw-bold"><?= escapeHtml($p['name']) ?></div>
                                                     <?php if ($p['code'] !== '') { ?>
-                                                        <small class="text-muted"><?= escapeHtml($p['code']) ?></small>
+                                                        <small class="text-body-secondary"><?= escapeHtml($p['code']) ?></small>
                                                     <?php } ?>
                                                 </td>
                                                 <td class="align-middle">
                                                     <?php if ($p['type'] === 'service') { ?>
-                                                        <span class="badge badge-secondary">Service</span>
+                                                        <span class="badge text-bg-secondary">Service</span>
                                                     <?php } elseif ($p['tracking_type'] === 'serialized') { ?>
-                                                        <span class="badge badge-info">Serialized</span>
+                                                        <span class="badge text-bg-info">Serialized</span>
                                                     <?php } else { ?>
-                                                        <span class="badge badge-warning text-dark">Bulk</span>
+                                                        <span class="badge text-bg-warning">Bulk</span>
                                                     <?php } ?>
                                                 </td>
                                                 <td class="align-middle">
                                                     <?php if ($p['stock'] === null) { ?>
-                                                        <span class="text-muted">-</span>
+                                                        <span class="text-body-secondary">-</span>
                                                     <?php } elseif ($p['stock'] > 0) { ?>
-                                                        <span class="badge badge-success"><?= $p['stock'] ?> in stock</span>
+                                                        <span class="badge text-bg-success"><?= $p['stock'] ?> in stock</span>
                                                     <?php } else { ?>
-                                                        <span class="badge badge-light border text-muted">0</span>
+                                                        <span class="badge text-bg-secondary">0</span>
                                                     <?php } ?>
                                                 </td>
-                                                <td class="align-middle text-right font-weight-bold"><?= numfmt_format_currency($currency_format, floatval($p['price']), $session_company_currency) ?></td>
+                                                <td class="align-middle text-end fw-bold"><?= numfmt_format_currency($currency_format, floatval($p['price']), $session_company_currency) ?></td>
                                                 <td class="align-middle text-center">
-                                                    <button type="button" class="btn btn-xs btn-primary tp-select-catalog"
+                                                    <button type="button" class="btn btn-sm btn-primary tp-select-catalog"
                                                         data-product-id="<?= $p['product_id'] ?>"
                                                         data-name="<?= escapeHtml($p['name']) ?>"
                                                         data-description="<?= escapeHtml($p['description']) ?>"
                                                         data-price="<?= escapeHtml($p['price']) ?>"
                                                         data-tax-id="<?= $p['tax_id'] ?>">
-                                                        <i class="fas fa-check mr-1"></i>Select
+                                                        <i class="fas fa-check me-1"></i>Select
                                                     </button>
                                                 </td>
                                             </tr>
@@ -275,134 +280,140 @@ ob_start();
         <div id="tp_selected_banner" class="alert alert-info py-2 px-3 mb-3 d-none">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <i class="fas fa-link mr-1"></i>
+                    <i class="fas fa-link me-1"></i>
                     <strong id="tp_selected_label"></strong>
                 </div>
-                <button type="button" class="btn btn-xs btn-outline-dark" id="tp_clear_selection">
-                    <i class="fas fa-times mr-1"></i>Clear / Custom Write-In
+                <button type="button" class="btn btn-sm btn-outline-dark" id="tp_clear_selection">
+                    <i class="fas fa-times me-1"></i>Clear / Custom Write-In
                 </button>
             </div>
         </div>
 
-        <div class="form-group">
-            <label>Item / Product Name <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Item / Product Name <strong class="text-danger">*</strong></label>
             <input type="text" class="form-control" name="name" id="tp_name" placeholder="e.g. UniFi Switch 24 PoE or custom charge" maxlength="200" required>
         </div>
 
-        <div class="form-group">
-            <label>Description</label>
+        <div class="mb-3">
+            <label class="form-label">Description</label>
             <textarea class="form-control" rows="3" name="description" id="tp_description" placeholder="Optional product details, serial number, notes..."></textarea>
         </div>
 
-        <div class="form-row">
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>QTY <strong class="text-danger">*</strong></label>
-                    <input type="number" step="0.01" min="0.01" class="form-control" name="qty" id="tp_qty" value="1" required>
+        <div class="row g-2">
+            <div class="col-md-4 mb-3">
+                <label class="form-label">QTY <strong class="text-danger">*</strong></label>
+                <input type="number" step="0.01" min="0.01" class="form-control" name="qty" id="tp_qty" value="1" required>
+            </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label">Price <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
+                    <input type="number" step="0.01" class="form-control" name="price" id="tp_price" value="0.00" required>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Price <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
-                        </div>
-                        <input type="number" step="0.01" class="form-control" name="price" id="tp_price" value="0.00" required>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Tax</label>
-                    <select class="form-control" name="tax_id" id="tp_tax_id">
-                        <option value="0">None</option>
-                        <?php foreach ($taxes_list as $tax) { ?>
-                            <option value="<?= intval($tax['tax_id']) ?>"><?= escapeHtml($tax['tax_name']) . ' ' . floatval($tax['tax_percent']) . '%' ?></option>
-                        <?php } ?>
-                    </select>
-                </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label">Tax</label>
+                <select class="form-select" name="tax_id" id="tp_tax_id">
+                    <option value="0">None</option>
+                    <?php foreach ($taxes_list as $tax) { ?>
+                        <option value="<?= intval($tax['tax_id']) ?>"><?= escapeHtml($tax['tax_name']) . ' ' . floatval($tax['tax_percent']) . '%' ?></option>
+                    <?php } ?>
+                </select>
             </div>
         </div>
 
-        <div id="tp_asset_type_group" class="form-group d-none mb-0">
-            <label>Client Asset Type (upon invoicing)</label>
-            <select class="form-control" name="asset_type" id="tp_asset_type">
-                <?php foreach (array_keys($asset_types_array) as $at) { ?>
+        <div id="tp_asset_type_group" class="d-none mb-0">
+            <label class="form-label">Client Asset Type (upon invoicing)</label>
+            <select class="form-select" name="asset_type" id="tp_asset_type">
+                <?php foreach ($asset_type_names as $at) { ?>
                     <option value="<?= escapeHtml($at) ?>"><?= escapeHtml($at) ?></option>
                 <?php } ?>
             </select>
-            <small class="form-text text-muted">
+            <div class="form-text">
                 This serialized unit will be reserved immediately and linked to <strong><?= $client_name ?></strong>'s Assets only when this ticket is invoiced.
-            </small>
+            </div>
         </div>
     </div>
 
     <div class="modal-footer">
-        <button type="submit" name="add_ticket_product" class="btn btn-primary text-bold">
-            <i class="fa fa-check mr-2"></i>Add to Ticket
+        <button type="submit" name="add_ticket_product" class="btn btn-primary fw-bold">
+            <i class="fa fa-check me-2"></i>Add to Ticket
         </button>
-        <button type="button" class="btn btn-light" data-dismiss="modal">
-            <i class="fa fa-times mr-2"></i>Cancel
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+            <i class="fa fa-times me-2"></i>Cancel
         </button>
     </div>
 </form>
 
 <script>
 (function () {
-    $('#tp_picker_search').on('input', function () {
-        var term = $(this).val().toLowerCase().trim();
-        $('.tp-picker-row').each(function () {
-            var hay = ($(this).data('search') || '').toString();
-            $(this).toggle(term === '' || hay.indexOf(term) !== -1);
+    const searchEl = document.getElementById('tp_picker_search');
+    if (searchEl) {
+        searchEl.addEventListener('input', function () {
+            const term = this.value.toLowerCase().trim();
+            document.querySelectorAll('.tp-picker-row').forEach(function (row) {
+                const hay = (row.dataset.search || '').toLowerCase();
+                row.style.display = (term === '' || hay.indexOf(term) !== -1) ? '' : 'none';
+            });
+        });
+    }
+
+    function clearSelection() {
+        document.getElementById('tp_product_id').value = 0;
+        document.getElementById('tp_inventory_item_id').value = 0;
+        document.getElementById('tp_qty').readOnly = false;
+        document.getElementById('tp_asset_type_group').classList.add('d-none');
+        document.getElementById('tp_selected_banner').classList.add('d-none');
+    }
+
+    document.querySelectorAll('.tp-select-unit').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.getElementById('tp_product_id').value = this.dataset.productId || 0;
+            document.getElementById('tp_inventory_item_id').value = this.dataset.itemId || 0;
+            document.getElementById('tp_name').value = this.dataset.name || '';
+            document.getElementById('tp_description').value = this.dataset.description || '';
+            const qtyEl = document.getElementById('tp_qty');
+            qtyEl.value = 1;
+            qtyEl.readOnly = true;
+            document.getElementById('tp_price').value = this.dataset.price || '0.00';
+            document.getElementById('tp_tax_id').value = this.dataset.taxId || 0;
+            document.getElementById('tp_asset_type').value = this.dataset.assetType || 'Other';
+            document.getElementById('tp_asset_type_group').classList.remove('d-none');
+            document.getElementById('tp_selected_label').textContent = 'Serialized Unit: ' + (this.dataset.name || '') + ' (S/N: ' + (this.dataset.serial || '') + ')';
+            document.getElementById('tp_selected_banner').classList.remove('d-none');
         });
     });
 
-    function clearSelection() {
-        $('#tp_product_id').val(0);
-        $('#tp_inventory_item_id').val(0);
-        $('#tp_qty').prop('readonly', false);
-        $('#tp_asset_type_group').addClass('d-none');
-        $('#tp_selected_banner').addClass('d-none');
+    document.querySelectorAll('.tp-select-catalog').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.getElementById('tp_product_id').value = this.dataset.productId || 0;
+            document.getElementById('tp_inventory_item_id').value = 0;
+            document.getElementById('tp_name').value = this.dataset.name || '';
+            document.getElementById('tp_description').value = this.dataset.description || '';
+            const qtyEl = document.getElementById('tp_qty');
+            qtyEl.value = 1;
+            qtyEl.readOnly = false;
+            document.getElementById('tp_price').value = this.dataset.price || '0.00';
+            document.getElementById('tp_tax_id').value = this.dataset.taxId || 0;
+            document.getElementById('tp_asset_type_group').classList.add('d-none');
+            document.getElementById('tp_selected_label').textContent = 'Catalog Product: ' + (this.dataset.name || '');
+            document.getElementById('tp_selected_banner').classList.remove('d-none');
+        });
+    });
+
+    const clearBtn = document.getElementById('tp_clear_selection');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', function () {
+            clearSelection();
+            const nameEl = document.getElementById('tp_name');
+            nameEl.value = '';
+            nameEl.focus();
+            document.getElementById('tp_description').value = '';
+            document.getElementById('tp_qty').value = 1;
+            document.getElementById('tp_price').value = '0.00';
+            document.getElementById('tp_tax_id').value = 0;
+        });
     }
-
-    $('.tp-select-unit').on('click', function () {
-        var $btn = $(this);
-        $('#tp_product_id').val($btn.data('product-id'));
-        $('#tp_inventory_item_id').val($btn.data('item-id'));
-        $('#tp_name').val($btn.data('name'));
-        $('#tp_description').val($btn.data('description'));
-        $('#tp_qty').val(1).prop('readonly', true);
-        $('#tp_price').val($btn.data('price'));
-        $('#tp_tax_id').val($btn.data('tax-id') || 0);
-        $('#tp_asset_type').val($btn.data('asset-type') || 'Other');
-        $('#tp_asset_type_group').removeClass('d-none');
-        $('#tp_selected_label').text('Serialized Unit: ' + $btn.data('name') + ' (S/N: ' + $btn.data('serial') + ')');
-        $('#tp_selected_banner').removeClass('d-none');
-    });
-
-    $('.tp-select-catalog').on('click', function () {
-        var $btn = $(this);
-        $('#tp_product_id').val($btn.data('product-id'));
-        $('#tp_inventory_item_id').val(0);
-        $('#tp_name').val($btn.data('name'));
-        $('#tp_description').val($btn.data('description'));
-        $('#tp_qty').val(1).prop('readonly', false);
-        $('#tp_price').val($btn.data('price'));
-        $('#tp_tax_id').val($btn.data('tax-id') || 0);
-        $('#tp_asset_type_group').addClass('d-none');
-        $('#tp_selected_label').text('Catalog Product: ' + $btn.data('name'));
-        $('#tp_selected_banner').removeClass('d-none');
-    });
-
-    $('#tp_clear_selection').on('click', function () {
-        clearSelection();
-        $('#tp_name').val('').focus();
-        $('#tp_description').val('');
-        $('#tp_qty').val(1);
-        $('#tp_price').val('0.00');
-        $('#tp_tax_id').val(0);
-    });
 })();
 </script>
 

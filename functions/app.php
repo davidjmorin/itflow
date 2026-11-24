@@ -1341,7 +1341,10 @@ function fulfillTicketProductsOnInvoice($mysqli, $ticket_id, $invoice_id, $selec
                     $item_notes = trim((string) ($inv_row['item_notes'] ?? ''));
 
                     $tp_asset_type = trim((string) ($tp_row['ticket_product_asset_type'] ?? ''));
-                    if ($tp_asset_type !== '' && isset($asset_types_array) && array_key_exists($tp_asset_type, $asset_types_array)) {
+                    $valid_asset_types = function_exists('assetTypes')
+                        ? assetTypes()
+                        : (is_array($asset_types_array ?? null) ? $asset_types_array : []);
+                    if ($tp_asset_type !== '' && array_key_exists($tp_asset_type, $valid_asset_types)) {
                         $asset_type = $tp_asset_type;
                     } else {
                         $asset_type = inferAssetTypeFromProductName($product_name);

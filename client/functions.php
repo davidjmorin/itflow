@@ -187,11 +187,12 @@ function portalNav() {
     ];
 
     if (contactCan('accounting') && $config_module_enable_accounting == 1) {
-        $cards = billingStripeProvider() !== null;
+        $online_pay = billingAnyOnlineProvider() !== null;
+        $cards = !empty(billingCardProviders());
         $children = [
             ['label' => 'Invoices', 'icon' => 'fa-file-invoice-dollar', 'href' => '/client/invoices.php', 'pages' => ['invoices.php', 'invoice.php']],
         ];
-        if ($cards) {
+        if ($online_pay) {
             $children[] = ['label' => 'Pay Invoices', 'icon' => 'fa-hand-holding-usd', 'href' => '/client/unpaid_invoices.php', 'pages' => ['unpaid_invoices.php', 'pay.php']];
         }
         $children[] = ['label' => 'Quotes', 'icon' => 'fa-comment-dollar', 'href' => '/client/quotes.php', 'pages' => ['quotes.php', 'quote.php']];

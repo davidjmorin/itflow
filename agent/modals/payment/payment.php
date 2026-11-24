@@ -30,7 +30,7 @@ $has_invoice = $row['invoice_number'] !== null;
 $can_sales = lookupUserPermission('module_sales') >= 1;
 $can_edit = incomeCanEditPayments() && $has_invoice;
 $can_delete = incomeCanDeletePayments() && $has_invoice;
-$online = preg_match('/^Stripe - pi_/', (string) $row['payment_reference']) === 1;
+$online = preg_match('/^(Stripe - pi_|Square - |PayPal - )/', (string) $row['payment_reference']) === 1;
 $state = $has_invoice ? invoiceState($row, $row['invoice_paid']) : null;
 $can_receipt = $has_invoice && billingMoneyCan('receipt') && $client_id;
 $receipt_to = $can_receipt ? array_column(billingEmailRecipients($client_id), 'email') : [];

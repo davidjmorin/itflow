@@ -23,18 +23,57 @@ const BILLING_PAY_MAX_INVOICES = 25;
  * has its keys - id, keys, threshold, the account payments go to and the card
  * fee. Null when clients can't pay by card.
  */
-function billingStripeProvider() {
+function billingActiveProviders($reset = false) {
     global $mysqli;
-    static $provider = false;
-    if ($provider === false) {
-        $provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_public_key, payment_provider_private_key,
-                payment_provider_threshold, payment_provider_account, payment_provider_card_fee, payment_provider_card_fee_percent, payment_provider_card_fee_fixed
-            FROM payment_providers WHERE payment_provider_name = 'Stripe' AND payment_provider_active = 1 LIMIT 1")) ?: null;
-        if ($provider && (trim((string) $provider['payment_provider_public_key']) === '' || trim((string) $provider['payment_provider_private_key']) === '')) {
-            $provider = null;
+    static $providers = null;
+    if ($reset || $providers === null) {
+        $providers = [];
+        $sql = mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_name, payment_provider_description,
+                payment_provider_public_key, payment_provider_private_key, payment_provider_mode, payment_provider_extra,
+                payment_provider_threshold, payment_provider_account, payment_provider_card_fee,
+                payment_provider_card_fee_percent, payment_provider_card_fee_fixed
+            FROM payment_providers WHERE payment_provider_active = 1
+            ORDER BY FIELD(payment_provider_name, 'Stripe', 'Square', 'PayPal'), payment_provider_name ASC");
+        if ($sql) {
+            while ($row = mysqli_fetch_assoc($sql)) {
+                if (trim((string) $row['payment_provider_public_key']) === '' || trim((string) $row['payment_provider_private_key']) === '') {
+                    continue;
+                }
+                $providers[(string) $row['payment_provider_name']] = $row;
+            }
         }
     }
-    return $provider;
+    return $providers;
+}
+
+function billingProviderByName($name) {
+    $providers = billingActiveProviders();
+    return $providers[$name] ?? null;
+}
+
+function billingProviderById($provider_id) {
+    $provider_id = intval($provider_id);
+    foreach (billingActiveProviders() as $row) {
+        if (intval($row['payment_provider_id']) === $provider_id) {
+            return $row;
+        }
+    }
+    return null;
+}
+
+function billingAnyOnlineProvider() {
+    $providers = billingActiveProviders();
+    return $providers ? reset($providers) : null;
+}
+
+function billingCardProviders() {
+    return array_filter(billingActiveProviders(), function ($row, $name) {
+        return in_array($name, ['Stripe', 'Square'], true);
+    }, ARRAY_FILTER_USE_BOTH);
+}
+
+function billingStripeProvider() {
+    return billingProviderByName('Stripe');
 }
 
 /** A Stripe client on the provider's secret key, or null when Stripe isn't set up. */
@@ -114,13 +153,19 @@ function billingStripeCustomerForget($client_id, $customer_id) {
  * Whether an amount can be paid by card - Stripe's threshold (Admin > Payment
  * Providers) caps what is offered at checkout; none set means no cap.
  */
-function billingOnlinePayAllowed($amount) {
-    $provider = billingStripeProvider();
-    if (!$provider) {
-        return false;
+function billingOnlinePayAllowed($amount, $provider = null) {
+    $amount = round(floatval($amount), 2);
+    if (is_array($provider)) {
+        $threshold = floatval($provider['payment_provider_threshold'] ?? 0);
+        return $threshold == 0 || $threshold > $amount;
     }
-    $threshold = floatval($provider['payment_provider_threshold']);
-    return $threshold == 0 || $threshold > round(floatval($amount), 2);
+    foreach (billingActiveProviders() as $p) {
+        $threshold = floatval($p['payment_provider_threshold'] ?? 0);
+        if ($threshold == 0 || $threshold > $amount) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* ---------------------------------------------------------------- Card fee */
@@ -160,7 +205,7 @@ function billingWithoutCardFees(array $items) {
  * of it, and what is left is what was owed (billingCardFeeCents()).
  */
 function billingCardFeeRates($provider = null) {
-    $provider = $provider ?? billingStripeProvider();
+    $provider = $provider ?? billingAnyOnlineProvider();
     if (!$provider || !intval($provider['payment_provider_card_fee'] ?? 0)) {
         return null;
     }
@@ -172,11 +217,10 @@ function billingCardFeeRates($provider = null) {
     return ['percent' => $percent, 'fixed' => $fixed];
 }
 
-/** The card fee a client pays - billingCardFeeRates(), unless they are let off it (No card fee, on the client's Billing tab). */
-function billingCardFeeFor($client_id) {
+function billingCardFeeFor($client_id, $provider = null) {
     global $mysqli;
     static $exempt = [];
-    $rates = billingCardFeeRates();
+    $rates = billingCardFeeRates($provider);
     $client_id = intval($client_id);
     if (!$rates || !$client_id) {
         return $rates;
@@ -364,20 +408,24 @@ function billingCardParts($description) {
  * billingCardParts() under 'card' and how many active recurring invoices
  * pay with it under 'autopay'.
  */
-function billingSavedCards($client_id) {
+function billingSavedCards($client_id, $provider_id = 0) {
     global $mysqli;
-    $provider = billingStripeProvider();
-    if (!$provider) {
+    $card_providers = billingCardProviders();
+    if (!$card_providers) {
         return [];
     }
     $client_id = intval($client_id);
+    $provider_id = intval($provider_id);
+    $where_provider = $provider_id > 0 ? " AND saved_payment_provider_id = $provider_id" : '';
     $rows = [];
-    $sql = mysqli_query($mysqli, "SELECT saved_payment_id, saved_payment_description, saved_payment_provider_method, saved_payment_created_at,
+    $sql = mysqli_query($mysqli, "SELECT saved_payment_id, saved_payment_provider_id, saved_payment_description, saved_payment_provider_method, saved_payment_created_at,
+            payment_provider_name,
             (SELECT COUNT(*) FROM recurring_payments
                 JOIN recurring_invoices ON recurring_invoice_id = recurring_payment_recurring_invoice_id
                 WHERE recurring_payment_saved_payment_id = saved_payment_id AND recurring_invoice_status = 1) AS autopay
         FROM client_saved_payment_methods
-        WHERE saved_payment_client_id = $client_id AND saved_payment_provider_id = " . intval($provider['payment_provider_id']) . "
+        JOIN payment_providers ON payment_provider_id = saved_payment_provider_id
+        WHERE saved_payment_client_id = $client_id AND payment_provider_active = 1$where_provider
         ORDER BY saved_payment_id ASC");
     while ($row = mysqli_fetch_assoc($sql)) {
         $row['card'] = billingCardParts($row['saved_payment_description']);
@@ -425,13 +473,13 @@ function invoiceAutopay(array $invoice) {
         }
     }
     $failed = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT history_description, history_created_at FROM history
-        WHERE history_invoice_id = " . intval($invoice['invoice_id']) . " AND history_description LIKE 'Stripe autopay failed%' ORDER BY history_id DESC LIMIT 1"));
+        WHERE history_invoice_id = " . intval($invoice['invoice_id']) . " AND (history_description LIKE 'Stripe autopay failed%' OR history_description LIKE 'Square autopay failed%') ORDER BY history_id DESC LIMIT 1"));
     return [
         'method' => $card ? $parts['label'] : (string) $row['recurring_payment_method'],
         'icon' => $card ? $parts['icon'] : 'fas fa-wallet',
         'card' => $card,
         'problem' => $problem,
-        'failed' => $failed ? ['at' => $failed['history_created_at'], 'why' => trim(preg_replace('/^Stripe autopay failed:?\s*/i', '', $failed['history_description']))] : null,
+        'failed' => $failed ? ['at' => $failed['history_created_at'], 'why' => trim(preg_replace('/^(Stripe|Square) autopay failed:?\s*/i', '', $failed['history_description']))] : null,
         'since' => (string) $row['recurring_payment_created_at'],
     ];
 }
@@ -481,7 +529,7 @@ function invoiceAutopayStatus(array $invoice, array $state, $autopay) {
  * 'fee_rates'] - or null, with $error for the client. The card limit is on
  * what the invoices come to, without the fee.
  */
-function billingPaySelection($client_id, array $invoice_ids, &$error = '') {
+function billingPaySelection($client_id, array $invoice_ids, &$error = '', $provider = null) {
     $invoice_ids = array_values(array_unique(array_filter(array_map('intval', $invoice_ids))));
     if (!$invoice_ids) {
         $error = 'Tick the invoices you want to pay';
@@ -515,13 +563,14 @@ function billingPaySelection($client_id, array $invoice_ids, &$error = '') {
         $selection['numbers'][] = billingNumber('invoice', $row);
     }
     $selection['total'] = array_sum($selection['cents']) / 100;
-    if (!billingOnlinePayAllowed($selection['total'])) {
-        $error = 'Card payments are limited to under ' . billingMoney(floatval(billingStripeProvider()['payment_provider_threshold'] ?? 0), $selection['currency'])
+    $resolved_provider = is_array($provider) ? $provider : billingAnyOnlineProvider();
+    if (!billingOnlinePayAllowed($selection['total'], $provider)) {
+        $threshold = floatval($resolved_provider['payment_provider_threshold'] ?? 0);
+        $error = 'Online payments are limited to under ' . billingMoney($threshold, $selection['currency'])
             . ' at a time - pay fewer invoices at once, or pay another way';
         return null;
     }
-    // The card fee - one on the whole payment, shared over the invoices it pays
-    $selection['fee_rates'] = billingCardFeeFor($client_id);
+    $selection['fee_rates'] = billingCardFeeFor($client_id, $resolved_provider);
     $fee_cents = billingCardFeeCents(array_sum($selection['cents']), $selection['fee_rates']);
     $selection['fees'] = $fee_cents ? billingCardFeeShares($selection['cents'], $fee_cents) : [];
     $selection['fee'] = $fee_cents / 100;
@@ -815,6 +864,185 @@ function billingStripeBook($pi, $client_id, array $by = []) {
     return ['ok' => true, 'error' => '', 'applied' => $applied, 'payment_id' => $first_payment_id, 'already' => false];
 }
 
+function billingBookOnlinePayment($provider_name, array $provider_row, $tx_id, $client_id, array $split, array $fees, $currency, $date, $livemode, array $by = []) {
+    global $mysqli;
+    $client_id = intval($client_id);
+    $tx_id = trim((string) $tx_id);
+    $fail = function ($error) {
+        return ['ok' => false, 'error' => $error, 'applied' => [], 'payment_id' => 0, 'already' => false];
+    };
+    if ($tx_id === '' || !in_array($provider_name, ['Stripe', 'Square', 'PayPal'], true)) {
+        return $fail('invalid payment');
+    }
+    if (!$split) {
+        return $fail('empty split');
+    }
+
+    $currency = strtoupper(preg_replace('/[^A-Za-z]/', '', (string) $currency));
+    $invoices = [];
+    foreach ($split as $invoice_id => $cents) {
+        $invoice_id = intval($invoice_id);
+        $cents = intval($cents);
+        $invoice = billingRow('invoice', $invoice_id, false);
+        if (!$invoice || intval($invoice['client_id']) !== $client_id || strtoupper((string) $invoice['invoice_currency_code']) !== $currency || $cents <= 0) {
+            return $fail("invoice $invoice_id does not fit");
+        }
+        $invoices[$invoice_id] = $invoice;
+    }
+    if (array_diff_key($fees, $split)) {
+        return $fail('card fee split mismatch');
+    }
+
+    $ref_raw = "$provider_name - $tx_id";
+    $reference = escapeSql($ref_raw);
+    $lock = escapeSql('itflow_pay_' . md5($provider_name . '|' . $tx_id));
+    if (intval(mysqli_fetch_row(mysqli_query($mysqli, "SELECT GET_LOCK('$lock', 15)"))[0] ?? 0) !== 1) {
+        return $fail('busy');
+    }
+
+    $booked = mysqli_fetch_row(mysqli_query($mysqli, "SELECT payment_id FROM payments
+        JOIN invoices ON invoice_id = payment_invoice_id
+        WHERE payment_reference = '$reference' AND invoice_client_id = $client_id ORDER BY payment_id ASC LIMIT 1"));
+    if ($booked) {
+        mysqli_query($mysqli, "SELECT RELEASE_LOCK('$lock')");
+        $applied = [];
+        foreach ($invoices as $invoice_id => $invoice) {
+            $applied[] = ['invoice' => billingRow('invoice', $invoice_id, false), 'amount' => ($split[$invoice_id] + ($fees[$invoice_id] ?? 0)) / 100];
+        }
+        return ['ok' => true, 'error' => '', 'applied' => $applied, 'payment_id' => intval($booked[0]), 'already' => true];
+    }
+
+    $account_id = intval($provider_row['payment_provider_account'] ?? 0);
+    $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $date) ? $date : date('Y-m-d');
+    $total = (array_sum($split) + array_sum($fees)) / 100;
+    $name = trim((string) ($by['name'] ?? ''));
+    $via = trim((string) ($by['via'] ?? ''));
+    $many = count($invoices) > 1;
+    $dev = !$livemode ? ' (DEV MODE)' : '';
+    $method_word = $provider_name === 'PayPal' ? 'via PayPal' : 'by card';
+    $receipt_method = $provider_name === 'PayPal' ? 'PayPal' : 'Card';
+    $applied = [];
+    $first_payment_id = 0;
+
+    foreach ($invoices as $invoice_id => $invoice) {
+        $fee = ($fees[$invoice_id] ?? 0) / 100;
+        $amount = ($split[$invoice_id] + ($fees[$invoice_id] ?? 0)) / 100;
+        $status_before = (string) $invoice['invoice_status'];
+        billingCardFeeAdd($invoice_id, $fee, $date);
+        mysqli_query($mysqli, "INSERT INTO payments SET payment_date = '$date', payment_amount = $amount, payment_currency_code = '" . escapeSql($currency) . "',
+            payment_account_id = $account_id, payment_method = '" . escapeSql($provider_name) . "', payment_reference = '$reference', payment_invoice_id = $invoice_id");
+        $first_payment_id = $first_payment_id ?: intval(mysqli_insert_id($mysqli));
+        $status = updateInvoiceStatusFromPayments($invoice_id);
+        $invoice = billingRow('invoice', $invoice_id, false);
+        $number = billingNumber('invoice', $invoice);
+        $money = billingMoney($amount, $currency);
+
+        billingLog('invoice', $invoice_id, $status, "Paid $money online $method_word" . ($fee > 0 ? ', with a ' . billingMoney($fee, $currency) . ' card fee' : '') . ($name !== '' ? " - $name" : '') . ($via !== '' ? " $via" : '')
+            . ($many ? ', in one payment of ' . billingMoney($total, $currency) . ' for ' . count($invoices) . ' invoices' : ''));
+
+        $state = invoiceState($invoice, invoicePaid($invoice_id));
+        if (!in_array($status_before, invoiceOpenStatuses(), true) || $state['balance'] < 0) {
+            appNotify("Invoice Payment", escapeSql("Check $number for {$invoice['client_name']}: an online payment of $money went on it"
+                . ($state['balance'] < 0 ? ' and it is now overpaid by ' . billingMoney(-$state['balance'], $currency) : " while it was $status_before")),
+                "/agent/invoice.php?invoice_id=$invoice_id", $client_id);
+        }
+        if ($status === 'Paid') {
+            triggerCustomAction('invoice_pay', $invoice_id);
+        }
+        logAudit("Invoice", "Payment", escapeSql(($name !== '' ? $name : 'Client') . " paid $money on invoice $number $method_word" . ($fee > 0 ? ', with a ' . billingMoney($fee, $currency) . ' card fee' : '') . ($via !== '' ? " $via" : '') . " - $tx_id$dev"), $client_id, $invoice_id);
+        $applied[] = ['invoice' => $invoice, 'amount' => $amount];
+    }
+
+    mysqli_query($mysqli, "SELECT RELEASE_LOCK('$lock')");
+
+    $client_name = (string) $applied[0]['invoice']['client_name'];
+    $who = $name !== '' ? " ($name" . ($via !== '' ? ", $via" : '') . ')' : '';
+    if ($many) {
+        appNotify("Invoice Paid", escapeSql("$client_name paid " . count($applied) . ' invoices online - ' . billingMoney($total, $currency) . $who), "/agent/invoices.php?client_id=$client_id", $client_id);
+    } else {
+        $number = billingNumber('invoice', $applied[0]['invoice']);
+        appNotify("Invoice Paid", escapeSql("Invoice $number has been paid by $client_name$who"), "/agent/invoice.php?invoice_id=" . intval($applied[0]['invoice']['invoice_id']), $client_id);
+    }
+
+    if (billingEmailReady()) {
+        billingPaymentReceiptSend($applied, ['date' => $date, 'method' => $receipt_method, 'reference' => $ref_raw, 'how' => $by['how'] ?? ('Online ' . $receipt_method)], true);
+    }
+
+    return ['ok' => true, 'error' => '', 'applied' => $applied, 'payment_id' => $first_payment_id, 'already' => false];
+}
+
+function billingChargeSavedCard(array $selection, $client_id, $saved_payment_id, $idempotency_key, array $by = []) {
+    global $mysqli;
+    $client_id = intval($client_id);
+    $saved_payment_id = intval($saved_payment_id);
+    $card = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT cs.saved_payment_id, cs.saved_payment_provider_id, cs.saved_payment_provider_method, cs.saved_payment_description,
+            pp.payment_provider_name, pp.payment_provider_public_key, pp.payment_provider_private_key, pp.payment_provider_mode, pp.payment_provider_extra, pp.payment_provider_account,
+            pp.payment_provider_card_fee, pp.payment_provider_card_fee_percent, pp.payment_provider_card_fee_fixed
+        FROM client_saved_payment_methods cs
+        JOIN payment_providers pp ON pp.payment_provider_id = cs.saved_payment_provider_id
+        WHERE cs.saved_payment_id = $saved_payment_id AND cs.saved_payment_client_id = $client_id AND pp.payment_provider_active = 1
+        LIMIT 1"));
+    if (!$card) {
+        return ['ok' => false, 'error' => 'That card is no longer saved - choose another', 'payment_id' => 0, 'tx_id' => ''];
+    }
+    if (billingCardParts($card['saved_payment_description'])['expired']) {
+        return ['ok' => false, 'error' => 'That card has expired - choose another or pay with a new card', 'payment_id' => 0, 'tx_id' => ''];
+    }
+
+    $provider_name = (string) $card['payment_provider_name'];
+    if ($provider_name === 'Stripe') {
+        $charge = billingStripeChargeSaved($selection, $client_id, $saved_payment_id, $idempotency_key, $by);
+        if (!$charge['ok']) {
+            return ['ok' => false, 'error' => $charge['error'], 'payment_id' => 0, 'tx_id' => ''];
+        }
+        $booked = billingStripeBook($charge['pi'], $client_id, $by);
+        return ['ok' => $booked['ok'], 'error' => $booked['error'], 'payment_id' => $booked['payment_id'], 'tx_id' => (string) $charge['pi']->id, 'booked' => $booked];
+    }
+
+    if ($provider_name === 'Square') {
+        $cust = squareEnsureCustomer($card, $client_id, (string) ($by['name'] ?? ''));
+        if (!$cust['ok']) {
+            return ['ok' => false, 'error' => $cust['error'], 'payment_id' => 0, 'tx_id' => ''];
+        }
+        $total_cents = array_sum($selection['cents']) + array_sum($selection['fees'] ?? []);
+        $numbers = implode(', ', $selection['numbers']);
+        $charge = squareCreatePayment(
+            $card,
+            (string) $card['saved_payment_provider_method'],
+            $total_cents,
+            $selection['currency'],
+            'itflow-sq-portal-' . $idempotency_key,
+            [
+                'customer_id' => $cust['customer_id'],
+                'reference_id' => mb_substr($numbers, 0, 40),
+                'note' => "ITFlow: $numbers",
+            ]
+        );
+        if (!$charge['ok']) {
+            logApp('Square', 'warning', "Saved card payment declined for client $client_id: " . $charge['error']);
+            return ['ok' => false, 'error' => 'The payment could not be completed: ' . $charge['error'], 'payment_id' => 0, 'tx_id' => ''];
+        }
+        $sq_id = (string) $charge['payment']['id'];
+        $created = !empty($charge['payment']['created_at']) ? strtotime((string) $charge['payment']['created_at']) : time();
+        $date = date('Y-m-d', $created ?: time());
+        $booked = billingBookOnlinePayment(
+            'Square',
+            $card,
+            $sq_id,
+            $client_id,
+            $selection['cents'],
+            $selection['fees'] ?? [],
+            $selection['currency'],
+            $date,
+            squareProviderMode($card) === 'live',
+            $by
+        );
+        return ['ok' => $booked['ok'], 'error' => $booked['error'], 'payment_id' => $booked['payment_id'], 'tx_id' => $sq_id, 'booked' => $booked];
+    }
+
+    return ['ok' => false, 'error' => 'Unsupported saved payment provider', 'payment_id' => 0, 'tx_id' => ''];
+}
+
 /* --------------------------------------------------------- Payment history */
 
 /** SQL that keys the payments made together - one card payment over several invoices shares a date, method and reference. */
@@ -893,8 +1121,13 @@ function billingPaymentReceipt($payment_id, $client_id) {
 /** How a payment was made, in words for the client - "Card", "Check", "Bank transfer". */
 function billingPaymentMethodText($method, $reference = '') {
     $method = trim((string) $method);
-    if (strcasecmp($method, 'Stripe') === 0 || stripos((string) $reference, 'Stripe - pi_') === 0) {
+    if (strcasecmp($method, 'Stripe') === 0 || strcasecmp($method, 'Square') === 0
+        || stripos((string) $reference, 'Stripe - pi_') === 0
+        || stripos((string) $reference, 'Square - ') === 0) {
         return 'Card';
+    }
+    if (strcasecmp($method, 'PayPal') === 0 || stripos((string) $reference, 'PayPal - ') === 0) {
+        return 'PayPal';
     }
     return $method !== '' ? $method : 'Payment';
 }

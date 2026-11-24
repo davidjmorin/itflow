@@ -20,9 +20,9 @@ enforceClientAccess();
 
 $state = invoiceState($invoice, invoicePaid($invoice_id));
 $cards = [];
-$sql = mysqli_query($mysqli, "SELECT saved_payment_id, saved_payment_description, payment_provider_name FROM client_saved_payment_methods
-    JOIN payment_providers ON payment_provider_id = saved_payment_provider_id
-    WHERE saved_payment_client_id = $client_id AND payment_provider_active = 1 ORDER BY saved_payment_description ASC");
+$sql = mysqli_query($mysqli, "SELECT cs.saved_payment_id, cs.saved_payment_description, pp.* FROM client_saved_payment_methods cs
+    JOIN payment_providers pp ON pp.payment_provider_id = cs.saved_payment_provider_id
+    WHERE cs.saved_payment_client_id = $client_id AND pp.payment_provider_active = 1 ORDER BY cs.saved_payment_description ASC");
 while ($row = mysqli_fetch_assoc($sql)) {
     $cards[] = $row;
 }
@@ -30,9 +30,8 @@ if (!$cards) {
     exit(json_encode(['error' => $invoice['client_name'] . ' has no card on file with a payment provider that is turned on.']));
 }
 
-// What is charged - agent/post/payment.php works it out the same way
 $currency = (string) $invoice['invoice_currency_code'];
-$fee_rates = billingCardFeeFor($client_id);
+$fee_rates = billingCardFeeFor($client_id, $cards[0]);
 $invoice_cents = intval(round(floatval($invoice['invoice_amount']) * 100));
 $fee = billingCardFeeCents($invoice_cents, $fee_rates) / 100;
 $charge = $invoice_cents / 100 + $fee;

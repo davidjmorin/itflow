@@ -35,19 +35,35 @@ if (isset($_POST['check_payment_provider']) || isset($_POST['add_payment_provide
 
     [$after, $errors] = paymentProviderCheck($_POST, $before);
 
-    // New or changed keys - does the provider take them? Once taken, not asked again for ten minutes
     $account = [];
-    if (!array_intersect_key($errors, ['provider' => 1, 'public_key' => 1, 'private_key' => 1]) && paymentProviderKeysChanged($after, $before)) {
-        $asked_key = hash('sha256', $after['payment_provider_name'] . '|' . $after['payment_provider_private_key']);
+    $after_extra = json_decode((string) ($after['payment_provider_extra'] ?? ''), true) ?: [];
+    $asked_key = hash('sha256', $after['payment_provider_name'] . '|' . $after['payment_provider_public_key'] . '|' . $after['payment_provider_private_key'] . '|' . ($after['payment_provider_mode'] ?? '') . '|' . ($after_extra['location_id'] ?? ''));
+    if (!array_intersect_key($errors, ['provider' => 1, 'public_key' => 1, 'private_key' => 1, 'mode' => 1, 'location_id' => 1]) && paymentProviderKeysChanged($after, $before)) {
         $asked_at = $_SESSION['payment_provider_asked'][$asked_key] ?? 0;
         if ($checking || time() - $asked_at > 600) {
-            $asked = paymentProviderAsk($after['payment_provider_name'], $after['payment_provider_private_key']);
+            $asked = paymentProviderAsk(
+                $after['payment_provider_name'],
+                $after['payment_provider_private_key'],
+                $after['payment_provider_public_key'],
+                (string) ($after['payment_provider_mode'] ?? ''),
+                $after_extra
+            );
             if ($asked['ok']) {
                 $_SESSION['payment_provider_asked'] = [$asked_key => time()];
                 $account = $asked['account'];
+                if (!empty($asked['location_id'])) {
+                    $_SESSION['payment_provider_location'][$asked_key] = $asked['location_id'];
+                    if (empty($after_extra['location_id'])) {
+                        $after_extra['location_id'] = $asked['location_id'];
+                        $after['payment_provider_extra'] = json_encode($after_extra);
+                    }
+                }
             } else {
                 $errors['private_key'] = $asked['error'];
             }
+        } elseif (!empty($_SESSION['payment_provider_location'][$asked_key]) && empty($after_extra['location_id'])) {
+            $after_extra['location_id'] = $_SESSION['payment_provider_location'][$asked_key];
+            $after['payment_provider_extra'] = json_encode($after_extra);
         }
     }
 
@@ -57,14 +73,13 @@ if (isset($_POST['check_payment_provider']) || isset($_POST['add_payment_provide
         exit;
     }
 
-    // Only reached without the window's script - say the first thing wrong
     if ($errors) {
         flashAlert('Not saved - ' . escapeHtml(reset($errors)), 'error');
         redirect();
     }
 
     $name = $after['payment_provider_name'];
-    $mode = paymentProviderMode($after['payment_provider_private_key']);
+    $mode = paymentProviderMode($after['payment_provider_private_key'], $after);
 
     if (!$before) {
         $provider_id = paymentProviderWrite($after);
@@ -151,16 +166,28 @@ if (isset($_GET['check_payment_provider_connection'])) {
         redirect('payment_providers.php');
     }
     $name = $row['payment_provider_name'];
-    $asked = paymentProviderAsk($name, $row['payment_provider_private_key']);
+    $extra = json_decode((string) ($row['payment_provider_extra'] ?? ''), true) ?: [];
+    $asked = paymentProviderAsk(
+        $name,
+        $row['payment_provider_private_key'],
+        (string) ($row['payment_provider_public_key'] ?? ''),
+        (string) ($row['payment_provider_mode'] ?? ''),
+        $extra
+    );
     if (!$asked['ok']) {
         logApp($name, 'warning', "Check connection - $name turned the saved key away: " . $asked['error']);
         flashAlert('<strong>' . escapeHtml($name) . '</strong> isn\'t connected - ' . escapeHtml($asked['error']), 'error');
         redirect();
     }
+    if (!empty($asked['location_id']) && empty($extra['location_id'])) {
+        $extra['location_id'] = $asked['location_id'];
+        $extra_sql = mysqli_real_escape_string($mysqli, json_encode($extra));
+        mysqli_query($mysqli, "UPDATE payment_providers SET payment_provider_extra = '$extra_sql' WHERE payment_provider_id = " . intval($row['payment_provider_id']));
+    }
     $account = $asked['account'];
     $who = trim(($account['name'] ?? '') . (($account['email'] ?? '') !== '' ? ' (' . $account['email'] . ')' : ''));
     flashAlert('<strong>' . escapeHtml($name) . '</strong> is connected' . ($who !== '' ? ' to ' . escapeHtml($who) : '') . ', with '
-        . (paymentProviderMode($row['payment_provider_private_key']) === 'live' ? 'live keys' : 'test keys - no real money moves'));
+        . (paymentProviderMode($row['payment_provider_private_key'], $row) === 'live' ? 'live keys' : 'test keys - no real money moves'));
     redirect();
 
 }

@@ -24,15 +24,66 @@ function paymentProviderKinds() {
             'icon' => 'fab fa-stripe-s',
             'public' => '/^pk_(live|test)_[A-Za-z0-9]{8,}$/',
             'secret' => '/^(sk|rk)_(live|test)_[A-Za-z0-9]{8,}$/',
+            'public_label' => 'Publishable key',
+            'secret_label' => 'Secret key',
             'public_example' => 'pk_live_...',
             'secret_example' => 'sk_live_...',
             'keys_url' => 'https://dashboard.stripe.com/apikeys',
+            'keys_text' => 'Developers > API keys',
+            'secret_help' => 'A restricted key (rk_...) does too, with write access to payment intents, customers, setup intents and payment methods, and read on the account.',
+            'has_mode' => false,
+            'has_location' => false,
+            'supports_saved_cards' => true,
+        ],
+        'Square' => [
+            'icon' => 'fas fa-square',
+            'public' => '/^(sandbox-)?sq0id[bp]-[A-Za-z0-9_-]{8,}$/',
+            'secret' => '/^[A-Za-z0-9_-]{20,}$/',
+            'public_label' => 'Application ID',
+            'secret_label' => 'Access Token',
+            'public_example' => 'sq0idp-... or sandbox-sq0idb-...',
+            'secret_example' => 'EAAAl...',
+            'keys_url' => 'https://developer.squareup.com/apps',
+            'keys_text' => 'Square Developer Dashboard > Credentials',
+            'secret_help' => 'Production or Sandbox Access Token matching the Application ID above.',
+            'has_mode' => true,
+            'has_location' => true,
+            'supports_saved_cards' => true,
+        ],
+        'PayPal' => [
+            'icon' => 'fab fa-paypal',
+            'public' => '/^[A-Za-z0-9_-]{20,}$/',
+            'secret' => '/^[A-Za-z0-9_-]{20,}$/',
+            'public_label' => 'Client ID',
+            'secret_label' => 'Client Secret',
+            'public_example' => 'AZDxjDScFpQtjWTOUtWK...',
+            'secret_example' => 'EGnHDxD_qRPdaLdZz8iC...',
+            'keys_url' => 'https://developer.paypal.com/dashboard/applications/live',
+            'keys_text' => 'PayPal Developer > Apps & Credentials',
+            'secret_help' => 'Create a REST API app in PayPal Developer Dashboard and copy its Client ID and Secret.',
+            'has_mode' => true,
+            'has_location' => false,
+            'supports_saved_cards' => false,
         ],
     ];
 }
 
-/* Live or test, as a key says - '' when it says neither. */
-function paymentProviderMode($key) {
+function paymentProviderMode($key, $row = null) {
+    if (is_array($row)) {
+        $mode = trim((string) ($row['payment_provider_mode'] ?? ''));
+        if ($mode === 'live' || $mode === 'test') {
+            return $mode;
+        }
+        if (($row['payment_provider_name'] ?? '') === 'Square') {
+            $pub = trim((string) ($row['payment_provider_public_key'] ?? ''));
+            if ($pub !== '') {
+                return stripos($pub, 'sandbox-') === 0 ? 'test' : 'live';
+            }
+        }
+        if (($row['payment_provider_name'] ?? '') === 'PayPal') {
+            return 'live';
+        }
+    }
     return preg_match('/^[a-z]{2}_(live|test)_/', (string) $key, $m) ? $m[1] : '';
 }
 
@@ -117,25 +168,55 @@ function paymentProviderCheck(array $post, $before = null) {
         $errors['description'] = 'Up to 250 characters.';
     }
 
-    // The keys - the secret one left empty stays as saved
     $public_key = trim((string) ($post['public_key'] ?? ''));
     $secret_typed = trim((string) ($post['private_key'] ?? ''));
     $secret_key = $secret_typed !== '' ? $secret_typed : (string) ($before['payment_provider_private_key'] ?? '');
+    $mode = '';
+    $before_extra = $before ? (json_decode((string) ($before['payment_provider_extra'] ?? ''), true) ?: []) : [];
+    $extra = $before_extra;
+
     if ($kind) {
+        $pub_label = strtolower($kind['public_label'] ?? 'publishable key');
+        $sec_label = strtolower($kind['secret_label'] ?? 'secret key');
         if ($public_key === '') {
-            $errors['public_key'] = "The publishable key - it starts {$kind['public_example']}";
+            $errors['public_key'] = "The $pub_label - it looks like {$kind['public_example']}";
         } elseif (mb_strlen($public_key) > 250 || !preg_match($kind['public'], $public_key)) {
-            $errors['public_key'] = "That isn't a publishable key - it starts {$kind['public_example']}";
+            $errors['public_key'] = "That isn't a valid $pub_label - it starts {$kind['public_example']}";
         }
         if ($secret_key === '') {
-            $errors['private_key'] = "The secret key - it starts {$kind['secret_example']}";
+            $errors['private_key'] = "The $sec_label - it looks like {$kind['secret_example']}";
         } elseif ($secret_typed !== '' && (mb_strlen($secret_typed) > 250 || !preg_match($kind['secret'], $secret_typed))) {
-            $errors['private_key'] = "That isn't a secret key - it starts {$kind['secret_example']}, or rk_ for a restricted key.";
+            $errors['private_key'] = $name === 'Stripe'
+                ? "That isn't a secret key - it starts {$kind['secret_example']}, or rk_ for a restricted key."
+                : "That isn't a valid $sec_label.";
         }
-        if (!isset($errors['public_key']) && !isset($errors['private_key']) && paymentProviderMode($secret_key) === '') {
-            $errors['private_key'] = "The saved secret key doesn't say whether it is live or test - type it in again.";
-        } elseif (!isset($errors['public_key']) && !isset($errors['private_key']) && paymentProviderMode($public_key) !== paymentProviderMode($secret_key)) {
-            $errors['private_key'] = 'One key is a ' . paymentProviderMode($public_key) . ' key and the other a ' . paymentProviderMode($secret_key) . ' one - both have to be live, or both test.';
+
+        if ($name === 'Stripe') {
+            if (!isset($errors['public_key']) && !isset($errors['private_key']) && paymentProviderMode($secret_key) === '') {
+                $errors['private_key'] = "The saved secret key doesn't say whether it is live or test - type it in again.";
+            } elseif (!isset($errors['public_key']) && !isset($errors['private_key']) && paymentProviderMode($public_key) !== paymentProviderMode($secret_key)) {
+                $errors['private_key'] = 'One key is a ' . paymentProviderMode($public_key) . ' key and the other a ' . paymentProviderMode($secret_key) . ' one - both have to be live, or both test.';
+            } else {
+                $mode = paymentProviderMode($secret_key);
+            }
+        } elseif ($name === 'Square') {
+            $pub_mode = stripos($public_key, 'sandbox-') === 0 ? 'test' : 'live';
+            $posted_mode = trim((string) ($post['mode'] ?? ''));
+            if ($posted_mode !== '' && in_array($posted_mode, ['live', 'test'], true) && !isset($errors['public_key']) && $posted_mode !== $pub_mode) {
+                $errors['mode'] = 'Mode does not match Application ID (' . ($pub_mode === 'test' ? 'Sandbox' : 'Live') . ').';
+            }
+            $mode = $pub_mode;
+            if (array_key_exists('location_id', $post)) {
+                $loc = trim((string) $post['location_id']);
+                if ($loc !== '' && !preg_match('/^[A-Za-z0-9_-]{4,64}$/', $loc)) {
+                    $errors['location_id'] = 'Square Location ID should be alphanumeric (or leave blank to auto-detect).';
+                } else {
+                    $extra['location_id'] = $loc;
+                }
+            }
+        } elseif ($name === 'PayPal') {
+            $posted_mode = trim((string) ($post['mode'] ?? ($before['payment_provider_mode'] ?? 'live')));
+            $mode = $posted_mode === 'test' ? 'test' : 'live';
         }
     }
 
@@ -195,11 +276,15 @@ function paymentProviderCheck(array $post, $before = null) {
         }
     }
 
+    $extra_json = $extra ? json_encode($extra) : '';
+
     $after = [
         'payment_provider_name' => $name,
         'payment_provider_description' => $description,
         'payment_provider_public_key' => $public_key,
         'payment_provider_private_key' => $secret_key,
+        'payment_provider_mode' => $mode !== '' ? $mode : null,
+        'payment_provider_extra' => $extra_json !== '' ? $extra_json : null,
         'payment_provider_threshold' => $threshold,
         'payment_provider_active' => $before ? (!empty($post['active']) ? 1 : 0) : 1,
         'payment_provider_account' => $account_id,
@@ -212,18 +297,35 @@ function paymentProviderCheck(array $post, $before = null) {
     return [$after, $errors];
 }
 
-/* Whether the keys are new or changed - only then is the provider asked about them. */
 function paymentProviderKeysChanged(array $after, $before = null) {
-    return !$before || $after['payment_provider_public_key'] !== (string) $before['payment_provider_public_key']
-        || $after['payment_provider_private_key'] !== (string) $before['payment_provider_private_key'];
+    if (!$before) {
+        return true;
+    }
+    if ($after['payment_provider_public_key'] !== (string) $before['payment_provider_public_key']
+        || $after['payment_provider_private_key'] !== (string) $before['payment_provider_private_key']) {
+        return true;
+    }
+    if ((string) ($after['payment_provider_mode'] ?? '') !== (string) ($before['payment_provider_mode'] ?? '')) {
+        return true;
+    }
+    $before_extra = json_decode((string) ($before['payment_provider_extra'] ?? ''), true) ?: [];
+    $after_extra = json_decode((string) ($after['payment_provider_extra'] ?? ''), true) ?: [];
+    if ((string) ($after_extra['location_id'] ?? '') !== (string) ($before_extra['location_id'] ?? '')) {
+        return true;
+    }
+    return false;
 }
 
-/*
- * Ask the provider whether it takes the secret key - ['ok' => bool, 'error'
- * => what is wrong, for the secret key field, 'account' => its name, email
- * and country, as it gives them].
- */
-function paymentProviderAsk($name, $secret_key) {
+function paymentProviderAsk($name, $secret_key, $public_key = '', $mode = '', $extra = []) {
+    if ($name === 'Square') {
+        $resolved_mode = $mode !== '' ? $mode : (stripos((string) $public_key, 'sandbox-') === 0 ? 'test' : 'live');
+        $location_id = is_array($extra) ? (string) ($extra['location_id'] ?? '') : '';
+        return squareTestConnection($secret_key, $resolved_mode, $location_id);
+    }
+    if ($name === 'PayPal') {
+        $resolved_mode = $mode === 'test' ? 'test' : 'live';
+        return paypalTestConnection($public_key, $secret_key, $resolved_mode);
+    }
     if ($name !== 'Stripe') {
         return ['ok' => true, 'error' => '', 'account' => []];
     }
@@ -268,8 +370,8 @@ function paymentProviderChangeLines(array $before, array $after) {
     if ((string) $before['payment_provider_description'] !== $after['payment_provider_description']) {
         $lines[] = 'Description ' . ((string) $before['payment_provider_description'] !== '' ? $before['payment_provider_description'] : 'blank') . ' → ' . ($after['payment_provider_description'] !== '' ? $after['payment_provider_description'] : 'blank');
     }
-    $was_mode = paymentProviderMode($before['payment_provider_private_key']);
-    $now_mode = paymentProviderMode($after['payment_provider_private_key']);
+    $was_mode = paymentProviderMode($before['payment_provider_private_key'], $before);
+    $now_mode = paymentProviderMode($after['payment_provider_private_key'], $after);
     if ($was_mode !== $now_mode) {
         $lines[] = "Mode $was_mode → $now_mode";
     }
@@ -278,6 +380,11 @@ function paymentProviderChangeLines(array $before, array $after) {
     }
     if ((string) $before['payment_provider_private_key'] !== $after['payment_provider_private_key']) {
         $lines[] = 'Secret key changed';
+    }
+    $before_extra = json_decode((string) ($before['payment_provider_extra'] ?? ''), true) ?: [];
+    $after_extra = json_decode((string) ($after['payment_provider_extra'] ?? ''), true) ?: [];
+    if ((string) ($before_extra['location_id'] ?? '') !== (string) ($after_extra['location_id'] ?? '')) {
+        $lines[] = 'Location ID changed';
     }
     if (intval($before['payment_provider_account']) !== $after['payment_provider_account']) {
         $lines[] = 'Payments go into ' . $name_of('accounts', $before['payment_provider_account']) . ' → ' . $name_of('accounts', $after['payment_provider_account']);
@@ -310,12 +417,13 @@ function paymentProviderWrite(array $after, $provider_id = 0) {
     $sets = [];
     foreach ($after as $column => $value) {
         $column_sql = '`' . preg_replace('/[^a-z_]/', '', $column) . '`';
-        if (is_int($value)) {
+        if ($value === null) {
+            $sets[] = "$column_sql = NULL";
+        } elseif (is_int($value)) {
             $sets[] = "$column_sql = $value";
         } elseif (is_float($value)) {
             $sets[] = "$column_sql = " . sprintf('%.2F', $value);
         } else {
-            // Keys exactly as given - escapeSql() would trim them and take out anything like a tag
             $sets[] = "$column_sql = '" . mysqli_real_escape_string($mysqli, (string) $value) . "'";
         }
     }
@@ -385,7 +493,7 @@ function paymentCardRemove($saved_payment_id, $by, &$error = '') {
     global $mysqli;
     $saved_payment_id = intval($saved_payment_id);
     $row = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT saved_payment_id, saved_payment_client_id, saved_payment_provider_id, saved_payment_provider_method, saved_payment_description,
-            payment_provider_name, payment_provider_private_key, client_name
+            payment_provider_name, payment_provider_public_key, payment_provider_private_key, payment_provider_mode, payment_provider_extra, client_name
         FROM client_saved_payment_methods
         LEFT JOIN payment_providers ON payment_provider_id = saved_payment_provider_id
         LEFT JOIN clients ON client_id = saved_payment_client_id
@@ -397,7 +505,6 @@ function paymentCardRemove($saved_payment_id, $by, &$error = '') {
     $card = billingCardParts($row['saved_payment_description']);
     $label = $card['label'] . ($card['exp'] !== '' ? ' (exp ' . $card['exp'] . ')' : '');
 
-    // The provider forgets it - a card it no longer has is gone already
     $told = true;
     $provider_error = '';
     if ($row['payment_provider_name'] === 'Stripe' && trim((string) $row['payment_provider_private_key']) !== '' && trim((string) $row['saved_payment_provider_method']) !== '') {
@@ -406,7 +513,6 @@ function paymentCardRemove($saved_payment_id, $by, &$error = '') {
             $stripe = new \Stripe\StripeClient((string) $row['payment_provider_private_key']);
             $stripe->paymentMethods->detach((string) $row['saved_payment_provider_method'], []);
         } catch (\Stripe\Exception\InvalidRequestException $e) {
-            // No such payment method, or not attached to a customer - nothing left there to forget
             if (!in_array($e->getStripeCode(), ['resource_missing', 'payment_method_unexpected_state'], true) && stripos($e->getMessage(), 'not attached') === false) {
                 $told = false;
                 $provider_error = $e->getMessage();
@@ -417,6 +523,13 @@ function paymentCardRemove($saved_payment_id, $by, &$error = '') {
         }
         if (!$told) {
             logApp("Stripe", "error", "Couldn't detach payment method " . $row['saved_payment_provider_method'] . " on removing it: $provider_error");
+        }
+    } elseif ($row['payment_provider_name'] === 'Square' && trim((string) $row['payment_provider_private_key']) !== '' && trim((string) $row['saved_payment_provider_method']) !== '') {
+        $dis = squareDisableCard($row, (string) $row['saved_payment_provider_method']);
+        if (!$dis['ok']) {
+            $told = false;
+            $provider_error = $dis['error'];
+            logApp("Square", "error", "Couldn't disable Square card " . $row['saved_payment_provider_method'] . " on removing it: $provider_error");
         }
     }
 
@@ -440,33 +553,27 @@ function paymentCardRemove($saved_payment_id, $by, &$error = '') {
  * is a payment row each, with the same reference, and one fee) with no
  * expense of that reference. FROM and WHERE, for Stripe.
  */
-function paymentProviderUnrecordedSql() {
+function paymentProviderUnrecordedSql($provider_name = 'Stripe') {
+    $cond = "payment_reference LIKE 'Stripe - pi\\_%'";
+    if ($provider_name === 'Square') {
+        $cond = "payment_reference LIKE 'Square - %'";
+    } elseif ($provider_name === 'PayPal') {
+        $cond = "payment_reference LIKE 'PayPal - %'";
+    }
     return "FROM payments LEFT JOIN invoices ON payment_invoice_id = invoice_id
-        WHERE payment_reference LIKE 'Stripe - pi\\_%'
+        WHERE $cond
         AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         AND NOT EXISTS (SELECT 1 FROM expenses WHERE LOCATE(payments.payment_reference, expenses.expense_reference) = 1)";
 }
 
-/*
- * Record the provider's fee on its recent card payments that have none yet,
- * from what it actually charged - every few minutes (cron/payment_provider_fees.php),
- * or now from Payment Providers. A payment it hasn't settled yet waits for the
- * next run. Only while its fees are recorded, under a vendor and a category.
- * ['recorded' => how many, 'amount' => their fees by currency, 'waiting' =>
- * how many not settled yet, 'failed' => how many it wouldn't say, 'error' =>
- * the last thing it said, 'busy' => another run had it in hand, so nothing was done].
- *
- * One run at a time: "has no fee yet" is read before the fee is written, so two runs
- * at once - the job, and someone pressing Record fees now - would each record it.
- */
 function paymentProviderRecordFees(array $provider, $limit = 50) {
     global $mysqli;
     $result = ['recorded' => 0, 'amount' => [], 'waiting' => 0, 'failed' => 0, 'error' => '', 'busy' => false];
+    $name = (string) ($provider['payment_provider_name'] ?? '');
     $private_key = (string) ($provider['payment_provider_private_key'] ?? '');
     $vendor_id = intval($provider['payment_provider_expense_vendor'] ?? 0);
     $category_id = intval($provider['payment_provider_expense_category'] ?? 0);
-    $account_id = intval($provider['payment_provider_account'] ?? 0);
-    if (($provider['payment_provider_name'] ?? '') !== 'Stripe' || $private_key === '' || !$vendor_id || !$category_id) {
+    if (!in_array($name, ['Stripe', 'Square', 'PayPal'], true) || $private_key === '' || !$vendor_id || !$category_id) {
         return $result;
     }
 
@@ -482,9 +589,9 @@ function paymentProviderRecordFees(array $provider, $limit = 50) {
     }
 }
 
-/* paymentProviderRecordFees(), with its lock held. */
 function paymentProviderRecordFeesLocked(array $provider, $limit, array $result) {
     global $mysqli;
+    $name = (string) ($provider['payment_provider_name'] ?? '');
     $private_key = (string) $provider['payment_provider_private_key'];
     $vendor_id = intval($provider['payment_provider_expense_vendor']);
     $category_id = intval($provider['payment_provider_expense_category']);
@@ -493,41 +600,87 @@ function paymentProviderRecordFeesLocked(array $provider, $limit, array $result)
     $sql = mysqli_query($mysqli, "SELECT payment_reference, MIN(payment_date) AS payment_date, SUM(payment_amount) AS payment_amount,
             GROUP_CONCAT(CONCAT(invoice_prefix, invoice_number) ORDER BY invoice_number SEPARATOR ', ') AS invoice_numbers,
             MIN(invoice_client_id) AS invoice_client_id
-        " . paymentProviderUnrecordedSql() . "
+        " . paymentProviderUnrecordedSql($name) . "
         GROUP BY payment_reference
         LIMIT " . intval($limit));
     if (!$sql || !mysqli_num_rows($sql)) {
         return $result;
     }
 
-    require_once __DIR__ . '/../includes/stripe_init.php';
-    $stripe = new \Stripe\StripeClient($private_key);
+    $stripe = null;
+    if ($name === 'Stripe') {
+        require_once __DIR__ . '/../includes/stripe_init.php';
+        $stripe = new \Stripe\StripeClient($private_key);
+    }
 
     while ($missing = mysqli_fetch_assoc($sql)) {
-        $pi_id = str_replace('Stripe - ', '', $missing['payment_reference']);
-        try {
-            $payment_intent = $stripe->paymentIntents->retrieve($pi_id, ['expand' => ['latest_charge.balance_transaction']]);
-        } catch (\Throwable $e) {
-            logApp("Stripe", "warning", "Fee reconciliation - could not retrieve $pi_id: " . $e->getMessage());
-            $result['failed']++;
-            $result['error'] = $e->getMessage();
-            continue;
+        $tx_id = str_replace($name . ' - ', '', $missing['payment_reference']);
+        $fee = 0.0;
+        $currency = '';
+
+        if ($name === 'Stripe') {
+            try {
+                $payment_intent = $stripe->paymentIntents->retrieve($tx_id, ['expand' => ['latest_charge.balance_transaction']]);
+            } catch (\Throwable $e) {
+                logApp("Stripe", "warning", "Fee reconciliation - could not retrieve $tx_id: " . $e->getMessage());
+                $result['failed']++;
+                $result['error'] = $e->getMessage();
+                continue;
+            }
+            $balance_transaction = $payment_intent->latest_charge->balance_transaction ?? null;
+            if (!$balance_transaction || is_string($balance_transaction)) {
+                $result['waiting']++;
+                continue;
+            }
+            $fee = round($balance_transaction->fee / 100, 2);
+            $currency = strtoupper((string) $balance_transaction->currency);
+        } elseif ($name === 'Square') {
+            $sq = squareGetPayment($provider, $tx_id);
+            if (!$sq['ok']) {
+                logApp("Square", "warning", "Fee reconciliation - could not retrieve $tx_id: " . $sq['error']);
+                $result['failed']++;
+                $result['error'] = $sq['error'];
+                continue;
+            }
+            $fees_arr = is_array($sq['payment']['processing_fee'] ?? null) ? $sq['payment']['processing_fee'] : [];
+            if (!$fees_arr) {
+                $result['waiting']++;
+                continue;
+            }
+            $fee_cents = 0;
+            foreach ($fees_arr as $pf) {
+                $fee_cents += intval($pf['amount_money']['amount'] ?? 0);
+                if ($currency === '' && !empty($pf['amount_money']['currency'])) {
+                    $currency = strtoupper((string) $pf['amount_money']['currency']);
+                }
+            }
+            $fee = round($fee_cents / 100, 2);
+            if ($currency === '') {
+                $currency = strtoupper((string) ($sq['payment']['amount_money']['currency'] ?? 'USD'));
+            }
+        } elseif ($name === 'PayPal') {
+            $pp = paypalGetCapture($provider, $tx_id);
+            if (!$pp['ok']) {
+                logApp("PayPal", "warning", "Fee reconciliation - could not retrieve $tx_id: " . $pp['error']);
+                $result['failed']++;
+                $result['error'] = $pp['error'];
+                continue;
+            }
+            $fee_node = $pp['capture']['seller_receivable_breakdown']['paypal_fee'] ?? null;
+            if (!$fee_node || !isset($fee_node['value'])) {
+                $result['waiting']++;
+                continue;
+            }
+            $fee = round(floatval($fee_node['value']), 2);
+            $currency = strtoupper((string) ($fee_node['currency_code'] ?? ($pp['capture']['amount']['currency_code'] ?? 'USD')));
         }
 
-        // Its actual fee, from the balance transaction - none until Stripe settles it, then the next run
-        $balance_transaction = $payment_intent->latest_charge->balance_transaction ?? null;
-        if (!$balance_transaction || is_string($balance_transaction)) {
-            $result['waiting']++;
-            continue;
-        }
-        $fee = round($balance_transaction->fee / 100, 2);
-        $currency = strtoupper((string) $balance_transaction->currency);
         $payment_amount = floatval($missing['payment_amount']);
         $reference = escapeSql($missing['payment_reference']);
         mysqli_query($mysqli, "INSERT INTO expenses SET expense_date = '" . escapeSql($missing['payment_date']) . "', expense_amount = $fee, expense_currency_code = '" . escapeSql($currency) . "',
             expense_account_id = $account_id, expense_vendor_id = $vendor_id, expense_client_id = " . intval($missing['invoice_client_id']) . ", expense_category_id = $category_id,
-            expense_description = '" . escapeSql("Stripe fee for Invoice {$missing['invoice_numbers']} payment of $payment_amount") . "', expense_reference = '$reference'");
-        logApp("Stripe", "info", "Fee reconciliation - recorded Stripe fee of $fee for $pi_id");
+            expense_description = '" . escapeSql("$name fee for Invoice {$missing['invoice_numbers']} payment of $payment_amount") . "', expense_reference = '$reference'");
+        logApp($name, "info", "Fee reconciliation - recorded $name fee of $fee for $tx_id");
         $result['recorded']++;
         $result['amount'][$currency] = round(($result['amount'][$currency] ?? 0) + $fee, 2);
     }
@@ -559,9 +712,9 @@ function paymentProviderActivity(array $provider) {
     while ($row = mysqli_fetch_row($sql)) {
         $activity['fees'][(string) $row[0]] = round(floatval($row[1]), 2);
     }
-    if ($name === 'Stripe' && intval($provider['payment_provider_expense_vendor']) && intval($provider['payment_provider_expense_category'])) {
+    if (in_array($name, ['Stripe', 'Square', 'PayPal'], true) && intval($provider['payment_provider_expense_vendor']) && intval($provider['payment_provider_expense_category'])) {
         $row = mysqli_fetch_row(mysqli_query($mysqli, "SELECT COUNT(DISTINCT payment_reference), COUNT(DISTINCT CASE WHEN payment_date < DATE_SUB(CURDATE(), INTERVAL 2 DAY) THEN payment_reference END) "
-            . paymentProviderUnrecordedSql()));
+            . paymentProviderUnrecordedSql($name)));
         $activity['waiting'] = intval($row[0] ?? 0);
         $activity['stale'] = intval($row[1] ?? 0);
     }
@@ -591,7 +744,7 @@ function paymentProviderProblems() {
         $provider = paymentProviderRow($id[0]);
         $name = $provider['payment_provider_name'];
         if (intval($provider['payment_provider_active'])) {
-            if (paymentProviderMode($provider['payment_provider_private_key']) === 'test') {
+            if (paymentProviderMode($provider['payment_provider_private_key'], $provider) === 'test') {
                 $problems[] = ['warning', 'fa-credit-card', "Card payments are in test mode", "$name has test keys, so card payments move no real money. Put in its live keys when you are ready.", 'payment_providers.php', 'Payment Providers'];
             }
             if (!$provider['account_name'] || $provider['account_archived_at']) {
@@ -615,22 +768,45 @@ function paymentProviderProblems() {
  */
 function paymentProviderSummaryHtml() {
     global $mysqli;
-    $id = mysqli_fetch_row(mysqli_query($mysqli, "SELECT payment_provider_id FROM payment_providers ORDER BY payment_provider_active DESC, payment_provider_name ASC LIMIT 1"));
-    if (!$id) {
-        return '<i class="fas fa-fw fa-info-circle me-1"></i>No payment provider is set up, so clients can\'t pay by card. <a href="payment_providers.php">Set up Stripe</a>.';
+    $sql = mysqli_query($mysqli, "SELECT payment_provider_id FROM payment_providers ORDER BY payment_provider_active DESC, payment_provider_name ASC");
+    $providers = [];
+    while ($id = mysqli_fetch_row($sql)) {
+        $p = paymentProviderRow($id[0]);
+        if ($p) {
+            $providers[] = $p;
+        }
     }
-    $provider = paymentProviderRow($id[0]);
-    $name = escapeHtml($provider['payment_provider_name']);
-    if (!intval($provider['payment_provider_active'])) {
-        return '<i class="fas fa-fw fa-toggle-off me-1"></i>' . $name . ' is turned off, so clients can\'t pay by card. <a href="payment_providers.php">Payment Providers</a>.';
+    if (!$providers) {
+        return '<i class="fas fa-fw fa-info-circle me-1"></i>No payment provider is set up, so clients can\'t pay online. <a href="payment_providers.php">Set up a provider</a>.';
     }
-    $mode = paymentProviderMode($provider['payment_provider_private_key']);
-    $activity = paymentProviderActivity($provider);
-    $limit = round(floatval($provider['payment_provider_threshold']), 2);
-    return ($mode === 'test' ? '<i class="fas fa-fw fa-exclamation-triangle text-warning me-1"></i>' : '<i class="fas fa-fw fa-check-circle text-success me-1"></i>')
-        . $name . ' is on, with ' . ($mode === 'test' ? '<strong>test keys</strong> - no real money moves' : 'live keys')
-        . ' - payments go into ' . escapeHtml((string) ($provider['account_name'] ?? 'no account'))
-        . ($limit > 0 ? ', for invoices under ' . escapeHtml(billingMoney($limit)) : '') . '. '
-        . ($activity['payments'] ? $activity['payments'] . ' card payment' . ($activity['payments'] === 1 ? '' : 's') . ' in the last 30 days.' : 'No card payments in the last 30 days.')
-        . ' <a href="payment_providers.php">Payment Providers</a>.';
+    $active = array_values(array_filter($providers, function ($p) {
+        return intval($p['payment_provider_active']) === 1;
+    }));
+    if (!$active) {
+        return '<i class="fas fa-fw fa-toggle-off me-1"></i>All payment providers are turned off, so clients can\'t pay online. <a href="payment_providers.php">Payment Providers</a>.';
+    }
+    if (count($active) === 1) {
+        $provider = $active[0];
+        $name = escapeHtml($provider['payment_provider_name']);
+        $mode = paymentProviderMode($provider['payment_provider_private_key'], $provider);
+        $activity = paymentProviderActivity($provider);
+        $limit = round(floatval($provider['payment_provider_threshold']), 2);
+        return ($mode === 'test' ? '<i class="fas fa-fw fa-exclamation-triangle text-warning me-1"></i>' : '<i class="fas fa-fw fa-check-circle text-success me-1"></i>')
+            . $name . ' is on, with ' . ($mode === 'test' ? '<strong>test keys</strong> - no real money moves' : 'live keys')
+            . ' - payments go into ' . escapeHtml((string) ($provider['account_name'] ?? 'no account'))
+            . ($limit > 0 ? ', for invoices under ' . escapeHtml(billingMoney($limit)) : '') . '. '
+            . ($activity['payments'] ? $activity['payments'] . ' payment' . ($activity['payments'] === 1 ? '' : 's') . ' in the last 30 days.' : 'No online payments in the last 30 days.')
+            . ' <a href="payment_providers.php">Payment Providers</a>.';
+    }
+    $parts = [];
+    $has_test = false;
+    foreach ($active as $provider) {
+        $mode = paymentProviderMode($provider['payment_provider_private_key'], $provider);
+        if ($mode === 'test') {
+            $has_test = true;
+        }
+        $parts[] = escapeHtml($provider['payment_provider_name']) . ' (' . ($mode === 'test' ? 'test' : 'live') . ')';
+    }
+    return ($has_test ? '<i class="fas fa-fw fa-exclamation-triangle text-warning me-1"></i>' : '<i class="fas fa-fw fa-check-circle text-success me-1"></i>')
+        . implode(', ', $parts) . ' active. <a href="payment_providers.php">Payment Providers</a>.';
 }

@@ -272,5 +272,7 @@ $reply_times = portalReplyTimes();
 
 <?php } ?>
 
+<script src="<?= staticFileUrl('/js/client_ticket_templates.js') ?>"></script>
+
 <?php
 require_once 'includes/footer.php';

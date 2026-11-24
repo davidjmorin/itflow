@@ -526,7 +526,8 @@ if ($action === 'save_response') {
         mtgJsonError('Agenda item not found.', 404);
     }
 
-    $content = mysqli_real_escape_string($mysqli, (string)($_POST['content'] ?? ''));
+    $sanitized_content = meetingSanitizeResponseHtml((string)($_POST['content'] ?? ''));
+    $content = mysqli_real_escape_string($mysqli, $sanitized_content);
     mysqli_query($mysqli, "
         INSERT INTO meeting_responses SET
             occurrence_id = $occurrence_id,
@@ -541,7 +542,7 @@ if ($action === 'save_response') {
     ");
 
     $new_seq = meetingBumpSyncSeq($occurrence_id);
-    mtgJsonOk(['sync_seq' => $new_seq, 'saved_at' => date('g:i:s A')]);
+    mtgJsonOk(['sync_seq' => $new_seq, 'saved_at' => date('g:i:s A'), 'content' => $sanitized_content]);
 }
 
 if ($action === 'save_shared_notes') {

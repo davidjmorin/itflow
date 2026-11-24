@@ -13,6 +13,8 @@ $has_mfa = trim((string) $me['user_token']) !== '';
 $forced = intval($me['user_config_force_mfa']) === 1;
 $browsers = userRememberedBrowsers($session_user_id);
 $remember_days = max(1, intval($config_login_remember_me_expire));
+$sql_passkeys = mysqli_query($mysqli, "SELECT passkey_id, passkey_name, passkey_created_at, passkey_last_used_at FROM user_passkeys WHERE passkey_user_id = $session_user_id ORDER BY passkey_id DESC");
+$passkey_count = $sql_passkeys ? mysqli_num_rows($sql_passkeys) : 0;
 
 ?>
 
@@ -108,6 +110,51 @@ $remember_days = max(1, intval($config_login_remember_me_expire));
         </div>
     </div>
 
+    <div class="col-12">
+        <div class="card mb-0">
+            <div class="card-header bg-dark">
+                <h3 class="card-title"><i class="fas fa-fw fa-fingerprint me-2"></i>Passkeys &amp; Hardware Keys</h3>
+                <div class="card-tools">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPasskeyModal">
+                        <i class="fas fa-plus me-1"></i>Add Passkey
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <?php if ($passkey_count > 0) { ?>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Device Name</th>
+                                    <th>Created</th>
+                                    <th>Last Used</th>
+                                    <th class="text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php while ($pk_row = mysqli_fetch_assoc($sql_passkeys)) { ?>
+                                    <tr>
+                                        <td><i class="fas fa-key me-2 text-body-secondary"></i><?= escapeHtml($pk_row['passkey_name']) ?></td>
+                                        <td><?= escapeHtml($pk_row['passkey_created_at']) ?></td>
+                                        <td><?= !empty($pk_row['passkey_last_used_at']) ? escapeHtml($pk_row['passkey_last_used_at']) : 'Never' ?></td>
+                                        <td class="text-end">
+                                            <a href="post.php?delete_passkey=<?= intval($pk_row['passkey_id']) ?>&csrf_token=<?= $_SESSION['csrf_token'] ?>" class="btn btn-sm btn-danger confirm-link">
+                                                <i class="fas fa-trash"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php } ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php } else { ?>
+                    <p class="text-body-secondary small mb-0">No passkeys registered. Add a passkey to enable fast, passwordless login using Touch ID, Face ID, Windows Hello, or a security key.</p>
+                <?php } ?>
+            </div>
+        </div>
+    </div>
+
     <!-- Remembered browsers -->
     <div class="col-12">
         <div class="card mb-0">
@@ -185,6 +232,32 @@ $remember_days = max(1, intval($config_login_remember_me_expire));
     again.addEventListener('input', check);
 })();
 </script>
+
+<div class="modal fade" id="addPasskeyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title"><i class="fas fa-fingerprint me-2"></i>Add Passkey</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="passkey_name_input">Passkey Name</label>
+                    <input type="text" class="form-control" id="passkey_name_input" placeholder="e.g. MacBook Touch ID, YubiKey, iPhone" value="My Passkey">
+                </div>
+                <div id="passkey_error_alert" class="alert alert-danger d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="start_passkey_register_btn">
+                    <i class="fas fa-shield-alt me-1"></i>Register Device
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="<?= staticFileUrl('/js/passkey.js') ?>"></script>
 
 <?php
 // A code that didn't match - open the set up again, with the same secret

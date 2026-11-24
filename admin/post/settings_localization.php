@@ -14,13 +14,14 @@ if (isset($_POST['edit_localization'])) {
 
     $localization = settingsLocalizationArrays();
     $before = settingsCurrent(['company_locale', 'company_currency'], 'companies');
-    $before_settings = settingsCurrent(['config_timezone']);
+    $before_settings = settingsCurrent(['config_timezone', 'config_google_places_api_key']);
 
     $after = [
         'company_locale' => trim((string) ($_POST['company_locale'] ?? '')),
         'company_currency' => strtoupper(trim((string) ($_POST['company_currency'] ?? ''))),
     ];
     $timezone = trim((string) ($_POST['config_timezone'] ?? ''));
+    $google_places_api_key = trim((string) ($_POST['google_places_api_key'] ?? ''));
 
     $errors = [];
     if (!isset($localization['locales'][$after['company_locale']])) {
@@ -36,7 +37,7 @@ if (isset($_POST['edit_localization'])) {
         settingsRefuse('localization', $errors);
     }
 
-    $changed = settingsWrite('companies', $before, $after) + settingsWrite('settings', $before_settings, ['config_timezone' => $timezone]);
+    $changed = settingsWrite('companies', $before, $after) + settingsWrite('settings', $before_settings, ['config_timezone' => $timezone, 'config_google_places_api_key' => $google_places_api_key]);
     settingsSaid('localization', settingsChangeLines($before + $before_settings, $changed));
 
     redirect();

@@ -47,55 +47,12 @@ echo settingsPageStart('localization');
                 </div>
             <?= settingsSectionEnd() ?>
 
+            <?php require_once __DIR__ . '/includes/settings_google_places_card.php'; ?>
+
             <?= settingsSaveBar('edit_localization') ?>
         </div>
     </div>
 </form>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const testBtn = document.getElementById('btn_test_google_key');
-    const keyInput = document.getElementById('google_places_api_key');
-    const resultDiv = document.getElementById('google_api_test_result');
-
-    if (!testBtn || !keyInput || !resultDiv) return;
-
-    testBtn.addEventListener('click', function() {
-        const apiKey = keyInput.value.trim();
-        if (!apiKey) {
-            resultDiv.style.display = 'block';
-            resultDiv.innerHTML = '<div class="alert alert-warning py-2 mb-0"><i class="fas fa-exclamation-triangle mr-2"></i>Please enter an API key first.</div>';
-            return;
-        }
-
-        resultDiv.style.display = 'block';
-        resultDiv.innerHTML = '<div class="alert alert-info py-2 mb-0"><i class="fas fa-spinner fa-spin mr-2"></i>Testing Google Places API key...</div>';
-
-        const csrfToken = document.querySelector('input[name="csrf_token"]').value;
-
-        $.ajax({
-            url: '/agent/ajax.php',
-            method: 'POST',
-            data: {
-                test_google_places_key: '1',
-                api_key: apiKey,
-                csrf_token: csrfToken
-            },
-            dataType: 'json',
-            success: function(data) {
-                if (data.success) {
-                    resultDiv.innerHTML = '<div class="alert alert-success py-2 mb-0"><i class="fas fa-check-circle mr-2"></i><strong>Success:</strong> ' + data.message + '</div>';
-                } else {
-                    resultDiv.innerHTML = '<div class="alert alert-danger py-2 mb-0"><i class="fas fa-times-circle mr-2"></i><strong>Test Failed:</strong> ' + data.message + '<br><small>Ensure <strong>Places API (New)</strong> is enabled in your Google Cloud project and billing is active.</small></div>';
-                }
-            },
-            error: function(xhr, status, err) {
-                resultDiv.innerHTML = '<div class="alert alert-danger py-2 mb-0"><i class="fas fa-times-circle mr-2"></i>Error communicating with server: ' + err + '</div>';
-            }
-        });
-    });
-});
-</script>
 
 <?php
 require_once "../includes/footer.php";

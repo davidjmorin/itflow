@@ -184,5 +184,6 @@ $num_rows = mysqli_fetch_row(mysqli_query($mysqli, "SELECT FOUND_ROWS()"));
 </div>
 
 <?php
+require_once dirname(__DIR__) . '/agent/includes/custom_legacy_js.php';
 require_once "../includes/footer.php";
 

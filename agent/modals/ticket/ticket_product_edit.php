@@ -39,14 +39,19 @@ if ($taxes_sql) {
     }
 }
 
+$asset_type_names = function_exists('assetTypes')
+    ? array_keys(assetTypes())
+    : (is_array($asset_types_array ?? null) ? array_keys($asset_types_array) : ['Other']);
+if (empty($asset_type_names)) {
+    $asset_type_names = ['Other'];
+}
+
 ob_start();
 ?>
 
 <div class="modal-header bg-dark">
-    <h5 class="modal-title"><i class="fas fa-fw fa-edit mr-2"></i>Edit Ticket Product</h5>
-    <button type="button" class="close text-white" data-dismiss="modal">
-        <span>&times;</span>
-    </button>
+    <h5 class="modal-title"><i class="fas fa-fw fa-edit me-2"></i>Edit Ticket Product</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form action="post.php" method="post" autocomplete="off">
@@ -56,59 +61,51 @@ ob_start();
     <div class="modal-body">
         <?php if ($is_serialized) { ?>
             <div class="alert alert-info py-2 px-3 mb-3">
-                <i class="fas fa-barcode mr-1"></i>
+                <i class="fas fa-barcode me-1"></i>
                 Linked Serialized Inventory Unit: <strong>S/N <?= escapeHtml($row['item_serial']) ?></strong>
             </div>
         <?php } ?>
 
-        <div class="form-group">
-            <label>Item / Product Name <strong class="text-danger">*</strong></label>
+        <div class="mb-3">
+            <label class="form-label">Item / Product Name <strong class="text-danger">*</strong></label>
             <input type="text" class="form-control" name="name" value="<?= escapeHtml($row['ticket_product_name']) ?>" maxlength="200" required <?= $is_invoiced ? 'readonly' : '' ?>>
         </div>
 
-        <div class="form-group">
-            <label>Description</label>
+        <div class="mb-3">
+            <label class="form-label">Description</label>
             <textarea class="form-control" rows="3" name="description" <?= $is_invoiced ? 'readonly' : '' ?>><?= escapeHtml($row['ticket_product_description']) ?></textarea>
         </div>
 
-        <div class="form-row">
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>QTY <strong class="text-danger">*</strong></label>
-                    <input type="number" step="0.01" min="0.01" class="form-control" name="qty" value="<?= number_format(floatval($row['ticket_product_qty']), 2, '.', '') ?>" required <?= ($is_serialized || $is_invoiced) ? 'readonly' : '' ?>>
+        <div class="row g-2">
+            <div class="col-md-4 mb-3">
+                <label class="form-label">QTY <strong class="text-danger">*</strong></label>
+                <input type="number" step="0.01" min="0.01" class="form-control" name="qty" value="<?= number_format(floatval($row['ticket_product_qty']), 2, '.', '') ?>" required <?= ($is_serialized || $is_invoiced) ? 'readonly' : '' ?>>
+            </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label">Price <strong class="text-danger">*</strong></label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
+                    <input type="number" step="0.01" class="form-control" name="price" value="<?= number_format(floatval($row['ticket_product_price']), 2, '.', '') ?>" required <?= $is_invoiced ? 'readonly' : '' ?>>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Price <strong class="text-danger">*</strong></label>
-                    <div class="input-group">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text"><i class="fa fa-fw fa-dollar-sign"></i></span>
-                        </div>
-                        <input type="number" step="0.01" class="form-control" name="price" value="<?= number_format(floatval($row['ticket_product_price']), 2, '.', '') ?>" required <?= $is_invoiced ? 'readonly' : '' ?>>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="form-group">
-                    <label>Tax</label>
-                    <select class="form-control" name="tax_id" <?= $is_invoiced ? 'disabled' : '' ?>>
-                        <option value="0">None</option>
-                        <?php foreach ($taxes_list as $tax) { ?>
-                            <option value="<?= intval($tax['tax_id']) ?>" <?= intval($row['ticket_product_tax_id']) === intval($tax['tax_id']) ? 'selected' : '' ?>>
-                                <?= escapeHtml($tax['tax_name']) . ' ' . floatval($tax['tax_percent']) . '%' ?>
-                            </option>
-                        <?php } ?>
-                    </select>
-                </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label">Tax</label>
+                <select class="form-select" name="tax_id" <?= $is_invoiced ? 'disabled' : '' ?>>
+                    <option value="0">None</option>
+                    <?php foreach ($taxes_list as $tax) { ?>
+                        <option value="<?= intval($tax['tax_id']) ?>" <?= intval($row['ticket_product_tax_id']) === intval($tax['tax_id']) ? 'selected' : '' ?>>
+                            <?= escapeHtml($tax['tax_name']) . ' ' . floatval($tax['tax_percent']) . '%' ?>
+                        </option>
+                    <?php } ?>
+                </select>
             </div>
         </div>
 
         <?php if ($is_serialized) { ?>
-            <div class="form-group mb-0">
-                <label>Client Asset Type (upon invoicing)</label>
-                <select class="form-control" name="asset_type" <?= $is_invoiced ? 'disabled' : '' ?>>
-                    <?php foreach (array_keys($asset_types_array) as $at) { ?>
+            <div class="mb-0">
+                <label class="form-label">Client Asset Type (upon invoicing)</label>
+                <select class="form-select" name="asset_type" <?= $is_invoiced ? 'disabled' : '' ?>>
+                    <?php foreach ($asset_type_names as $at) { ?>
                         <option value="<?= escapeHtml($at) ?>" <?= ($row['ticket_product_asset_type'] ?? 'Other') === $at ? 'selected' : '' ?>>
                             <?= escapeHtml($at) ?>
                         </option>
@@ -120,12 +117,12 @@ ob_start();
 
     <div class="modal-footer">
         <?php if (!$is_invoiced) { ?>
-            <button type="submit" name="edit_ticket_product" class="btn btn-primary text-bold">
-                <i class="fa fa-check mr-2"></i>Save
+            <button type="submit" name="edit_ticket_product" class="btn btn-primary fw-bold">
+                <i class="fa fa-check me-2"></i>Save
             </button>
         <?php } ?>
-        <button type="button" class="btn btn-light" data-dismiss="modal">
-            <i class="fa fa-times mr-2"></i>Cancel
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+            <i class="fa fa-times me-2"></i>Cancel
         </button>
     </div>
 </form>

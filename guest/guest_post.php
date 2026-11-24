@@ -392,3 +392,5 @@ if (isset($_POST['create_stripe_customer'])) {
     redirect('guest_view_invoice.php?invoice_id=' . $invoice_id . '&url_key=' . urlencode($invoice_url_key));
 }
 
+require_once __DIR__ . '/guest_submit_ticket_post.php';
+

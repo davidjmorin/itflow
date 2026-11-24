@@ -17,14 +17,15 @@ require_once "includes/inc_all.php";
 
 portalBillingGate();
 
-$provider = billingStripeProvider();
+$providers = billingActiveProviders();
+$provider = billingAnyOnlineProvider();
 $open = billingClientOpenInvoices($session_client_id);
 $cards = $provider ? billingSavedCards($session_client_id) : [];
 $usable = array_values(array_filter($cards, function ($card) {
     return !$card['card']['expired'];
 }));
+$default_provider = $usable ? (billingProviderById($usable[0]['saved_payment_provider_id']) ?: $provider) : $provider;
 
-// What is ticked to start with - all of it, or what the link asked for
 $select = isset($_GET['select']) ? array_filter(array_map('intval', explode(',', (string) $_GET['select']))) : null;
 $ticked = [];
 $total_cents = 0;
@@ -33,18 +34,17 @@ foreach ($open as $i => $row) {
     $cents = intval(round((floatval($row['invoice_amount']) - floatval($row['paid'])) * 100));
     $open[$i]['cents'] = $cents;
     $currency = $currency ?: strtoupper((string) $row['invoice_currency_code']);
-    // One payment can carry so many invoices - the oldest are ticked first
     if ($select === null ? count($ticked) < BILLING_PAY_MAX_INVOICES : in_array(intval($row['invoice_id']), $select, true)) {
         $ticked[intval($row['invoice_id'])] = true;
         $total_cents += $cents;
     }
 }
-$limit_cents = $provider ? intval(round(floatval($provider['payment_provider_threshold']) * 100)) : 0;
-// The card fee, worked out again by js/portal.js as the ticks change - in hundredths of a percent and cents
-$fee_rates = $provider ? billingCardFeeFor($session_client_id) : null;
+$limit_cents = $default_provider ? intval(round(floatval($default_provider['payment_provider_threshold']) * 100)) : 0;
+$fee_rates = $default_provider ? billingCardFeeFor($session_client_id, $default_provider) : null;
 $fee_cents = billingCardFeeCents($total_cents, $fee_rates);
 $locale = str_replace('_', '-', (string) ($session_company_locale ?: 'en_US'));
 $pay_token = bin2hex(random_bytes(16));
+$provider_count = count($providers);
 ?>
 
 <div class="itflow-portal-page-head">
@@ -121,56 +121,85 @@ $pay_token = bin2hex(random_bytes(16));
                     <div class="itflow-portal-panel-body">
                         <div class="itflow-portal-methods">
                             <?php foreach ($cards as $i => $card) {
-                                $expired = $card['card']['expired']; ?>
+                                $expired = $card['card']['expired'];
+                                $c_prov = billingProviderById($card['saved_payment_provider_id']) ?: $provider;
+                                $c_limit = intval(round(floatval($c_prov['payment_provider_threshold'] ?? 0) * 100));
+                                $c_rates = billingCardFeeFor($session_client_id, $c_prov);
+                                $c_fp = $c_rates ? intval(round($c_rates['percent'] * 100)) : -1;
+                                $c_ff = $c_rates ? intval(round($c_rates['fixed'] * 100)) : 0; ?>
                                 <label class="itflow-portal-method<?= $expired ? ' is-disabled' : '' ?>">
-                                    <input class="form-check-input" type="radio" name="method" value="<?= intval($card['saved_payment_id']) ?>"<?= $expired ? ' disabled' : '' ?><?= $usable && intval($usable[0]['saved_payment_id']) === intval($card['saved_payment_id']) ? ' checked' : '' ?>>
+                                    <input class="form-check-input" type="radio" name="method" value="<?= intval($card['saved_payment_id']) ?>"
+                                        data-method-limit="<?= $c_limit ?>" data-method-fee-percent="<?= $c_fp ?>" data-method-fee-fixed="<?= $c_ff ?>" data-method-provider="<?= escapeHtml($card['payment_provider_name']) ?>"<?= $expired ? ' disabled' : '' ?><?= $usable && intval($usable[0]['saved_payment_id']) === intval($card['saved_payment_id']) ? ' checked' : '' ?>>
                                     <i class="<?= escapeHtml($card['card']['icon']) ?> fa-fw fa-lg"></i>
                                     <span class="min-w-0">
-                                        <span class="d-block text-truncate"><?= escapeHtml($card['card']['label']) ?></span>
+                                        <span class="d-block text-truncate"><?= escapeHtml($card['card']['label']) ?><?= $provider_count > 1 ? ' (' . escapeHtml($card['payment_provider_name']) . ')' : '' ?></span>
                                         <small class="<?= $expired ? 'text-danger-emphasis' : 'text-body-secondary' ?>"><?= $card['card']['exp'] !== '' ? ($expired ? 'Expired ' : 'Expires ') . escapeHtml($card['card']['exp']) : 'Saved card' ?></small>
                                     </span>
                                 </label>
                             <?php } ?>
-                            <label class="itflow-portal-method">
-                                <input class="form-check-input" type="radio" name="method" value="new"<?= $usable ? '' : ' checked' ?>>
-                                <i class="fas fa-plus-circle fa-fw fa-lg text-body-secondary"></i>
-                                <span>
-                                    <span class="d-block">A new card</span>
-                                    <small class="text-body-secondary">Enter the card on the next page</small>
-                                </span>
-                            </label>
+                            <?php
+                            $first_checkout = true;
+                            foreach ($providers as $pname => $prow) {
+                                $p_limit = intval(round(floatval($prow['payment_provider_threshold'] ?? 0) * 100));
+                                $p_rates = billingCardFeeFor($session_client_id, $prow);
+                                $p_fp = $p_rates ? intval(round($p_rates['percent'] * 100)) : -1;
+                                $p_ff = $p_rates ? intval(round($p_rates['fixed'] * 100)) : 0;
+                                $is_checked = !$usable && $first_checkout;
+                                $first_checkout = false;
+                                if ($pname === 'PayPal') {
+                                    $opt_icon = 'fab fa-paypal text-primary';
+                                    $opt_title = 'PayPal';
+                                    $opt_sub = 'Continue to PayPal on the next page';
+                                } else {
+                                    $opt_icon = 'fas fa-plus-circle text-body-secondary';
+                                    $has_two_cards = isset($providers['Stripe']) && isset($providers['Square']);
+                                    $opt_title = $has_two_cards ? "A new card ($pname)" : 'A new card';
+                                    $opt_sub = 'Enter the card on the next page';
+                                }
+                                ?>
+                                <label class="itflow-portal-method">
+                                    <input class="form-check-input" type="radio" name="method" value="new:<?= escapeHtml($pname) ?>"
+                                        data-method-limit="<?= $p_limit ?>" data-method-fee-percent="<?= $p_fp ?>" data-method-fee-fixed="<?= $p_ff ?>" data-method-provider="<?= escapeHtml($pname) ?>"<?= $is_checked ? ' checked' : '' ?>>
+                                    <i class="<?= escapeHtml($opt_icon) ?> fa-fw fa-lg"></i>
+                                    <span>
+                                        <span class="d-block"><?= escapeHtml($opt_title) ?></span>
+                                        <small class="text-body-secondary"><?= escapeHtml($opt_sub) ?></small>
+                                    </span>
+                                </label>
+                            <?php } ?>
                         </div>
                     </div>
                     <div class="itflow-portal-paybar">
-                        <?php if ($fee_rates) { ?>
+                        <div data-pay-fee-breakdown<?= $fee_rates ? '' : ' hidden' ?>>
                             <div class="d-flex justify-content-between align-items-baseline small">
                                 <span class="text-body-secondary" data-pay-count><?= count($ticked) ?> <?= count($ticked) === 1 ? 'invoice' : 'invoices' ?></span>
                                 <span class="itflow-money" data-pay-subtotal><?= escapeHtml(billingMoney($total_cents / 100, $currency)) ?></span>
                             </div>
                             <div class="d-flex justify-content-between align-items-baseline small mb-1">
-                                <span class="text-body-secondary" title="<?= escapeHtml(billingCardFeeTerms($fee_rates, $currency)) ?>">Card fee</span>
+                                <span class="text-body-secondary" title="<?= $fee_rates ? escapeHtml(billingCardFeeTerms($fee_rates, $currency)) : '' ?>">Processing fee</span>
                                 <span class="itflow-money" data-pay-fee><?= escapeHtml(billingMoney($fee_cents / 100, $currency)) ?></span>
                             </div>
                             <div class="d-flex justify-content-between align-items-baseline mb-2">
                                 <span class="text-body-secondary">Total</span>
                                 <span class="itflow-portal-big-amount itflow-money" data-pay-total><?= escapeHtml(billingMoney(($total_cents + $fee_cents) / 100, $currency)) ?></span>
                             </div>
-                        <?php } else { ?>
+                        </div>
+                        <div data-pay-simple-breakdown<?= $fee_rates ? ' hidden' : '' ?>>
                             <div class="d-flex justify-content-between align-items-baseline mb-2">
                                 <span class="text-body-secondary" data-pay-count><?= count($ticked) ?> <?= count($ticked) === 1 ? 'invoice' : 'invoices' ?></span>
                                 <span class="itflow-portal-big-amount itflow-money" data-pay-total><?= escapeHtml(billingMoney($total_cents / 100, $currency)) ?></span>
                             </div>
-                        <?php } ?>
+                        </div>
                         <div class="alert alert-warning small py-2" data-pay-limit-note<?= $limit_cents > 0 && $total_cents >= $limit_cents ? '' : ' hidden' ?>>
-                            Card payments are limited to under <?= escapeHtml(billingMoney($limit_cents / 100, $currency)) ?> at a time - untick some invoices, or pay another way.
+                            Online payments for this provider are limited to under <?= escapeHtml(billingMoney($limit_cents / 100, $currency)) ?> at a time - untick some invoices, or pay another way.
                         </div>
                         <button type="submit" class="btn btn-success btn-lg w-100" name="portal_pay" data-pay-button<?= !$ticked ? ' disabled' : '' ?>>
                             <i class="fas fa-lock me-2"></i><span data-pay-label><?= $usable ? 'Pay ' : 'Continue to pay ' ?><?= escapeHtml(billingMoney(($total_cents + $fee_cents) / 100, $currency)) ?></span>
                         </button>
                         <?php if ($fee_rates) { ?>
-                            <p class="small text-body-secondary text-center mt-2 mb-0">Paying by card adds a card fee: <?= escapeHtml(billingCardFeeTerms($fee_rates, $currency)) ?>. It goes on each invoice as a line.</p>
+                            <p class="small text-body-secondary text-center mt-2 mb-0">Paying online adds a processing fee: <?= escapeHtml(billingCardFeeTerms($fee_rates, $currency)) ?>.</p>
                         <?php } ?>
-                        <p class="small text-body-secondary text-center mt-2 mb-0">Paid securely through Stripe - your card details never reach us.</p>
+                        <p class="small text-body-secondary text-center mt-2 mb-0">Paid securely online - your payment details never reach us.</p>
                     </div>
                 </section>
             </div>

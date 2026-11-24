@@ -579,6 +579,7 @@ $time_display = date('g:i A', strtotime($series['start_time'])) . ' - ' . date('
     </div>
 </div>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <script>
 window.MTG_CONFIG = <?= json_encode([
     'seriesId' => $series_id,

@@ -32,7 +32,7 @@ $title = trim((string) $recurring['recurring_invoice_scope']) !== '' ? $recurrin
 $items = billingItems('recurring', $recurring_id);
 $totals = billingTotals('recurring', $recurring, $items);
 $company = billingCompany();
-$cards_on = billingStripeProvider() !== null;
+$cards_on = !empty(billingCardProviders());
 $cards = $cards_on ? billingSavedCards($session_client_id) : [];
 $usable = array_filter($cards, function ($card) {
     return !$card['card']['expired'];

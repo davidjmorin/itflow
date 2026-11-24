@@ -15,6 +15,8 @@
  * takes support write access, like the handlers behind it.
  */
 
+require_once __DIR__ . '/includes/document_custom_top.php';
+
 require_once "includes/inc_all_client.php";
 
 $document_id = intval($_GET['document_id'] ?? 0);
@@ -340,6 +342,7 @@ $page_title = $row['document_name'];
 
 <script src="<?= staticFileUrl('/js/pretty_content.js') ?>"></script>
 <script src="<?= staticFileUrl('/js/document_contents.js') ?>"></script>
+<?php require_once __DIR__ . '/includes/document_photo_lightbox.php'; ?>
 
 <?php
 

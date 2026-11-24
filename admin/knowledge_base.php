@@ -168,4 +168,5 @@ require_once "includes/inc_all_admin.php";
     </div>
 </div>
 
+<?php require_once dirname(__DIR__) . '/agent/includes/custom_legacy_js.php'; ?>
 <?php require_once "includes/footer.php"; ?>

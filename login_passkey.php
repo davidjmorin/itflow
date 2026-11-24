@@ -103,6 +103,7 @@ try {
 
         $sql = mysqli_query($mysqli, "
             SELECT user_passkeys.*, users.user_id, users.user_name, users.user_email, users.user_type, users.user_status, users.user_archived_at,
+                   users.user_password, users.user_service_account,
                    user_settings.user_config_force_mfa, user_settings.user_config_records_per_page
             FROM user_passkeys
             JOIN users ON user_passkeys.passkey_user_id = users.user_id
@@ -117,6 +118,10 @@ try {
         if (!$passkey) {
             logAudit("Login", "Failed", "Passkey not recognized or account disabled", 0, 0);
             throw new Exception('Passkey not recognized.');
+        }
+
+        if (!empty($passkey['user_service_account'])) {
+            throw new Exception('Service accounts cannot sign in.');
         }
 
         $webauthn = getWebAuthnInstance();
@@ -166,6 +171,7 @@ try {
             $_SESSION['csrf_token'] = randomString(32);
             $_SESSION['logged'] = true;
             $_SESSION['passkey_logged_in'] = true;
+            $_SESSION['user_session_stamp'] = userSessionStamp($passkey['user_password'] ?? '');
 
             $session_user_id = $userId;
             logAudit("Login", "Success", "$userName successfully logged in with Passkey", 0, $userId);
@@ -203,6 +209,7 @@ try {
             $_SESSION['login_method'] = "passkey";
             $_SESSION['logged'] = true;
             $_SESSION['csrf_token'] = randomString(32);
+            $_SESSION['user_session_stamp'] = userSessionStamp($passkey['user_password'] ?? '');
 
             $session_user_id = $userId;
             logAudit("Client Login", "Success", "Client contact $userEmail successfully logged in with Passkey", $clientId, $userId);

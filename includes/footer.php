@@ -30,9 +30,7 @@
 <footer class="app-footer py-2 text-center">
     <?php
         echo escapeHtml($session_company_name);
-        if (!$config_whitelabel_enabled) {
-            echo '<br><small class="text-body-secondary">Powered by ITFlow</small>';
-        }
+            echo '<br><small class="text-body-secondary">Powered by Maple & Oakley</small>';
     ?>
 </footer>
 <?php } ?>

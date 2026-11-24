@@ -707,6 +707,7 @@ if (empty($session_is_admin) && (empty($session_user_role) || $session_user_role
     </div>
 </div>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <script src="/libs/xlsx/xlsx.full.min.js"></script>
 <script>
 $(document).ready(function () {

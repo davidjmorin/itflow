@@ -61,7 +61,7 @@ foreach (billingClientOpenInvoices($session_client_id) as $open) {
         $late += $left;
     }
 }
-$cards = billingStripeProvider() !== null;
+$cards = billingAnyOnlineProvider() !== null;
 
 /** This page's address with some of its settings changed. */
 function invoicesUrl(array $changes) {

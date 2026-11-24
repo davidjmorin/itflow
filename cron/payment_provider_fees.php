@@ -38,22 +38,25 @@ if (intval($payment_provider_fees_settings['config_enable_cron'] ?? 0) == 0) {
     cronJobStop("Cron: is not enabled\n");
 }
 
-$payment_provider_fees_provider = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_name, payment_provider_private_key, payment_provider_account,
-    payment_provider_expense_vendor, payment_provider_expense_category FROM payment_providers WHERE payment_provider_name = 'Stripe' LIMIT 1"));
-
-if (!$payment_provider_fees_provider) {
-    cronJobStop("No Stripe payment provider\n");
-}
-
-// Development mode refuses every Stripe call (functions/dev_mode.php)
 if (devModeOn()) {
-    cronJobStop("Development mode - Stripe is off\n");
+    cronJobStop("Development mode - payment providers are off\n");
 }
 
-$payment_provider_fees_done = paymentProviderRecordFees($payment_provider_fees_provider);
+$providers_sql = mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_name, payment_provider_public_key, payment_provider_private_key,
+    payment_provider_mode, payment_provider_extra, payment_provider_account, payment_provider_expense_vendor, payment_provider_expense_category
+    FROM payment_providers
+    WHERE payment_provider_expense_vendor > 0 AND payment_provider_expense_category > 0");
 
-if ($payment_provider_fees_done['busy']) {
-    echo "Fees are being recorded already - left to that run\n";
-} else {
-    echo $payment_provider_fees_done['recorded'] . " fee(s) recorded, " . $payment_provider_fees_done['waiting'] . " waiting for Stripe to settle, " . $payment_provider_fees_done['failed'] . " failed\n";
+if (!$providers_sql || !mysqli_num_rows($providers_sql)) {
+    cronJobStop("No payment providers configured for fee recording\n");
+}
+
+while ($provider_row = mysqli_fetch_assoc($providers_sql)) {
+    $done = paymentProviderRecordFees($provider_row);
+    $pname = $provider_row['payment_provider_name'];
+    if ($done['busy']) {
+        echo "$pname: Fees are being recorded already - left to that run\n";
+    } else {
+        echo "$pname: " . $done['recorded'] . " fee(s) recorded, " . $done['waiting'] . " waiting to settle, " . $done['failed'] . " failed\n";
+    }
 }

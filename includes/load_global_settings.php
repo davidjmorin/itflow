@@ -200,19 +200,9 @@ $config_destructive_deletes_enable = intval($row['config_destructive_deletes_ena
 $config_whitelabel_enabled = intval($row['config_whitelabel_enabled']);
 $config_whitelabel_key = $row['config_whitelabel_key'];
 
-// Google Places
-$config_google_places_api_key = $row['config_google_places_api_key'] ?? '';
-
-$config_smsgate_enable = intval($row['config_smsgate_enable'] ?? 0);
-$config_smsgate_url = $row['config_smsgate_url'] ?? 'https://api.sms-gate.app/3rdparty/v1/messages';
-$config_smsgate_username = $row['config_smsgate_username'] ?? '';
-$config_smsgate_password = $row['config_smsgate_password'] ?? '';
-$config_smsgate_emergency_recipients = $row['config_smsgate_emergency_recipients'] ?? '';
-$config_smsgate_ack_message = $row['config_smsgate_ack_message'] ?? '';
-$config_smsgate_urgent_message = $row['config_smsgate_urgent_message'] ?? '';
-$config_tech_weekly_summary_enable = intval($row['config_tech_weekly_summary_enable'] ?? 0);
-$config_tech_weekly_summary_time = $row['config_tech_weekly_summary_time'] ?? '08:00';
-$config_tech_weekly_summary_last_sent_week = $row['config_tech_weekly_summary_last_sent_week'] ?? '';
+if (file_exists(__DIR__ . '/load_custom_settings.php')) {
+    require_once __DIR__ . '/load_custom_settings.php';
+}
 
 
 // Select Arrays

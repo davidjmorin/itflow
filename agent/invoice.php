@@ -391,6 +391,16 @@ echo agentBannersHtml($client_id);
                                                     data-confirm-text="The payment is refunded to the client's card through Stripe.">
                                                     <i class="fas fa-fw fa-undo me-2"></i>Refund Through Stripe
                                                 </a>
+                                            <?php } elseif ($payment['payment_method'] === 'Square') { ?>
+                                                <a class="dropdown-item text-warning confirm-link" href="post.php?refund_payment_square=<?= $payment_id ?>&csrf_token=<?= $csrf ?>"
+                                                    data-confirm-text="The payment is refunded to the client's card through Square.">
+                                                    <i class="fas fa-fw fa-undo me-2"></i>Refund Through Square
+                                                </a>
+                                            <?php } elseif ($payment['payment_method'] === 'PayPal') { ?>
+                                                <a class="dropdown-item text-warning confirm-link" href="post.php?refund_payment_paypal=<?= $payment_id ?>&csrf_token=<?= $csrf ?>"
+                                                    data-confirm-text="The payment is refunded through PayPal.">
+                                                    <i class="fas fa-fw fa-undo me-2"></i>Refund Through PayPal
+                                                </a>
                                             <?php } ?>
                                             <?php if ($can_edit_payments) { ?>
                                                 <div class="dropdown-divider"></div>

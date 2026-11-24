@@ -42,15 +42,28 @@ foreach ($open_invoices as $open) {
 }
 $query_key = rawurlencode($url_key);
 
-// Paying online - through Stripe, under its limit, when there is something to pay
-$stripe = mysqli_fetch_assoc(mysqli_query($mysqli, "SELECT payment_provider_id, payment_provider_threshold FROM payment_providers WHERE payment_provider_active = 1 AND payment_provider_name = 'Stripe' LIMIT 1"));
-$pay_url = '';
-if ($stripe && invoiceCanPay($invoice, $state) && (floatval($stripe['payment_provider_threshold']) == 0 || floatval($stripe['payment_provider_threshold']) > floatval($invoice['invoice_amount']))) {
-    $stripe_customer = mysqli_fetch_row(mysqli_query($mysqli, "SELECT payment_provider_client FROM client_payment_provider WHERE client_id = $client_id AND payment_provider_id = " . intval($stripe['payment_provider_id']) . " LIMIT 1"));
-    $pay_url = ($stripe_customer ? 'guest_pay_invoice_stripe.php' : 'guest_pay_setup_stripe_customer.php') . "?invoice_id=$invoice_id&url_key=$query_key";
+$guest_providers = billingActiveProviders();
+$guest_pay_options = [];
+if (invoiceCanPay($invoice, $state)) {
+    foreach ($guest_providers as $pname => $prow) {
+        if (!billingOnlinePayAllowed($invoice['invoice_amount'], $prow)) {
+            continue;
+        }
+        $p_fee = billingCardFeeCents(intval(round($state['balance'] * 100)), billingCardFeeFor($client_id, $prow)) / 100;
+        if ($pname === 'Stripe') {
+            $stripe_customer = mysqli_fetch_row(mysqli_query($mysqli, "SELECT payment_provider_client FROM client_payment_provider WHERE client_id = $client_id AND payment_provider_id = " . intval($prow['payment_provider_id']) . " LIMIT 1"));
+            $url = ($stripe_customer ? 'guest_pay_invoice_stripe.php' : 'guest_pay_setup_stripe_customer.php') . "?invoice_id=$invoice_id&url_key=$query_key";
+            $guest_pay_options[] = ['provider' => 'Stripe', 'url' => $url, 'fee' => $p_fee, 'icon' => 'fas fa-credit-card', 'class' => 'btn-success', 'label' => 'Pay by Card'];
+        } elseif ($pname === 'Square') {
+            $url = "guest_pay_invoice_square.php?invoice_id=$invoice_id&url_key=$query_key";
+            $guest_pay_options[] = ['provider' => 'Square', 'url' => $url, 'fee' => $p_fee, 'icon' => 'fas fa-credit-card', 'class' => 'btn-success', 'label' => 'Pay by Card'];
+        } elseif ($pname === 'PayPal') {
+            $url = "guest_pay_invoice_paypal.php?invoice_id=$invoice_id&url_key=$query_key";
+            $guest_pay_options[] = ['provider' => 'PayPal', 'url' => $url, 'fee' => $p_fee, 'icon' => 'fab fa-paypal', 'class' => 'btn-primary', 'label' => 'Pay with PayPal'];
+        }
+    }
 }
-// The card fee on paying by card, when the client pays one (functions/billing_pay.php)
-$card_fee = $pay_url ? billingCardFeeCents(intval(round($state['balance'] * 100)), billingCardFeeFor($client_id)) / 100 : 0;
+$first_fee = $guest_pay_options ? $guest_pay_options[0]['fee'] : 0;
 // Paid by its recurring invoice's autopay on the due date - said, so it isn't paid twice, while that will go through
 $autopay = $state['state'] === 'open' ? invoiceAutopay($invoice) : null;
 if ($autopay && $autopay['problem'] !== '') {
@@ -103,13 +116,26 @@ $paper = [
                     <?php if ($autopay) { ?>
                         <div class="alert alert-success py-2 small d-flex align-items-start gap-2 mb-3">
                             <i class="<?= escapeHtml($autopay['icon']) ?> fa-fw mt-1"></i>
-                            <span><?= $autopay['card'] ? 'Autopay will charge ' . escapeHtml($autopay['method']) . ($card_fee > 0 ? ' ' . $money($state['balance'] + $card_fee) . ', with a ' . $money($card_fee) . ' card fee,' : '') : 'This is paid automatically by ' . escapeHtml($autopay['method']) ?>
+                            <span><?= $autopay['card'] ? 'Autopay will charge ' . escapeHtml($autopay['method']) . ($first_fee > 0 ? ' ' . $money($state['balance'] + $first_fee) . ', with a ' . $money($first_fee) . ' card fee,' : '') : 'This is paid automatically by ' . escapeHtml($autopay['method']) ?>
                                 on <?= escapeHtml(date('M j', strtotime($invoice['invoice_due']))) ?> - nothing to do, unless you would rather pay now.</span>
                         </div>
                     <?php } ?>
-                    <?php if ($pay_url) { ?>
-                        <a class="btn btn-success btn-lg w-100 mb-2" href="<?= escapeHtml($pay_url) ?>"><i class="fas fa-credit-card me-2"></i>Pay Now</a>
-                        <div class="small text-body-secondary text-center mb-3"><i class="fas fa-lock me-1"></i>Securely, by card<?= $card_fee > 0 ? ' - plus a ' . $money($card_fee) . ' card fee' : '' ?></div>
+                    <?php if ($guest_pay_options) {
+                        $multi = count($guest_pay_options) > 1;
+                        $has_card_stripe = isset($guest_providers['Stripe']) && isset($guest_providers['Square']);
+                        foreach ($guest_pay_options as $opt) {
+                            $btn_label = $opt['label'];
+                            if ($opt['provider'] !== 'PayPal' && !$multi) {
+                                $btn_label = 'Pay Now';
+                            } elseif ($has_card_stripe && $opt['provider'] !== 'PayPal') {
+                                $btn_label .= ' (' . $opt['provider'] . ')';
+                            } ?>
+                            <a class="btn <?= escapeHtml($opt['class']) ?> btn-lg w-100 mb-2" href="<?= escapeHtml($opt['url']) ?>"><i class="<?= escapeHtml($opt['icon']) ?> me-2"></i><?= escapeHtml($btn_label) ?></a>
+                            <?php if ($opt['fee'] > 0) { ?>
+                                <div class="small text-body-secondary text-center mb-2">Includes <?= $money($opt['fee']) ?> processing fee</div>
+                            <?php } ?>
+                        <?php } ?>
+                        <div class="small text-body-secondary text-center mb-3"><i class="fas fa-lock me-1"></i>Secure online checkout</div>
                     <?php } ?>
                 <?php } ?>
                 <div class="d-flex gap-2 <?= $state['state'] === 'paid' || in_array($state['state'], ['cancelled', 'nonbillable'], true) ? 'mt-3' : '' ?>">

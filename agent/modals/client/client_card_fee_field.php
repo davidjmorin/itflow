@@ -10,7 +10,7 @@
 
 isset($mysqli) || die("Direct file access is not allowed");
 
-if (billingStripeProvider()) {
+if (billingAnyOnlineProvider()) {
     $ccf_rates = billingCardFeeRates();
     $ccf_key = $client_card_fee_key ?? 'New';
     ?>

@@ -1505,6 +1505,7 @@ $health_badge_class = match ($meeting['tbr_overall_health']) {
     </div>
 </div>
 
+<?php require_once __DIR__ . '/includes/custom_legacy_js.php'; ?>
 <script>
 window.TBR_CONFIG = <?= json_encode([
     'tbrId' => $tbr_id,

@@ -846,8 +846,12 @@ function meetingBuildOccurrenceState(int $occurrence_id, int $user_id, bool $is_
     while ($r_resp && ($rr = mysqli_fetch_assoc($r_resp))) {
         $aid = strval($rr['agenda_item_id']);
         $uid = strval($rr['user_id']);
+        $raw_content = (string)($rr['content'] ?? '');
+        if ($raw_content !== '' && strpos($raw_content, '<') !== false) {
+            $raw_content = meetingSanitizeResponseHtml($raw_content);
+        }
         $responses[$aid][$uid] = [
-            'content' => (string)($rr['content'] ?? ''),
+            'content' => $raw_content,
             'updated_by' => intval($rr['updated_by']),
             'updated_at' => $rr['updated_at'],
         ];
@@ -983,4 +987,32 @@ function meetingBuildOccurrenceState(int $occurrence_id, int $user_id, bool $is_
         'attachments' => $attachments,
         'online_users' => $online_users,
     ];
+}
+
+function meetingSanitizeResponseHtml($html): string {
+    $raw = (string)$html;
+    if (trim($raw) === '') {
+        return '';
+    }
+    static $purifier = null;
+    if ($purifier === null) {
+        require_once __DIR__ . '/../libs/htmlpurifier/HTMLPurifier.standalone.php';
+        $config = HTMLPurifier_Config::createDefault();
+        $config->set('Cache.DefinitionImpl', null);
+        $config->set('HTML.Allowed', 'p[style|align],br,div[style|align],span[style],font[color|style],strong,b,em,i,u,s,strike,del,code,pre,h1[style|align],h2[style|align],h3[style|align],blockquote[style],hr,ul,ol,li[style],a[href|target|rel],img[src|alt|style]');
+        $config->set('CSS.AllowedProperties', ['color', 'background-color', 'text-align', 'font-weight', 'font-style', 'text-decoration', 'max-width', 'height']);
+        $config->set('Attr.AllowedFrameTargets', ['_blank']);
+        $config->set('URI.AllowedSchemes', ['http' => true, 'https' => true, 'mailto' => true]);
+        $config->set('Attr.ForbiddenClasses', ['ajax-modal']);
+        $config->set('HTML.TargetBlank', true);
+        $config->set('HTML.Nofollow', true);
+        $purifier = new HTMLPurifier($config);
+    }
+    $raw = preg_replace('/\btext-decoration-line\s*:/i', 'text-decoration:', $raw);
+    $clean = trim($purifier->purify($raw));
+    $plain = trim(str_replace("\xC2\xA0", ' ', html_entity_decode(strip_tags($clean), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+    if ($plain === '' && !preg_match('/<(img|hr)\b/i', $clean)) {
+        return '';
+    }
+    return $clean;
 }
